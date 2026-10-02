@@ -1,0 +1,338 @@
+"""Поиск глазами пользователя: что находится, что подсвечивается, как понят запрос."""
+from __future__ import annotations
+
+import json
+import os
+import urllib.parse
+import urllib.request
+
+import pytest
+
+from atlas import db, index, messages, query, search
+from tests.conftest import assistant_text, user_text
+from tests.test_actions_security import live_server  # noqa: F401 — фикстура
+
+
+def _conn(atlas_env):
+    return db.connect(os.path.join(str(atlas_env["home"]), "atlas.sqlite3"))
+
+
+def _indexed(atlas_env, write_session, *sessions):
+    for lines in sessions:
+        write_session("p", lines)
+    conn = _conn(atlas_env)
+    index.index_all(conn, root=str(atlas_env["projects"]))
+    return conn
+
+
+def _hit_texts(match: dict) -> list[str]:
+    return [s["t"] for s in match["segments"] if s["hit"]]
+
+
+# --- числа и идентификаторы ------------------------------------------------
+
+def test_number_does_not_match_numbers_it_starts_with(atlas_env, write_session):
+    """Жалоба владельца: «1359» выдавало сессии с «13»."""
+    conn = _indexed(atlas_env, write_session,
+                    [user_text("переделываем фронт ABC-1359")],
+                    [user_text("адрес: Лихоборская наб., 13, стр.71")],
+                    [user_text("в отчёте 135 алёртов")])
+    only = search.search(conn, "1359")
+    assert [h["tickets"] for h in only] == [["ABC-1359"]]
+    assert _hit_texts(only[0]["matches"][0]) == ["1359"]
+    assert len(search.search(conn, "13")) == 1
+    assert len(search.search(conn, "135")) == 1
+
+
+def test_ticket_and_its_bare_number_find_the_same_session(atlas_env, write_session):
+    conn = _indexed(atlas_env, write_session,
+                    [user_text("ревью ABC-1359, потом ABC-1360")],
+                    [user_text("совсем про другое")])
+    assert len(search.search(conn, "ABC-1359")) == 1
+    assert len(search.search(conn, "abc-1359")) == 1
+
+
+# --- подсветка --------------------------------------------------------------
+
+def test_russian_quotes_in_text_are_not_mistaken_for_highlight(atlas_env, write_session):
+    """Метки «» совпадали с кавычками в тексте, и подсвечивались куски целых фраз."""
+    conn = _indexed(atlas_env, write_session, [user_text(
+        "это «снимок до перезаписи», сейчас там ABC-1359 и «ещё что-то» рядом")])
+    match = search.search(conn, "1359")[0]["matches"][0]
+    assert _hit_texts(match) == ["1359"]
+    plain = "".join(s["t"] for s in match["segments"])
+    assert "«снимок до перезаписи»" in plain
+
+
+def test_fragment_prefers_the_place_where_all_words_meet(atlas_env, write_session):
+    filler = "обсуждали разное " * 40
+    conn = _indexed(atlas_env, write_session, [user_text(
+        "открой окно терминала. " + filler + "потом окно новостей сломалось")])
+    match = search.search(conn, "окно новостей")[0]["matches"][0]
+    hits = [t.lower() for t in _hit_texts(match)]
+    assert "окно" in hits and any(h.startswith("новост") for h in hits)
+
+
+def test_fragment_edges_do_not_cut_words(atlas_env, write_session):
+    words = " ".join(f"слово{i}" for i in range(200))
+    conn = _indexed(atlas_env, write_session, [user_text(words + " искомое " + words)])
+    segs = search.search(conn, "искомое")[0]["matches"][0]["segments"]
+    body = "".join(s["t"] for s in segs).strip("…").strip()
+    assert all(w.startswith("слово") or w == "искомое" for w in body.split())
+
+
+def test_hits_are_counted_per_field(atlas_env, write_session):
+    conn = _indexed(atlas_env, write_session, [
+        user_text("фильтр по дате, фильтр по домену и ещё раз фильтр"),
+        assistant_text("фильтр добавлен"),
+    ])
+    hit = search.search(conn, "фильтр", scope="all")[0]
+    assert hit["hit_fields"]["user_text"] == 3
+    assert hit["hit_fields"]["assistant_text"] == 1
+    assert hit["hits"] == 4
+
+
+# --- операторы --------------------------------------------------------------
+
+@pytest.fixture
+def windows(atlas_env, write_session):
+    return _indexed(atlas_env, write_session,
+                    [user_text("окно новостей не грузится")],
+                    [user_text("окно настроек слишком узкое")],
+                    [user_text("новости приходят без окна")])
+
+
+def test_minus_excludes_a_word(windows):
+    titles = {h["title"] for h in search.search(windows, "окно -настроек")}
+    assert titles and not any("настроек" in t for t in titles)
+
+
+def test_quotes_keep_a_phrase_together(windows):
+    assert len(search.search(windows, '"окно новостей"')) == 1
+    assert len(search.search(windows, "окно новостей")) == 2  # «новости … окна» тоже
+
+
+def test_or_joins_alternatives(windows):
+    assert len(search.search(windows, "настроек ИЛИ новостей")) == 3
+    assert len(search.search(windows, "настроек новостей")) == 0
+
+
+def test_only_exclusions_explain_instead_of_failing(windows):
+    res = search.run(windows, "-окно")
+    assert res["results"] == [] and "without a minus" in res["error"]       # без заголовка — en
+    with messages.use_lang("ru"):
+        res = search.run(windows, "-окно")
+    assert res["results"] == [] and "без минуса" in res["error"]
+
+
+def test_noise_tokens_do_not_break_the_query(windows):
+    for noisy in ('окно "', "окно —", "окно -", "(окно)", "окно «новостей»"):
+        assert search.search(windows, noisy), noisy
+
+
+def test_short_russian_words_match_their_forms(atlas_env, write_session):
+    """«окно» короче порога основы — без перебора форм «окна» не нашлось бы."""
+    conn = _indexed(atlas_env, write_session,
+                    [user_text("перенесли окна настроек")],
+                    [user_text("новый план релиза")],
+                    [user_text("поставили плагин")])
+    assert len(search.search(conn, "окно")) == 1
+    assert len(search.search(conn, "плана")) == 1   # и не «плагин»
+    assert len(search.search(conn, "план")) == 1
+
+
+def test_consonant_final_word_is_not_cut_into_a_different_word(atlas_env, write_session):
+    """«замер» усечённый до «заме*» находил «заметки» и «замечания»."""
+    conn = _indexed(atlas_env, write_session,
+                    [user_text("сделали замеры скорости")],
+                    [user_text("записал заметки после звонка")])
+    assert len(search.search(conn, "замер")) == 1
+    assert query.stem_prefix("замер") == "замер"
+    assert query.stem_prefix("новостей") == "новост"
+    assert query.stem_prefix("дефектах") == "дефект"
+    assert query.stem_prefix("models") == "model"
+
+
+def test_quoted_single_word_is_matched_exactly():
+    assert query.build_match('"моделей"', scope="all") == '"моделей"'
+    assert query.build_match("моделей", scope="all") == '"модел"*'
+
+
+def test_plan_explains_how_each_word_was_read():
+    with messages.use_lang("ru"):
+        plan = query.describe(query.parse('1359 моделям "окно новостей" -figma'))
+    assert [(p["text"], p["how"], p["negate"]) for p in plan] == [
+        ("1359", "точно", False),
+        ("модел…", "любая форма слова", False),
+        ("окно новостей", "фраза целиком", False),
+        ("figma…", "любая форма слова", True),
+    ]
+    assert query.describe(query.parse("a1 или b2"))[1]["or_with_previous"] is True
+    en = query.describe(query.parse('1359 моделям "окно новостей"'))
+    assert [p["how"] for p in en] == ["exact", "any word form", "whole phrase"]
+
+
+# --- объём выдачи и соседняя область ----------------------------------------
+
+def test_total_counts_everything_not_only_the_page(atlas_env, write_session):
+    conn = _indexed(atlas_env, write_session,
+                    *[[user_text(f"сессия про прокси номер {i}")] for i in range(5)])
+    res = search.run(conn, "прокси", limit=2)
+    assert len(res["results"]) == 2 and res["total"] == 5
+
+
+def test_sessions_found_only_outside_prompts_are_announced(atlas_env, write_session):
+    conn = _indexed(atlas_env, write_session,
+                    [user_text("почини сборку"), assistant_text("поправил webpack конфиг")],
+                    [user_text("обнови webpack")])
+    res = search.run(conn, "webpack")
+    assert res["total"] == 1 and res["elsewhere"] == 1
+    assert search.run(conn, "webpack", scope="all")["elsewhere"] is None
+
+
+# --- сервер -----------------------------------------------------------------
+
+def test_server_list_carries_plan_total_and_segments(atlas_env, write_session, live_server):
+    _indexed(atlas_env, write_session,
+             [user_text("фронт ABC-1359 «с кавычками»")],
+             [user_text("дом 13")])
+    base, _ = live_server
+    url = f"{base}/api/sessions?" + urllib.parse.urlencode({"q": "1359"})
+    with urllib.request.urlopen(url, timeout=5) as r:
+        data = json.loads(r.read())
+    assert data["count"] == 1 and data["shown"] == 1
+    assert data["plan"][0]["how"] == "exact"                # без заголовка — английский
+    ru = urllib.request.Request(url, headers={"X-Atlas-Lang": "ru"})
+    with urllib.request.urlopen(ru, timeout=5) as r:
+        assert json.loads(r.read())["plan"][0]["how"] == "точно"
+    assert _hit_texts(data["results"][0]["matches"][0]) == ["1359"]
+
+
+# --- догонка индекса сервером -------------------------------------------------
+
+def _list(base, **params):
+    url = f"{base}/api/sessions?" + urllib.parse.urlencode(params)
+    with urllib.request.urlopen(url, timeout=10) as r:
+        return json.loads(r.read())
+
+
+@pytest.fixture
+def fresh_catch_up(monkeypatch):
+    from atlas import server
+    monkeypatch.setattr(server, "_catchup_at", 0.0)
+    monkeypatch.setattr(server, "_catchup_proc", None)
+    return server
+
+
+class _FakePass:
+    """Проход, которым управляет тест: сколько раз запущен и когда закончится."""
+    started = 0
+
+    def __init__(self):
+        import threading
+        type(self).started += 1
+        self.done = threading.Event()
+        if type(self).instant:
+            self.done.set()
+
+    def is_alive(self):
+        return not self.done.is_set()
+
+    def join(self, timeout=None):
+        self.done.wait(timeout)
+
+
+def test_transcript_written_after_indexing_reaches_the_server_list(
+        atlas_env, write_session, live_server, fresh_catch_up):
+    """Интерфейс показывал индекс четырёхдневной давности, пока не нажмёшь «обновить».
+
+    Настоящий проход: отдельный процесс `atlas index` с тем же ATLAS_HOME.
+    """
+    import time
+    _indexed(atlas_env, write_session, [user_text("старая сессия про прокси")])
+    base, _ = live_server
+    write_session("p", [user_text("новая сессия про webpack")])
+    deadline = time.monotonic() + 15
+    data = _list(base, q="webpack")
+    while data["indexing"] and time.monotonic() < deadline:
+        time.sleep(0.2)
+        data = _list(base, q="webpack")
+    assert data["indexing"] is False and data["count"] == 1
+    assert _list(base)["count"] == 2
+
+
+def test_catch_up_is_throttled_between_keystrokes(atlas_env, live_server, fresh_catch_up,
+                                                  monkeypatch):
+    fake = type("Instant", (_FakePass,), {"instant": True, "started": 0})
+    monkeypatch.setattr(fresh_catch_up, "_Pass", fake)
+    base, _ = live_server
+    for q in ("w", "we", "web", "webp"):
+        _list(base, q=q)
+    assert fake.started == 1
+
+
+def test_long_catch_up_does_not_hold_the_answer(atlas_env, live_server, fresh_catch_up,
+                                                monkeypatch):
+    import time
+    fake = type("Slow", (_FakePass,), {"instant": False, "started": 0})
+    monkeypatch.setattr(fresh_catch_up, "_Pass", fake)
+    base, _ = live_server
+    started = time.monotonic()
+    assert _list(base)["indexing"] is True
+    assert time.monotonic() - started < fresh_catch_up.CATCHUP_WAIT + 1.0
+    again = time.monotonic()
+    assert _list(base)["indexing"] is True and fake.started == 1  # идущий не перезапускается
+    assert time.monotonic() - again < fresh_catch_up.CATCHUP_WAIT  # и его не ждут
+    fresh_catch_up._catchup_proc.done.set()
+    assert _list(base)["indexing"] is False
+
+
+def test_connect_does_not_wait_for_a_running_writer(atlas_env):
+    """Каждый запрос сервера открывает соединение; фоновый индексатор держит запись секундами."""
+    import sqlite3
+    import time
+    path = os.path.join(str(atlas_env["home"]), "atlas.sqlite3")
+    db.connect(path).close()
+    writer = sqlite3.connect(path)
+    writer.execute("BEGIN IMMEDIATE")
+    try:
+        started = time.monotonic()
+        conn = db.connect(path)
+        conn.execute("SELECT count(*) FROM sessions").fetchone()
+        assert time.monotonic() - started < 1.0
+    finally:
+        writer.rollback()
+
+
+# --- порядок по релевантности и подстрочный поиск по путям -------------------
+
+def test_relevance_prefers_title_then_words_side_by_side(atlas_env, write_session):
+    """Один bm25 поднимал огромные сессии, где слова запроса разбросаны по всему тексту."""
+    noise = "шум " * 40
+    # Шум по краям: запросы в индексе склеены, и конец одного соседствует с началом другого.
+    scattered = [user_text(f"{noise} окно {noise} новостей {noise} окно {noise} новостей {noise}")
+                 for _ in range(8)]
+    write_session("p", [user_text("про другое")] + scattered, session_id="scattered")
+    write_session("p", [user_text("начнём"), user_text(noise * 20 + " сломалось окно новостей")],
+                  session_id="together")
+    write_session("p", [user_text("Окно новостей: переделка"), user_text(noise * 20)],
+                  session_id="titled")
+    conn = _conn(atlas_env)
+    index.index_all(conn, root=str(atlas_env["projects"]))
+    order = [h["session_id"] for h in search.search(conn, "окно новостей", order="relevance")]
+    assert order == ["titled", "together", "scattered"]
+
+
+def test_path_substring_respects_the_automation_filter(atlas_env, write_session):
+    from tests.conftest import assistant_tool, rec
+    write_session("p", [rec(
+        type="assistant", timestamp="2026-09-01T10:00:00.000Z", cwd="/Users/u/Code/demo",
+        entrypoint="sdk-cli", message={"role": "assistant", "model": "m", "content": [
+            {"type": "tool_use", "id": "t", "name": "Bash",
+             "input": {"command": "node deploy-release.mjs"}}]})])
+    write_session("p", [user_text("почини релиз"),
+                        assistant_tool("Bash", {"command": "node deploy-release.mjs"})])
+    conn = _conn(atlas_env)
+    index.index_all(conn, root=str(atlas_env["projects"]))
+    assert len(search.search(conn, "release.mjs", scope="all")) == 1
+    assert len(search.search(conn, "release.mjs", scope="all", include_automation=True)) == 2

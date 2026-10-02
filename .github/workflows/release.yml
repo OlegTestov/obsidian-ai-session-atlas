@@ -1,0 +1,22 @@
+name: Release
+on:
+  push:
+    tags: ["*"]
+jobs:
+  release:
+    runs-on: macos-14
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: /usr/bin/python3 tools/build.py --out dist
+      # Obsidian ищет в релизе ровно эти три файла; тег должен совпадать с версией в manifest.json.
+      - name: Check tag matches manifest
+        run: test "$(/usr/bin/python3 -c 'import json;print(json.load(open("dist/manifest.json"))["version"])')" = "${GITHUB_REF_NAME}"
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/main.js
+            dist/manifest.json
+            dist/styles.css

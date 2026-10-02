@@ -1,0 +1,22 @@
+/* Вкладка терминала агента. Стили самого xterm идут в сборке первыми (vendor/xterm.css). */
+.session-atlas-terminal {
+  padding: 0 !important;
+  overflow: hidden !important;
+  background: var(--background-primary);
+}
+.session-atlas-terminal-box {
+  width: 100%;
+  height: 100%;
+  padding: 4px 0 0 6px;
+  box-sizing: border-box;
+}
+.session-atlas-terminal-box .xterm-viewport {
+  background-color: transparent !important;
+}
+
+/* Настройки каталога: многострочные поля — под описанием, на всю ширину, без переносов по слогам. */
+.session-atlas-area { flex-wrap: wrap; }
+.session-atlas-area .setting-item-info { flex: 1 1 100%; }
+.session-atlas-area .setting-item-control { flex: 1 1 100%; margin-top: 8px; }
+.session-atlas-area textarea { width: 100%; resize: vertical; font-family: var(--font-monospace);
+  font-size: var(--font-ui-small); white-space: pre; overflow-x: auto; }

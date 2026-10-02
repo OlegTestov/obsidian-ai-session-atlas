@@ -1,0 +1,15 @@
+[project]
+name = "session-atlas"
+version = "2.0.0"
+description = "Catalog, search and live view of Claude Code sessions — the local server behind the Session Atlas Obsidian plugin."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Oleg Testov" }]
+# Системный python3 из Xcode Command Line Tools — 3.9; зависимостей нет, только стандартная библиотека.
+requires-python = ">=3.8"
+
+[project.scripts]
+atlas = "atlas.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

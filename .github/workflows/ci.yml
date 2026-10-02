@@ -1,0 +1,34 @@
+name: CI
+on:
+  push:
+  pull_request:
+jobs:
+  test:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      # Тот же python3, что у пользователя: системный из Command Line Tools (3.9 на macOS 13+).
+      - name: Tests on the system python3
+        run: |
+          /usr/bin/python3 --version
+          /usr/bin/python3 -m venv .venv
+          .venv/bin/pip install --quiet pytest
+          .venv/bin/python -m pytest -q
+      - name: Page translations
+        run: node tools/check_i18n.js
+      - name: Build
+        run: /usr/bin/python3 tools/build.py --out dist
+  # Самый старый поддерживаемый: python3 из Command Line Tools 13 на macOS 12 — это 3.8.
+  python38:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: astral-sh/setup-uv@v6
+      - name: Tests on python 3.8
+        run: uv run --no-project --python 3.8 --with pytest python -m pytest -q

@@ -1,4 +1,4 @@
-"""Текст плана для диалога: по пути с экрана, иначе по slug из транскрипта; за каталог — ни шагу."""
+"""Plan text for the dialog: by the on-screen path, else by the transcript slug; never outside the folder."""
 from __future__ import annotations
 
 from atlas import plans
@@ -20,7 +20,7 @@ def _setup(tmp_path):
 def test_screen_path_first_then_slug(tmp_path):
     folder, transcript = _setup(tmp_path)
     assert plans.plan_text(transcript, "~/.claude/plans/other.md", folder)["text"] == "# План B"
-    assert plans.plan_text(transcript, None, folder)["text"] == "# План A"     # последний slug
+    assert plans.plan_text(transcript, None, folder)["text"] == "# План A"     # latest slug
 
 
 def test_paths_outside_the_plans_folder_are_ignored(tmp_path):

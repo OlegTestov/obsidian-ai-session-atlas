@@ -1,9 +1,0 @@
-{
-  "id": "session-atlas",
-  "name": "Session Atlas",
-  "version": "2.0.0",
-  "minAppVersion": "1.4.11",
-  "description": "Search, watch and resume your Claude Code and Codex sessions: a catalog with full-text search, live session cards you can answer from, usage stats, and agent terminals that come back after a restart.",
-  "author": "Oleg Testov",
-  "isDesktopOnly": true
-}

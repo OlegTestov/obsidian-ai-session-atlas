@@ -1,8 +1,8 @@
-// Настройки плагина: проверки окружения, язык, агенты, каталог, ИИ, уведомления, проводник.
-const { PluginSettingTab, Setting } = require("obsidian");
-const { renderStatus, renderCatalog, renderAi, renderAdvanced } = require("./settings-server");
+// Plugin settings: environment checks, language, agents, catalog, AI, notifications, file explorer.
+import { PluginSettingTab, Setting } from "obsidian";
+import { renderStatus, renderCatalog, renderAi, renderAdvanced } from "./settings-server";
 
-const DEFAULT_SETTINGS = { notify: true, systemNotify: true, explorerClicks: true, language: "en",
+const DEFAULT_SETTINGS = { notify: true, systemNotify: true, explorerClicks: false, language: "en",
                            agents: {}, agentArgs: { claude: "", codex: "" }, terminalFontSize: 13,
                            cardMessages: 10 };
 
@@ -32,7 +32,7 @@ class AtlasSettingTab extends PluginSettingTab {
   display() {
     const t = (k) => this.plugin.t(k);
     this.containerEl.empty();
-    renderStatus(this).catch((error) => console.error("Session Atlas: проверки", error));
+    renderStatus(this).catch((error) => console.error("Session Atlas: environment checks failed", error));
     new Setting(this.containerEl)
       .setName(t("settings.language"))
       .setDesc(t("settings.language.desc"))
@@ -44,9 +44,9 @@ class AtlasSettingTab extends PluginSettingTab {
         .onChange(async (value) => {
           this.plugin.settings.language = value;
           await this.save();
-          this.display();                  // сама страница настроек — сразу на новом языке
+          this.display();                  // the settings page itself switches to the new language at once
         }));
-    this.containerEl.createEl("h3", { text: t("settings.agentsHeading") });
+    new Setting(this.containerEl).setName(t("settings.agentsHeading")).setHeading();
     for (const kind of ["claude", "codex"]) {
       new Setting(this.containerEl)
         .setName(t(`settings.agent.${kind}`))
@@ -87,13 +87,13 @@ class AtlasSettingTab extends PluginSettingTab {
         .onChange(async (value) => {
           this.plugin.settings.cardMessages = value;
           await this.save();
-          // Число уходит странице в адресе: открытые вкладки каталога перерисуются с ним.
-          clearTimeout(this.reloadTimer);
-          this.reloadTimer = setTimeout(() => this.plugin.reloadAtlasViews(), 600);
+          // The number reaches the page in its URL: open catalog tabs re-render with it.
+          window.clearTimeout(this.reloadTimer);
+          this.reloadTimer = window.setTimeout(() => this.plugin.reloadAtlasViews(), 600);
         }));
     renderCatalog(this);
     renderAi(this);
-    this.containerEl.createEl("h3", { text: t("settings.otherHeading") });
+    new Setting(this.containerEl).setName(t("settings.otherHeading")).setHeading();
     this.toggle("notify", "settings.notify", "settings.notify.desc");
     this.toggle("systemNotify", "settings.systemNotify", "settings.systemNotify.desc");
     this.toggle("explorerClicks", "settings.explorer", "settings.explorer.desc");
@@ -101,4 +101,4 @@ class AtlasSettingTab extends PluginSettingTab {
   }
 }
 
-module.exports = { AtlasSettingTab, DEFAULT_SETTINGS };
+export { AtlasSettingTab, DEFAULT_SETTINGS };

@@ -1,34 +1,43 @@
-"""Поиск: кандидаты из FTS5, фильтры карточки, подсветка только видимой страницы."""
+"""Search: candidates from FTS5, card filters, highlighting only for the visible page."""
 from __future__ import annotations
 
 import sqlite3
 
 from . import query as q
-from .query import (FTS_COLUMNS, IDENTIFIER_RE, PREFIX_MIN_LEN, SCOPE_COLUMNS,  # noqa: F401
-                    STEM_FLOOR, QueryError, build_match, is_pathlike, stem_prefix)
+from .query import (  # noqa: F401
+    FTS_COLUMNS,
+    IDENTIFIER_RE,
+    PREFIX_MIN_LEN,
+    SCOPE_COLUMNS,
+    STEM_FLOOR,
+    QueryError,
+    build_match,
+    is_pathlike,
+    stem_prefix,
+)
 
-# Вес колонки в bm25. Заголовок и тикет опознают сессию точнее, чем случайная фраза в ответе.
+# Column weights for bm25. Title and ticket identify a session better than a phrase in a reply.
 COLUMN_WEIGHTS = {"title": 10.0, "user_text": 5.0, "assistant_text": 2.0,
                   "commands": 3.0, "paths": 3.0, "tickets": 8.0, "summaries": 4.0,
                   "subagent_text": 1.5}
 
-# Сколько полей с фрагментом отдаётся на сессию: остальные — только счётчиком.
+# How many fields with a snippet are returned per session: the rest only as a count.
 FRAGMENTS_PER_SESSION = 2
 
 
 def _weights() -> list[float]:
-    # Первая колонка fts — session_id: без нуля впереди веса съезжали на колонку вправо
-    # (вес заголовка доставался session_id, заголовку — вес запросов и так далее).
+    # The first fts column is session_id: without a leading zero the weights shift one column right
+    # (the title weight goes to session_id, the requests weight to the title, and so on).
     return [0.0] + [COLUMN_WEIGHTS[c] for c in FTS_COLUMNS] + [0.0]
 
 
 def _session_where(kinds, include_automation, since) -> tuple[list[str], list]:
-    """Вид сессии и дата — в SQL: фоновых прогонов сотни, и отбрасывать их в Python дорого."""
+    """Session kind and date are filtered in SQL: there are hundreds of background runs."""
     where, args = [], []
     if not include_automation and not kinds:
         where.append("s.session_kind = 'interactive'")
     elif kinds:
-        where.append("s.session_kind IN (%s)" % ",".join("?" * len(kinds)))
+        where.append(f"s.session_kind IN ({','.join('?' * len(kinds))})")
         args += kinds
     if since:
         where.append("s.last_activity_at >= ?")
@@ -41,9 +50,9 @@ def _scoped(columns: tuple[str, ...], expr: str) -> str:
 
 
 def _best_per_session(conn, match: str, where: list[str], args: list) -> dict[str, float]:
-    """Лучшая оценка bm25 по строкам-ходам сессии: строка — ход, решает лучший ход.
+    """Best bm25 score over the session's turn rows: a row is a turn, the best turn decides.
 
-    Минимум — в Python: bm25 нельзя звать внутри группировки SQLite.
+    The minimum is taken in Python: bm25 cannot be called inside a SQLite GROUP BY.
     """
     weights = _weights()
     sql = f"""
@@ -60,19 +69,16 @@ def _best_per_session(conn, match: str, where: list[str], args: list) -> dict[st
 
 def _candidates(conn: sqlite3.Connection, parsed: q.Parsed, columns: tuple[str, ...], *, kinds,
                 include_automation, since, order) -> list[tuple[str, float]]:
-    """Сессии, где есть каждая группа слов запроса — в любых ходах, а не обязательно в одном.
+    """Sessions containing every word group of the query, in any turns, not necessarily one.
 
-    Группа — слово или «ИЛИ»-связка; исключённые слова вычитаются по всей сессии.
+    A group is a word or an OR chain; excluded words are subtracted over the whole session.
     """
     where, args = _session_where(kinds, include_automation, since)
     total: dict[str, float] | None = None
     for group in parsed.groups:
         expr = group[0].fts() if len(group) == 1 else "(" + " OR ".join(t.fts() for t in group) + ")"
         found = _best_per_session(conn, _scoped(columns, expr), where, args)
-        if total is None:
-            total = found
-        else:
-            total = {sid: total[sid] + score for sid, score in found.items() if sid in total}
+        total = found if total is None else {sid: total[sid] + score for sid, score in found.items() if sid in total}
         if not total:
             return []
     for term in parsed.excluded:
@@ -81,19 +87,19 @@ def _candidates(conn: sqlite3.Connection, parsed: q.Parsed, columns: tuple[str, 
     if not total:
         return []
     dates = {r["session_id"]: r["last_activity_at"] or "" for r in conn.execute(
-        "SELECT session_id, last_activity_at FROM sessions WHERE session_id IN (%s)"
-        % ",".join("?" * len(total)), list(total))}
+        f"SELECT session_id, last_activity_at FROM sessions WHERE session_id IN ({','.join('?' * len(total))})",
+        list(total))}
     if order == "date":
         keys = sorted(total, key=lambda sid: dates.get(sid, ""), reverse=True)
     else:
         by_date = sorted(total, key=lambda sid: dates.get(sid, ""), reverse=True)
-        keys = sorted(by_date, key=lambda sid: total[sid])      # устойчиво: при равенстве — дата
+        keys = sorted(by_date, key=lambda sid: total[sid])      # stable: ties keep date order
     return [(sid, total[sid]) for sid in keys]
 
 
 def _trigram_extra(conn, query: str, known: set[str], limit: int, *, kinds,
                    include_automation, since) -> list[tuple[str, float]]:
-    """Подстрочный поиск по путям и командам: `release.mjs` внутри `deploy-release.mjs`."""
+    """Substring search over paths and commands: `release.mjs` inside `deploy-release.mjs`."""
     extra, extra_args = _session_where(kinds, include_automation, since)
     where = " AND ".join(["fts_paths MATCH ?", *extra])
     out = []
@@ -111,7 +117,7 @@ def _trigram_extra(conn, query: str, known: set[str], limit: int, *, kinds,
 
 
 def _sessions_matching(conn, match: str, session_ids: list[str]) -> dict[str, int]:
-    """Сколько строк сессии подходят под выражение — по каждой из заданных сессий."""
+    """How many session rows match the expression, for each of the given sessions."""
     if not session_ids:
         return {}
     marks = ",".join("?" * len(session_ids))
@@ -123,20 +129,20 @@ def _sessions_matching(conn, match: str, session_ids: list[str]) -> dict[str, in
 
 
 def _by_relevance(conn, parsed: q.Parsed, cands, columns) -> list[tuple[str, float]]:
-    """Сначала заголовок со всеми словами, потом слова рядом в одном ходе, потом bm25.
+    """Title with all words first, then words close together in one turn, then bm25.
 
-    Один bm25 поднимал наверх огромные сессии, где слова запроса разбросаны по мегабайтам.
-    Близость считается внутри строки-хода: через границу двух сообщений она больше не ловится.
+    bm25 alone ranks first huge sessions with query words scattered over megabytes.
+    Closeness is measured inside a turn row, so it does not match across two messages.
     """
     ids = [sid for sid, _ in cands]
     if not ids:
         return cands
     in_title = set(_sessions_matching(conn, q.title_match(parsed), ids))
-    pairs = {sid: 0 for sid in ids}
+    pairs = dict.fromkeys(ids, 0)
     for near in q.near_pairs(parsed, columns):
         for sid in _sessions_matching(conn, near, ids):
             pairs[sid] += 1
-    position = {sid: i for i, sid in enumerate(ids)}      # внутри ступени — порядок bm25
+    position = {sid: i for i, sid in enumerate(ids)}      # within a tier, bm25 order
     return sorted(cands, key=lambda c: (c[0] not in in_title, -pairs[c[0]], position[c[0]]))
 
 
@@ -151,7 +157,7 @@ def _filtered(conn, candidates, cache: dict, *, projects, domains,
             continue
         if projects and not (set(projects) & set(meta["projects"])):
             continue
-        # Домен может прийти от классификатора, поэтому фильтруется после сборки карточки.
+        # The domain may come from the classifier, so it is filtered after the card is built.
         if domains and not (set(domains) & set(meta["domains"])):
             continue
         if topics and meta["topic"] not in topics:
@@ -162,8 +168,8 @@ def _filtered(conn, candidates, cache: dict, *, projects, domains,
 
 def _highlight(conn, parsed: q.Parsed, session_ids: list[str],
                columns: tuple[str, ...]) -> dict[str, list[dict]]:
-    """Подсветка по строкам-ходам видимых сессий: совпадения суммируются, фрагмент — из хода,
-    где сошлось больше разных слов запроса."""
+    """Highlighting over turn rows of the visible sessions: matches are summed, the snippet comes
+        from the turn where most distinct query words meet."""
     found: dict[str, dict[str, dict]] = {sid: {} for sid in session_ids}
     if not session_ids:
         return {sid: [] for sid in session_ids}
@@ -196,7 +202,7 @@ def _highlight(conn, parsed: q.Parsed, session_ids: list[str],
 
 
 def _whole(marked: str) -> list[dict]:
-    """Заголовок короткий — отдаётся целиком, с подсветкой на месте."""
+    """The title is short: returned whole, highlighted in place."""
     return q.segments(marked, width=len(marked) + 1)[0]
 
 
@@ -205,7 +211,7 @@ def run(conn: sqlite3.Connection, query: str, limit: int = 20,
         kinds: list[str] | None = None, since: str | None = None,
         include_automation: bool = False, topics: list[str] | None = None,
         scope: str = "prompts", order: str = "date") -> dict:
-    """Выдача вместе с тем, как понят запрос, полным числом и подсказкой про другую область."""
+    """Results plus how the query was understood, the full count and a hint about another scope."""
     parsed = q.parse(query)
     out = {"results": [], "total": 0, "plan": q.describe(parsed), "elsewhere": None,
            "error": None}
@@ -217,8 +223,8 @@ def run(conn: sqlite3.Connection, query: str, limit: int = 20,
     if not match:
         return out
     scope = scope if scope in SCOPE_COLUMNS else "prompts"
-    opts = dict(kinds=kinds, include_automation=include_automation, since=since)
-    filters = dict(projects=projects, domains=domains, topics=topics)
+    opts = {"kinds": kinds, "include_automation": include_automation, "since": since}
+    filters = {"projects": projects, "domains": domains, "topics": topics}
     cache: dict = {}
 
     columns = SCOPE_COLUMNS[scope]
@@ -235,11 +241,11 @@ def run(conn: sqlite3.Connection, query: str, limit: int = 20,
     for sid, meta, score in page:
         matches = found.get(sid)
         if not matches:
-            # Триграммная добавка: слово нашлось подстрокой пути, токен FTS его не видит.
+            # Trigram addition: the word was found as a path substring, the FTS token misses it.
             matches = [{"field": "paths", "segments": [], "fragment": "", "hits": 0,
                         "score": 0.0}]
-        # Заголовок обычно и есть первый запрос: во фрагментах и в общем счёте он дублирует
-        # запросы, поэтому подсвечивается на месте, а не отдельным фрагментом.
+        # The title is usually the first request: in snippets and in the total it duplicates the
+        # requests, so it is highlighted in place, not as a separate snippet.
         title = next((m for m in matches if m["field"] == "title"), None)
         body = [m for m in matches if m["field"] != "title"] or matches
         meta["score"] = round(-score, 4) if score else 0.0
@@ -250,8 +256,8 @@ def run(conn: sqlite3.Connection, query: str, limit: int = 20,
                            for m in body[:FRAGMENTS_PER_SESSION]]
         out["results"].append(meta)
 
-    # Узкая область по умолчанию прячет сессии, где слово было только в ответах или командах.
-    # Сколько их — говорим, а не молчим: иначе «ничего не нашлось» выглядит как правда.
+    # The narrow default scope hides sessions where the word was only in replies or commands.
+    # Their number is reported, not hidden: otherwise "nothing found" looks like the truth.
     if scope == "prompts":
         wide = _filtered(conn, _candidates(conn, parsed, FTS_COLUMNS, order=order, **opts),
                          cache, **filters)
@@ -280,12 +286,12 @@ def _load_session(conn: sqlite3.Connection, session_id: str) -> dict | None:
     verdict = conn.execute(
         "SELECT domain, topic, summary, confidence, content_hash FROM classification "
         "WHERE session_id=?", (session_id,)).fetchone()
-    # Ручное значение перебивает правило и никогда не перезаписывается индексатором.
+    # A manual value overrides the rule and is never overwritten by the indexer.
     sensitivity = (override["sensitivity"] if override and override["sensitivity"]
                    else row["sensitivity_rule"])
-    # Приоритет: ручное → вердикт модели → правило по пути.
-    # Модель выше правила намеренно: правило видит только путь, а «сессия тронула файл в
-    # ~/.claude» не делает работу над клиентским репозиторием cross-cutting.
+    # Priority: manual → model verdict → path rule.
+    # The model ranks above the rule on purpose: the rule sees only the path, and "the session
+    # touched a file in ~/.claude" does not make work on a client repository cross-cutting.
     if override and override["domain"]:
         final_domains, domain_source = [override["domain"]], "manual"
     elif verdict and verdict["domain"]:
@@ -343,12 +349,12 @@ def recent(conn: sqlite3.Connection, limit: int = 60, projects: list[str] | None
            domains: list[str] | None = None, since: str | None = None,
            include_automation: bool = False, topics: list[str] | None = None,
            scope: str = "prompts", order: str = "date") -> list[dict]:
-    """Список без запроса: последняя активность сверху."""
+    """List without a query: most recent activity first."""
     sql = ["SELECT s.session_id FROM sessions s"]
     where, args = [], []
     if projects:
         sql.append("JOIN session_projects p ON p.session_id = s.session_id")
-        where.append("p.project_id IN (%s)" % ",".join("?" * len(projects)))
+        where.append(f"p.project_id IN ({','.join('?' * len(projects))})")
         args += projects
     if not include_automation:
         where.append("s.session_kind = 'interactive'")
@@ -364,7 +370,7 @@ def recent(conn: sqlite3.Connection, limit: int = 60, projects: list[str] | None
         meta = _load_session(conn, row["session_id"])
         if not meta:
             continue
-        # Домен может прийти от классификатора, поэтому фильтруется после сборки карточки.
+        # The domain may come from the classifier, so it is filtered after the card is built.
         if domains and not (set(domains) & set(meta["domains"])):
             continue
         if topics and meta["topic"] not in topics:
@@ -376,13 +382,13 @@ def recent(conn: sqlite3.Connection, limit: int = 60, projects: list[str] | None
             break
     return out
 
-# Запрос показывается как есть: переносы строк в нём несут смысл (списки, таблицы).
-# Но длину надо ограничить — целиком запросы читаются в своём блоке карточки.
+# The request is shown as is: line breaks in it carry meaning (lists, tables).
+# But the length is limited: full requests are read in their own card block.
 QUOTE_LIMIT = 900
 
 
 def _trim_quote(text: str, limit: int = QUOTE_LIMIT) -> str:
-    """Схлопывает пустые строки и обрезает по границе строки, сохраняя разбивку."""
+    """Collapses blank lines and cuts at a line boundary, keeping the line breaks."""
     lines = [ln.rstrip() for ln in (text or "").splitlines()]
     kept: list[str] = []
     for line in lines:
@@ -394,17 +400,17 @@ def _trim_quote(text: str, limit: int = QUOTE_LIMIT) -> str:
         return out
     head = out[:limit]
     edge = head.rfind("\n")
-    # Граница строки — только если она близко к концу: иначе одна длинная строка
-    # срезает всю выдержку до предыдущего абзаца.
+    # Cut at a line boundary only if it is near the end: otherwise one long line
+    # cuts the whole excerpt back to the previous paragraph.
     if edge > limit * 0.7:
         head = head[:edge]
     return head.rstrip() + " …"
 
 
 def local_state(conn: sqlite3.Connection, session_id: str) -> dict | None:
-    """«Где остановились», собранное из транскрипта без единого вызова модели.
+    """The "where we left off" block, built from the transcript without any model call.
 
-    Главный блок карточки не должен зависеть от внешнего вызова: всё нужное уже на диске.
+    The main card block must not depend on an external call: all it needs is already on disk.
     """
     row = conn.execute(
         "SELECT source_path, cwd_last, branch_last, last_prompt FROM sessions WHERE session_id=?",
@@ -416,7 +422,7 @@ def local_state(conn: sqlite3.Connection, session_id: str) -> dict | None:
     tail = facts.assistant_text[-1] if facts.assistant_text else ""
     summary = facts.summaries[-1] if facts.summaries else None
     if summary:
-        # Преамбула одинакова у всех сводок и места в карточке не стоит.
+        # The preamble is the same in all summaries and is not worth card space.
         marker = "Summary:"
         if marker in summary[:400]:
             summary = summary.split(marker, 1)[1].lstrip()
@@ -433,7 +439,7 @@ def local_state(conn: sqlite3.Connection, session_id: str) -> dict | None:
 
 
 def load_prompts(conn: sqlite3.Connection, session_id: str, limit: int = 40) -> list[str]:
-    """Промпты разбираются по требованию: держать их в БД ради карточки незачем."""
+    """Prompts are parsed on demand: there is no reason to keep them in the DB for the card."""
     row = conn.execute(
         "SELECT source_path FROM sessions WHERE session_id=?", (session_id,)
     ).fetchone()

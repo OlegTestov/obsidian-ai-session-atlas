@@ -1,4 +1,4 @@
-"""Схема и подключение. Производные таблицы пересоздаются, авторитетные — никогда."""
+"""Schema and connection. Derived tables are recreated; authoritative ones never are."""
 from __future__ import annotations
 
 import os
@@ -7,15 +7,15 @@ import sqlite3
 
 SCHEMA_VERSION = 10
 
-# Три уровня, и путать их нельзя.
-# 1) Правится вручную и из транскриптов не восстанавливается.
+# Three tiers, and they must not be mixed up.
+# 1) Edited by hand; cannot be restored from transcripts.
 AUTHORITATIVE = ("user_overrides", "pending_launches", "egress_grants")
 
-# 2) Восстановимо, но дорого: за каждую строку заплачено вызовом модели. При смене схемы
-# колонки дописываются, а таблица не сносится. Чистится только явным purge-cache.
+# 2) Restorable but expensive: every row was paid for with a model call. On a schema change,
+# columns are added and the table is kept. Cleared only by an explicit purge-cache.
 EXPENSIVE = ("enrichment", "classification")
 
-# 3) Пересобирается из транскриптов за секунды — сносится свободно.
+# 3) Rebuilt from transcripts in seconds; dropped freely.
 DERIVED = (
     "sources", "sessions", "session_projects", "session_files",
     "session_links", "session_tickets", "session_domains", "fts", "fts_paths", "parse_state",
@@ -95,8 +95,8 @@ CREATE TABLE IF NOT EXISTS session_links (
   session_id TEXT NOT NULL, kind TEXT NOT NULL, url TEXT, title TEXT
 );
 
--- «Статистика»: ответ модели или запрос человека. Ключ — message.id / uuid записи: копии
--- в возобновлённых сессиях схлопываются по нему при подсчёте (atlas/stats.py).
+-- "Stats": a model reply or a human prompt. The key is message.id / the record uuid: copies
+-- in resumed sessions collapse on it when counting (atlas/stats.py).
 CREATE TABLE IF NOT EXISTS activity (
   session_id  TEXT NOT NULL,
   key         TEXT NOT NULL,
@@ -117,8 +117,8 @@ CREATE INDEX IF NOT EXISTS ix_projects_project  ON session_projects(project_id);
 CREATE INDEX IF NOT EXISTS ix_files_session     ON session_files(session_id);
 CREATE INDEX IF NOT EXISTS ix_tickets_ticket    ON session_tickets(ticket);
 
--- Строка — ход сессии (turn ≥ 1), плюс служебные: -2 заголовок/тикеты/пути, -1 сабагенты.
--- Колонку turn держать последней: highlight() берёт колонку по номеру.
+-- One row per session turn (turn ≥ 1), plus service rows: -2 title/tickets/paths, -1 subagents.
+-- Keep the turn column last: highlight() picks the column by index.
 CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(
   session_id UNINDEXED, title, user_text, assistant_text,
   commands, paths, tickets, summaries, subagent_text, turn UNINDEXED,
@@ -129,7 +129,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS fts_paths USING fts5(
   session_id UNINDEXED, blob, turn UNINDEXED, tokenize='trigram'
 );
 
--- Состояние разбора: с какого байта дочитывать и чем был хвост. Производное.
+-- Parse state: the byte to resume reading from and what the tail was. Derived.
 CREATE TABLE IF NOT EXISTS parse_state (
   session_id TEXT PRIMARY KEY,
   path       TEXT NOT NULL,
@@ -141,7 +141,7 @@ CREATE TABLE IF NOT EXISTS parse_state (
   state      TEXT NOT NULL
 );
 
--- Кэш LLM-слоя. Производный: ключ включает версии экстрактора и промпта.
+-- LLM layer cache. Derived: the key includes the extractor and prompt versions.
 CREATE TABLE IF NOT EXISTS enrichment (
   session_id        TEXT NOT NULL,
   artifact_kind     TEXT NOT NULL,
@@ -156,7 +156,7 @@ CREATE TABLE IF NOT EXISTS enrichment (
   PRIMARY KEY (session_id, artifact_kind)
 );
 
--- Вердикт классификатора. Производный: пересчитывается при смене контента или версии.
+-- Classifier verdict. Derived: recomputed when the content or version changes.
 CREATE TABLE IF NOT EXISTS classification (
   session_id         TEXT PRIMARY KEY,
   domain             TEXT,
@@ -171,7 +171,7 @@ CREATE TABLE IF NOT EXISTS classification (
 );
 CREATE INDEX IF NOT EXISTS ix_classification_topic ON classification(topic);
 
--- Джобы: один активный на (сессия, состояние контента, действие).
+-- Jobs: one active job per (session, content state, action).
 CREATE TABLE IF NOT EXISTS jobs (
   job_id       TEXT PRIMARY KEY,
   session_id   TEXT NOT NULL,
@@ -187,8 +187,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_jobs_active
   ON jobs(session_id, action_kind, content_hash)
   WHERE state IN ('queued', 'running');
 
--- АВТОРИТЕТНОЕ. Новая сессия заведена, но ещё не запускалась: derived_from появится,
--- когда её транскрипт реально обнаружится.
+-- AUTHORITATIVE. A new session is registered but not started yet: derived_from appears
+-- once its transcript is actually found.
 CREATE TABLE IF NOT EXISTS pending_launches (
   new_session_id    TEXT PRIMARY KEY,
   source_session_id TEXT NOT NULL,
@@ -197,7 +197,7 @@ CREATE TABLE IF NOT EXISTS pending_launches (
   confirmed_at      TEXT
 );
 
--- АВТОРИТЕТНОЕ. Разрешение на отправку наружу: одна операция, конкретное состояние контента.
+-- AUTHORITATIVE. Permission to send data out: one operation, one specific content state.
 CREATE TABLE IF NOT EXISTS egress_grants (
   session_id    TEXT NOT NULL,
   content_hash  TEXT NOT NULL,
@@ -214,7 +214,7 @@ CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 
 
 def atlas_home() -> str:
-    """ATLAS_HOME переопределяет расположение — нужно тестам и переносу."""
+    """ATLAS_HOME overrides the location; tests and relocation need it."""
     home = os.environ.get("ATLAS_HOME") or os.path.expanduser(
         "~/Library/Application Support/session-atlas"
     )
@@ -238,13 +238,13 @@ def connect(path: str | None = None) -> sqlite3.Connection:
     conn.execute("PRAGMA busy_timeout=30000")
     conn.execute("PRAGMA foreign_keys=ON")
     _migrate(conn)
-    # Схема уже на месте — ничего не пишем. Иначе каждое подключение (а сервер открывает его
-    # на каждый запрос) ждёт, пока фоновый индексатор допишет транзакцию большого файла.
+    # Schema already in place: write nothing. Otherwise every connection (the server opens one
+    # per request) waits for the background indexer to finish a large file's transaction.
     if _schema_is_current(conn):
         return conn
     conn.executescript(SCHEMA)
-    # Версию только повышаем. Старый долгоживущий процесс (сервер под launchd) иначе
-    # откатит её на свою, а следующий запуск новой версии снесёт производные таблицы.
+    # Only raise the version. Otherwise an old long-lived process (server under launchd)
+    # rolls it back to its own, and the next start of the new version drops derived tables.
     conn.execute(
         "INSERT INTO meta(key, value) VALUES('schema_version', ?) "
         "ON CONFLICT(key) DO UPDATE SET value=excluded.value "
@@ -264,29 +264,29 @@ def _schema_is_current(conn: sqlite3.Connection) -> bool:
     if row is None or int(row["value"]) < SCHEMA_VERSION:
         return False
     present = {r[0] for r in conn.execute("SELECT name FROM sqlite_master")}
-    return _SCHEMA_OBJECTS <= present
+    return present >= _SCHEMA_OBJECTS
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
-    """CREATE TABLE IF NOT EXISTS не добавляет колонки в уже существующую таблицу.
-    Производное можно просто пересоздать — авторитетное при этом не трогается."""
+    """CREATE TABLE IF NOT EXISTS does not add columns to an existing table.
+    Derived tables can simply be recreated; authoritative ones stay untouched."""
     conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
     row = conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
     if row is None:
-        return                                   # свежая база: скрипт создаст всё сам
+        return                                   # fresh database: the script creates everything
     if int(row["value"]) >= SCHEMA_VERSION:
         return
     _add_missing_columns(conn)
     for table in DERIVED:
         conn.execute(f"DROP TABLE IF EXISTS {table}")
-    # Снести производное мало: кто-то должен его пересобрать, иначе интерфейс пустой.
+    # Dropping derived tables is not enough: something must rebuild them, or the UI stays empty.
     conn.execute("INSERT INTO meta(key, value) VALUES('needs_reindex', '1') "
                  "ON CONFLICT(key) DO UPDATE SET value='1'")
     conn.commit()
 
 
 def drop_derived(conn: sqlite3.Connection) -> None:
-    """rebuild трогает только дешёвое: ручные правки и оплаченные вызовы модели остаются."""
+    """rebuild touches only cheap data: manual edits and paid model calls stay."""
     for table in DERIVED:
         conn.execute(f"DROP TABLE IF EXISTS {table}")
     conn.executescript(SCHEMA)
@@ -296,7 +296,7 @@ def drop_derived(conn: sqlite3.Connection) -> None:
 
 
 def purge_cache(conn: sqlite3.Connection) -> dict:
-    """Явная чистка оплаченного: описания, хендоффы и классификация строятся заново."""
+    """Explicit purge of paid data: descriptions, handoffs and classification are built again."""
     counts = {}
     for table in EXPENSIVE:
         try:
@@ -310,7 +310,7 @@ def purge_cache(conn: sqlite3.Connection) -> dict:
 
 
 def _add_missing_columns(conn: sqlite3.Connection) -> None:
-    """Авторитетные таблицы не пересоздаются — в них колонки только дописываются."""
+    """Authoritative tables are never recreated; columns are only added to them."""
     for table, column, decl in (("user_overrides", "topic", "TEXT"),
                                 ("user_overrides", "title", "TEXT"),
                                 ("classification", "topic", "TEXT"),

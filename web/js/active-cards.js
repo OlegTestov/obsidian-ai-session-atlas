@@ -1,5 +1,6 @@
-// «Активные»: карточка, последний ответ и поле быстрого ответа.
-// Классический скрипт: общий глобальный контекст с остальными файлами страницы.
+// Active: the card, the last reply and the quick reply field.
+// Classic script: shares one global scope with the other page files.
+/* exported activeCard, FEED_SVG, HIDE_SVG, STOP_SVG -- used by other page scripts */
 function activeCard(s) {
   const full = activeMode === "full";
   const act = s.activity || s.status;
@@ -16,7 +17,7 @@ function activeCard(s) {
   const status = STATUS[act] || STATUS.idle;
   const state = el("span", "state");
   const reasons = backgroundReasons(s.background);
-  // После «Стоп» до следующего опроса статус — итог остановки, а не прежний «работает».
+  // After Stop and until the next poll, the status is the stop result, not the old "working".
   state.append(el("span", "dot"), document.createTextNode(stopNotes.get(s.session_id)
     || (act === "background" && !full ? i18n("active.status.backgroundShort") : status.label)));
   state.title = s.waiting_for ? `${status.hint} (${s.waiting_for})`
@@ -33,7 +34,7 @@ function activeCard(s) {
   if (tasks && full) card.appendChild(tasksLine(tasks));
 
   const tags = el("div", "tags");
-  if (tasks && !full) {                  // компактно отдельной строки нет места — метка в тегах
+  if (tasks && !full) {                  // compact view has no room for a separate line: the label goes into the tags
     const pill = el("span", "pill task" + (tasks.finished ? " done" : ""),
                     (tasks.current ? "▶ " : "") + i18n("active.tasksPill", { count: tasks.count }));
     pill.title = (tasks.current ? i18n("active.tasksNow", { task: tasks.current }) + "\n\n" : "") + tasks.hint;
@@ -55,12 +56,11 @@ function activeCard(s) {
   wheelScroll(tags);
   card.appendChild(tags);
 
-  const whenText = i18n("active.when", { start: fmtShort(s.started_at), ago: ago(s.last_message_at) });
   const whenHint = i18n("active.whenHint", { start: fmtDateTime(s.started_at),
                                              last: fmtDateTime(s.last_message_at) });
   const turns = s.human_turns == null ? i18n("active.turnsNone")
     : i18nN("active.turns", s.human_turns);
-  // Сейчас ≈ — последняя сумма Claude Code плюс ответы после неё по токенам; иначе — на дату.
+  // Now ≈ is Claude Code's last total plus later replies priced by tokens; otherwise as of a date.
   const cost = AtlasLogic.costText(s, iso => fmtShort(iso).split(",")[0]);
   const costHint = (s.cost_usd != null
       ? i18n("active.costRecorded", { cost: s.cost_usd.toFixed(2), at: s.cost_recorded_at
@@ -81,14 +81,14 @@ function activeCard(s) {
   if (pid) {
     go.addEventListener("click", () => tellTabHost("focus-tab", { ptyPid: pid }));
     close.addEventListener("click", () => {
-      // Подтверждение показывает сам Obsidian — то же окно, что и у крестика вкладки.
+      // Obsidian itself shows the confirmation: the same dialog as the tab's close button.
       tellTabHost("close-tab", { ptyPid: pid, title: s.title || s.session_id });
-      setTimeout(loadActive, 1500);
+      window.setTimeout(loadActive, 1500);
     });
   }
 
   if (full) {
-    // Подробно: кнопки в строке заголовка, даты и деньги одной строкой — место под ответ.
+    // Detailed: buttons in the header row, dates and money on one line to leave room for the reply.
     iconify(go, GO_SVG, i18n("active.go"));
     iconify(close, CLOSE_SVG, i18n("active.close"));
     const stopFull = stopButton(s, pid, true);
@@ -121,14 +121,14 @@ function activeCard(s) {
   card.append(when, nums);
   const dialog = dialogBlock(s, pid, false);
   if (dialog) {
-    card.classList.add("has-dialog");      // компактно: место описания и тегов — под диалог
+    card.classList.add("has-dialog");      // compact: the description and tags give their room to the dialog
     card.appendChild(dialog);
   }
   card.appendChild(foot);
   return card;
 }
 
-// Подробно: полоска сделанного, «3/7» и то, над чем агент работает сейчас.
+// Detailed: a progress bar, "3/7" and what the agent is working on right now.
 function tasksLine(t) {
   const line = el("div", "tasks" + (t.finished ? " done" : ""));
   const bar = el("span", "tbar");
@@ -141,10 +141,10 @@ function tasksLine(t) {
   return line;
 }
 
-// «26.08 16:36» — без запятой и года текущего: строка карточки должна помещаться.
+// "26.08 16:36": no comma and no current year, so the card line fits.
 const shortStart = iso => (iso ? fmtShort(iso).replace(",", "") : "");
 
-// Строка частей через « · »; контекст — отдельным цветным куском. Не влезла — крутится колесом.
+// Parts joined with " · "; the context is a separate coloured piece. If it does not fit, it scrolls with the wheel.
 function infoLine(cls, texts, context) {
   const line = el("div", cls + " hscroll", texts.join(" · "));
   if (context) {
@@ -156,7 +156,7 @@ function infoLine(cls, texts, context) {
   return line;
 }
 
-// Колесо мыши над строкой, которая не влезла, листает её вбок — без полосы прокрутки.
+// The mouse wheel over a line that does not fit scrolls it sideways, without a scrollbar.
 function wheelScroll(node) {
   node.addEventListener("wheel", e => {
     if (node.scrollWidth <= node.clientWidth || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
@@ -174,11 +174,11 @@ const STATUS = {
   idle: { label: i18n("active.status.idle"), hint: i18n("active.status.idleHint") },
 };
 
-// Твоё последнее сообщение, если Claude на него ещё не ответил: из транскрипта или только что
-// отправленное из карточки (транскрипт догоняет через несколько секунд).
+// Your last message if Claude has not answered it yet: from the transcript or just
+// sent from the card (the transcript catches up in a few seconds).
 function unansweredPrompt(s) {
   const found = AtlasLogic.unansweredPrompt(s, justSent.get(s.session_id));
-  if (found.dropSent) justSent.delete(s.session_id);   // транскрипт догнал или Claude ответил
+  if (found.dropSent) justSent.delete(s.session_id);   // the transcript caught up or Claude answered
   return found.prompt;
 }
 
@@ -204,11 +204,11 @@ function promptBlock(p, s) {
   return box;
 }
 
-// Сколько сообщений в подробной карточке — из настроек плагина (адрес страницы), по умолчанию 10.
+// Message count in the detailed card comes from the plugin settings (page address), default 10.
 const CARD_MESSAGES = Math.max(1, Math.min(30,
   Number(new URLSearchParams(location.search).get("msgs")) || 10));
 
-/** Подробная карточка: хвост переписки — прежние сообщения над последним блоком, общий скролл. */
+/** Detailed card: the conversation tail, earlier messages above the last block, one shared scroll. */
 function messagesBlock(s) {
   const latest = replyBlock(s);
   const earlier = AtlasLogic.cardHistory(s, unansweredPrompt(s), CARD_MESSAGES);
@@ -233,7 +233,7 @@ function historyMessage(m) {
   return box;
 }
 
-// Хвост последнего ответа Claude: вопрос к тебе обычно в конце, начало — отчёт о сделанном.
+// Tail of Claude's last reply: a question to you is usually at the end, the start reports the work.
 function replyBlock(s) {
   const mine = unansweredPrompt(s);
   if (mine) {
@@ -263,7 +263,7 @@ function replyBlock(s) {
     who.appendChild(more);
   }
   box.appendChild(who);
-  // Набранное во вкладке, пока Claude работал: ждёт своего хода в очереди Claude Code.
+  // Typed in the tab while Claude was working: waits for its turn in Claude Code's queue.
   const queued = s.queued || [];
   if (queued.length) {
     const first = queued[0].text.replace(/\s+/g, " ").slice(0, 80);
@@ -294,7 +294,7 @@ const FEED_SVG = [["path", { d: "M4 6h16M4 12h16M4 18h10" }]];
 const HIDE_SVG = [["path", { d: "M5 12h14" }]];
 const STOP_SVG = [["rect", { x: 7, y: 7, width: 10, height: 10, rx: 1 }]];
 
-// Кнопка-иконка в заголовке подробной карточки: там тесно, а подпись — в подсказке.
+// Icon button in the detailed card header: space is tight, the label goes into the tooltip.
 function iconify(button, parts, label) {
   button.replaceChildren(svgIcon(parts));
   button.classList.add("hico");
@@ -319,7 +319,7 @@ function svgIcon(parts) {
   return svg;
 }
 
-// Однострочное поле, которое растёт до шести строк по мере набора.
+// A single-line field that grows up to six lines while typing.
 const MAX_ROWS = 6;
 function autosize(area) {
   area.rows = 1;
@@ -335,8 +335,8 @@ function readAsDataURL(file) {
   });
 }
 
-// Картинка уходит на сервер файлом; в терминал плагин вставит путь — Claude Code сделает
-// из него вложение [Image #N].
+// An image goes to the server as a file; the plugin pastes its path into the terminal and Claude Code
+// turns it into an [Image #N] attachment.
 async function attachImages(sid, files) {
   const list = attachments.get(sid) || [];
   for (const file of files) {
@@ -428,7 +428,7 @@ function answerForm(s, pid) {
 
   const submit = () => {
     const text = area.value;
-    // «/effort» и «/model» без аргумента открыли бы во вкладке ползунок — выбор кнопками здесь.
+    // "/effort" and "/model" without an argument would open a slider in the tab, so buttons pick here.
     if (argChoices(text)) { chooser.show(text); return; }
     const images = (attachments.get(sid) || []).map(a => a.path);
     if ((!text.trim() && !images.length) || send.disabled) return;
@@ -436,16 +436,16 @@ function answerForm(s, pid) {
     pendingSends.set(nonce, sid);
     sentDrafts.set(nonce, { text, images: images.length });
     setSendNote(sid, i18n("active.sending"), "");
-    commandOutputs.delete(sid);                 // новый ответ заменит прошлый
+    commandOutputs.delete(sid);                 // a new reply replaces the previous one
     tellTabHost("send-text", { ptyPid: pid, claudePid: s.pid, sessionId: sid, text, images, nonce });
-    setTimeout(() => {
+    window.setTimeout(() => {
       if (!pendingSends.has(nonce)) return;
       pendingSends.delete(nonce);
       setSendNote(sid, i18n("active.noHostReply"), "bad");
     }, SEND_TIMEOUT_MS);
   };
   send.addEventListener("click", submit);
-  // Enter — отправить, Shift+Enter — перенос; «/» — подсказки команд, ↑ — история.
+  // Enter sends, Shift+Enter adds a line break; "/" shows command hints, ↑ walks the history.
   const suggest = enhanceComposer(area, sid, submit);
   const chooser = argChooser(area, submit);
   area.addEventListener("input", () => chooser.show(area.value));
@@ -453,11 +453,11 @@ function answerForm(s, pid) {
   const row = el("div", "row2");
   row.append(clip, area, send, picker);
   form.append(suggest, chooser.row, thumbs, row, note);
-  setTimeout(() => { renderThumbs(sid); if (area.value) autosize(area); }, 0);
+  window.setTimeout(() => { renderThumbs(sid); if (area.value) autosize(area); }, 0);
   return form;
 }
 
-// Пока в поле фокус, общая перерисовка пропускается — состояние отправки обновляем на месте.
+// While the field has focus the global redraw is skipped, so the send state updates in place.
 function setSendNote(sid, note, cls, clear) {
   sendState.set(sid, { note, cls });
   const area = document.querySelector(`.answer textarea[data-id="${CSS.escape(sid)}"]`);
@@ -468,7 +468,7 @@ function setSendNote(sid, note, cls, clear) {
   box.textContent = note;
 }
 
-// Что разбудит сессию без тебя — словами, для метки и подсказки.
+// What wakes the session without you, in words, for the label and the tooltip.
 function backgroundReasons(b) {
   return AtlasLogic.backgroundReasons(b, iso => new Date(iso).toLocaleTimeString(I18N.locale(),
     { hour:"2-digit", minute:"2-digit" }));

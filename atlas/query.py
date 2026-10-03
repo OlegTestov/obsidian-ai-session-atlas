@@ -1,4 +1,4 @@
-"""Разбор поискового запроса: операторы, точные и усечённые слова, MATCH для FTS5, фрагменты."""
+"""Search query parsing: operators, exact and truncated words, FTS5 MATCH, snippets."""
 from __future__ import annotations
 
 import re
@@ -6,29 +6,29 @@ from dataclasses import dataclass, field
 
 from .messages import msg
 
-# Порядок обязан совпадать со схемой fts: по индексу колонки берётся highlight().
+# The order must match the fts schema: highlight() takes the column by index.
 FTS_COLUMNS = ("title", "user_text", "assistant_text", "commands", "paths",
                "tickets", "summaries", "subagent_text")
 
-# По умолчанию ищем в разговоре, а не по всему индексу: «figma» иначе находит сессии,
-# где фигурировал одноимённый MCP-тул, а самого слова в запросах не было.
+# By default search the conversation, not the whole index: otherwise "figma" finds sessions
+# where an MCP tool of that name appeared, but the word itself was never in the requests.
 SCOPE_COLUMNS = {
     "prompts": ("title", "user_text"),
     "all": FTS_COLUMNS,
 }
 
-# unicode61 не стеммит, и одного префикса мало: «моделям» и «моделей» расходятся до конца
-# слова, так что «моделям*» не найдёт «моделей». Поэтому длинное слово усекается до основы.
+# unicode61 does not stem, and a prefix is not enough: «моделям» and «моделей» differ up to
+# the word end, so «моделям*» misses «моделей». So a long word is cut to its stem.
 PREFIX_MIN_LEN = 5
-STEM_FLOOR = 4  # короче основу не режем — «на*» матчит пол-корпуса
+STEM_FLOOR = 4  # no shorter stem: «на*» matches half the corpus
 
-# Идентификатор ищется точно: усечение «ABC-1548» до основы даёт «ABC-1*» и матчит любой тикет.
-# И число тоже: «1359» не должно находить «13».
+# Identifiers match exactly: stemming "ABC-1548" gives "ABC-1*", which matches any ticket.
+# Numbers too: "1359" must not find "13".
 IDENTIFIER_RE = re.compile(r"\d|[/\\._]")
 PATHLIKE_RE = re.compile(r"[/\\]|\.[A-Za-z0-9]{1,5}$")
 
-# Короткое русское слово основой не усечь («пла*» из «план» найдёт «плагин»), поэтому
-# перебираем его формы явно: «окно» → окна, окну, окном… Грубо, но без словаря.
+# A short Russian word cannot be cut to a stem («пла*» from «план» finds «плагин»), so
+# its forms are listed explicitly: «окно» → окна, окну, окном… Crude, but needs no dictionary.
 SHORT_CYR_RE = re.compile(r"^[а-яё]{3,4}$", re.I)
 _VOWEL_TAIL = "аоуеёыиьйяю"
 ENDINGS = ("а", "о", "у", "е", "ы", "и", "ой", "ом", "ам", "ами", "ах", "ов", "ей",
@@ -49,10 +49,10 @@ def word_forms(word: str) -> list[str]:
 
 
 class QueryError(ValueError):
-    """Запрос, который нельзя выполнить: объяснение уходит пользователю как есть."""
+    """A query that cannot run: the explanation goes to the user as is."""
 
 
-# Окончания, которые срезаются до основы: длинные проверяются первыми.
+# Endings cut off to get the stem: longer ones are checked first.
 _ENDINGS_RU = sorted((
     "ами", "ями", "ого", "его", "ому", "ему", "ыми", "ими", "ует", "ает", "яет", "ать", "ять",
     "ить", "еть", "ешь", "ишь",
@@ -65,10 +65,10 @@ _CYR = re.compile(r"[а-яё]", re.I)
 
 
 def stem_prefix(token: str) -> str:
-    """Основа слова для префиксного поиска — маленький стеммер вместо словаря.
+    """Word stem for prefix search: a tiny stemmer instead of a dictionary.
 
-    Срезается известное окончание; слово на согласную остаётся целым: «замер*» находит
-    «замера», а усечённое «заме*» тащило бы «заметки».
+    A known ending is cut; a word ending in a consonant stays whole: «замер*» finds
+    «замера», while a truncated «заме*» would also pull in «заметки».
     """
     n = len(token)
     if n < PREFIX_MIN_LEN:
@@ -101,7 +101,7 @@ class Term:
         return _quote(self.text)
 
     def near(self) -> str | None:
-        """Вид для NEAR(): там допустимы только фразы и префиксы, не группы ИЛИ."""
+        """Form for NEAR(): only phrases and prefixes are allowed there, not OR groups."""
         if self.kind == "stem":
             return self.fts()
         if self.kind == "forms":
@@ -115,7 +115,7 @@ class Term:
 
 @dataclass
 class Parsed:
-    groups: list[list[Term]] = field(default_factory=list)   # И между группами, ИЛИ внутри
+    groups: list[list[Term]] = field(default_factory=list)   # AND between groups, OR inside
     excluded: list[Term] = field(default_factory=list)
 
     @property
@@ -136,7 +136,7 @@ def _classify(word: str, quoted: bool) -> str:
 
 
 def parse(query: str) -> Parsed:
-    """`"фраза"` — как написано · `-слово` — исключить · `ИЛИ` — любое из двух."""
+    """`"phrase"`: as written · `-word`: exclude · `OR` (or `ИЛИ`): either of the two."""
     parsed = Parsed()
     join_or = False
     for m in _TOKEN_RE.finditer(query):
@@ -170,7 +170,7 @@ def _expr(parsed: Parsed) -> str:
             parts.append(group[0].fts())
         else:
             parts.append("(" + " OR ".join(t.fts() for t in group) + ")")
-    # Явный AND: неявное «И» FTS5 понимает только между фразами, а не рядом со скобками.
+    # Explicit AND: FTS5 applies implicit AND only between phrases, not next to parentheses.
     expr = " AND ".join(parts)
     for term in parsed.excluded:
         expr = f"({expr}) NOT {term.fts()}"
@@ -178,9 +178,9 @@ def _expr(parsed: Parsed) -> str:
 
 
 def build_match(query: str | Parsed, scope: str = "prompts") -> str:
-    """Литеральный поиск: каждый токен экранируется, длинные слова получают основу и `*`.
+    """Literal search: every token is escaped, long words get a stem and `*`.
 
-    scope сужает поиск до колонок: FTS5 понимает `{col1 col2} : (выражение)`.
+    scope narrows the search to columns: FTS5 understands `{col1 col2} : (expression)`.
     """
     parsed = parse(query) if isinstance(query, str) else query
     if not parsed.groups:
@@ -195,15 +195,15 @@ def build_match(query: str | Parsed, scope: str = "prompts") -> str:
 
 
 def column_match(parsed: Parsed, column: str) -> str:
-    """Есть ли в колонке хоть одно искомое слово — чтобы не подсвечивать пустые поля."""
+    """Whether the column has at least one query word, so empty fields are not highlighted."""
     return "{" + column + "} : (" + " OR ".join(t.fts() for t in parsed.positive) + ")"
 
 
-NEAR_DISTANCE = 10  # слов между соседними словами запроса: «рядом» в одном предложении
+NEAR_DISTANCE = 10  # words between adjacent query words: "near" means within one sentence
 
 
 def near_pairs(parsed: Parsed, columns: tuple[str, ...]) -> list[str]:
-    """По выражению на каждую пару соседних слов запроса: чем больше пар рядом, тем выше."""
+    """One expression per pair of adjacent query words: the more pairs are close, the higher."""
     singles = [g[0] for g in parsed.groups if len(g) == 1]
     cols = "{" + " ".join(columns) + "} : "
     return [cols + f"NEAR({a.near()} {b.near()}, {NEAR_DISTANCE})"
@@ -214,13 +214,13 @@ def title_match(parsed: Parsed) -> str:
     return "{title} : (" + _expr(Parsed(parsed.groups, [])) + ")"
 
 
-# Вид совпадения → ключ подписи в messages: подпись на языке страницы.
+# Match kind → label key in messages: the label is in the page language.
 HOW = {"exact": "query.how.exact", "stem": "query.how.forms", "forms": "query.how.forms",
        "phrase": "query.how.phrase"}
 
 
 def describe(parsed: Parsed) -> list[dict]:
-    """Как понят запрос — показывается под строкой поиска, чтобы выдача не была загадкой."""
+    """How the query was understood, shown under the search box so results are not a mystery."""
     out = []
     for i, group in enumerate(parsed.groups):
         for j, term in enumerate(group):
@@ -237,7 +237,7 @@ def is_pathlike(query: str) -> bool:
 
 
 def _unmark(marked: str) -> tuple[str, list[tuple[int, int]]]:
-    """Текст без меток и координаты совпадений в нём."""
+    """Text without markers and the match positions in it."""
     plain, spans, pos, size = [], [], 0, 0
     for m in _MARKED_RE.finditer(marked):
         gap, word = marked[pos:m.start()], m.group(1)
@@ -250,7 +250,7 @@ def _unmark(marked: str) -> tuple[str, list[tuple[int, int]]]:
 
 
 def _best_window(text: str, spans: list[tuple[int, int]], width: int) -> int:
-    """Окно, где сходится больше разных слов запроса: «окно новостей» лучше, чем два «окна»."""
+    """The window where most distinct query words meet: "news window" beats two "window"s."""
     best, best_key = 0, (-1, -1)
     for s, _ in spans:
         left = max(0, s - width // 3)
@@ -262,16 +262,16 @@ def _best_window(text: str, spans: list[tuple[int, int]], width: int) -> int:
 
 
 def segments(marked: str, width: int = 220) -> tuple[list[dict], int]:
-    """Фрагмент кусками `{t, hit}` и число совпадений в поле.
+    """Snippet as `{t, hit}` chunks and the number of matches in the field.
 
-    Метки не текстовые: «» в выдаче путались с русскими кавычками, и подсвечивались целые фразы.
+    Markers are not text: «» in results mix with Russian quotes and highlight whole phrases.
     """
     text, spans = _unmark(marked)
     if not spans:
         return [], 0
     left = _best_window(text, spans, width)
     right = min(len(text), left + width)
-    # Край окна сдвигается к пробелу, чтобы не резать слово пополам.
+    # The window edge moves to a space so a word is not cut in half.
     if left > 0:
         first_hit = min((a for a, _ in spans if a >= left), default=left)
         space = text.find(" ", left, min(left + 20, first_hit))
@@ -303,5 +303,5 @@ def segments(marked: str, width: int = 220) -> tuple[list[dict], int]:
 
 
 def as_text(segs: list[dict]) -> str:
-    """Для CLI и логов: совпадения в «», как было до кусков."""
+    """For CLI and logs: matches wrapped in «»."""
     return "".join(f"«{s['t']}»" if s["hit"] else s["t"] for s in segs).strip()

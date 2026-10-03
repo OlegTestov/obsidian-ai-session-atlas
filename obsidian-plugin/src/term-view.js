@@ -1,36 +1,40 @@
-// Вкладка терминала агента: xterm.js + псевдотерминал на системных утилитах (pty.js).
-// Состояние вкладки — вид агента, id вкладки, папка и команда: Obsidian хранит его в раскладке
-// и после перезапуска отдаёт обратно, команда запускается снова, а скрипт вкладки по реестру
-// возвращает её сессию. Снаружи вкладка выглядит как у плагина Terminal (emulator.terminal,
-// emulator.pseudoterminal.shell) — код «Активных» работает с обоими.
-const { ItemView } = require("obsidian");
-const { spawnPty } = require("./pty");
-const { AGENT_VIEW_TYPE } = require("./constants");
+// Agent terminal tab: xterm.js + a pseudo-terminal on system tools (pty.js).
+// The tab state (agent kind, tab id, folder and command) is kept by Obsidian in the layout and
+// handed back after a restart: the command runs again, and the tab script brings back its session
+// from the registry. From outside the tab looks like a Terminal plugin tab (emulator.terminal,
+// emulator.pseudoterminal.shell), so the Active view code works with both.
+import { ItemView } from "obsidian";
+import { Terminal } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
+import { WebLinksAddon } from "@xterm/addon-web-links";
+import * as path from "path";
+import { spawnPty } from "./pty";
+import { AGENT_VIEW_TYPE } from "./constants";
 
 const DEFAULT_SHELL = "/bin/zsh";
 
-/** Клавиши, которые терминал по умолчанию шлёт неотличимо. Shift+Enter — как после
- *  `/terminal-setup` в iTerm2 и VS Code: ESC+Enter, Claude Code читает это как новую строку. */
-/** Подгонять размер только видимой вкладке. Скрытую Obsidian сжимает до нуля: подгонка
- *  сообщила бы программе крошечный экран, и при возврате Claude Code перерисовывал бы всё заново. */
+/** Fit only a visible tab. Obsidian shrinks a hidden one to zero: fitting it would report a tiny
+ *  screen to the program, and on return Claude Code would redraw everything. */
 const MIN_BOX_PX = 40;
 const RESIZE_SETTLE_MS = 80;
 function canFit(box) {
   return !!box && box.isConnected !== false && box.clientWidth >= MIN_BOX_PX && box.clientHeight >= MIN_BOX_PX;
 }
 
+/** Keys the terminal sends indistinguishably by default. Shift+Enter works as after
+ *  `/terminal-setup` in iTerm2 and VS Code: ESC+Enter, which Claude Code reads as a new line. */
 function specialKey(e) {
   if (e.key === "Enter" && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) return "\x1b\r";
   return null;
 }
 const RECLAIM_MS = 120000;
 
-// Процессы вкладок — в общем реестре окна: он переживает перезагрузку плагина (тумблер,
-// обновление), и новая копия подхватывает процесс по id вкладки, не обрывая агента.
+// Tab processes live in a window-wide registry: it survives a plugin reload (toggle, update), and
+// the new copy picks up the process by tab id without cutting off the agent.
 function registry() {
   if (!window.__sessionAtlasPtys) {
     window.__sessionAtlasPtys = new Map();
-    // Выход из Obsidian — гасим всех: иначе после запуска вкладки подняли бы вторые процессы.
+    // Quitting Obsidian ends them all: otherwise the tabs would start second processes on the next launch.
     window.addEventListener("beforeunload", () => {
       for (const { pty } of window.__sessionAtlasPtys.values()) pty.kill();
     });
@@ -38,7 +42,30 @@ function registry() {
   return window.__sessionAtlasPtys;
 }
 
-/** Цвета терминала — из темы Obsidian: светлая и тёмная без настройки. */
+/**
+ * After a reload, keep every held process whose tab is still in the layout. Background tabs load
+ * only when shown, so the reclaim timer would otherwise end their agents while nobody looks.
+ * Output keeps going into the process's buffer until the tab opens. Returns the kept tab ids.
+ */
+function keepHeldTabs(workspace) {
+  if (!workspace || typeof workspace.iterateAllLeaves !== "function") return [];
+  // The saved view state, not the view: a leaf can hold a placeholder until it loads.
+  const wanted = new Set();
+  workspace.iterateAllLeaves((leaf) => {
+    const state = leaf.getViewState && leaf.getViewState();
+    if (state && state.type === AGENT_VIEW_TYPE && state.state && state.state.instance) wanted.add(state.state.instance);
+  });
+  const kept = [];
+  for (const [key, held] of registry()) {
+    if (!wanted.has(key) || !held.timer) continue;
+    window.clearTimeout(held.timer);
+    held.timer = null;
+    kept.push(key);
+  }
+  return kept;
+}
+
+/** Terminal colours come from the Obsidian theme: light and dark without configuration. */
 function themeFromCss(el) {
   const css = getComputedStyle(el);
   const v = (name, fallback) => (css.getPropertyValue(name) || "").trim() || fallback;
@@ -50,8 +77,8 @@ function themeFromCss(el) {
   };
 }
 
-/** Тема Obsidian сменилась (вручную или вслед за системой вечером) — цвета терминала следом.
- *  Возвращает true, если цвета поменялись. */
+/** Follows an Obsidian theme change (by hand, or with the system at nightfall) in the terminal colours.
+ *  Returns true when the colours changed. */
 function applyTheme(term, el) {
   if (!term) return false;
   const next = themeFromCss(el);
@@ -72,17 +99,17 @@ class AgentTerminalView extends ItemView {
   getViewType() { return AGENT_VIEW_TYPE; }
   getDisplayText() { return this.state.title || "Terminal"; }
 
-  /** Ярлык вкладки обновляет Obsidian, заголовок над содержимым — только мы. */
+  /** Obsidian updates the tab label; the title above the content is ours to update. */
   refreshTitle() {
     if (this.leaf.updateHeader) this.leaf.updateHeader();
     if (this.titleEl && this.titleEl.setText) this.titleEl.setText(this.getDisplayText());
   }
 
-  /** Заголовок от программы (Claude Code присылает имя сессии) — в название вкладки. */
+  /** A title from the program (Claude Code sends the session name) becomes the tab name. */
   setLiveTitle(title) {
     const clean = String(title || "").trim();
     if (!clean || clean === this.state.title) return;
-    this.state.title = clean;                     // в состоянии вида: после перезапуска то же имя
+    this.state.title = clean;                     // in the view state: the same name after a restart
     this.refreshTitle();
     const workspace = this.app && this.app.workspace;
     if (workspace && workspace.requestSaveLayout) workspace.requestSaveLayout();
@@ -105,10 +132,6 @@ class AgentTerminalView extends ItemView {
 
   start() {
     if (!this.box) this.box = this.contentEl.createDiv({ cls: "session-atlas-terminal-box" });
-    // Лениво: xterm нужен только в Obsidian, а не в тестах моста.
-    const { Terminal } = require("./xterm");
-    const { FitAddon } = require("./xterm-fit");
-    const { WebLinksAddon } = require("./xterm-links");
     const settings = this.plugin.settings || {};
     const term = new Terminal({
       fontFamily: getComputedStyle(document.body).getPropertyValue("--font-monospace") || "Menlo, monospace",
@@ -116,7 +139,7 @@ class AgentTerminalView extends ItemView {
       theme: themeFromCss(document.body),
       scrollback: 10000,
       macOptionIsMeta: true,
-      // Claude Code забирает мышь себе (режимы 1000–1006): выделять — с зажатым ⌥, как в iTerm2.
+      // Claude Code takes the mouse (modes 1000–1006): select with ⌥ held, as in iTerm2.
       macOptionClickForcesSelection: true,
       allowProposedApi: true,
     });
@@ -124,8 +147,8 @@ class AgentTerminalView extends ItemView {
     term.loadAddon(fit);
     term.loadAddon(new WebLinksAddon((event, uri) => window.open(uri)));
     term.open(this.box);
-    if (canFit(this.box)) { try { fit.fit(); } catch (error) { /* вкладка ещё без размеров */ } }
-    // ⌘C с выделением — копировать; иначе клавиша уходит в терминал как есть.
+    if (canFit(this.box)) { try { fit.fit(); } catch { /* the tab has no size yet */ } }
+    // ⌘C with a selection copies; otherwise the key goes to the terminal as is.
     term.attachCustomKeyEventHandler((e) => {
       if (e.type === "keydown" && e.metaKey && e.key === "c" && term.hasSelection()) {
         navigator.clipboard.writeText(term.getSelection());
@@ -134,7 +157,7 @@ class AgentTerminalView extends ItemView {
       const special = specialKey(e);
       if (special) {
         if (e.type === "keydown" && this.pty) this.pty.write(special);
-        return false;                    // и keydown, и keypress: обычный Enter не уйдёт следом
+        return false;                    // both keydown and keypress: a plain Enter must not follow
       }
       return true;
     });
@@ -143,15 +166,17 @@ class AgentTerminalView extends ItemView {
     const held = key ? registry().get(key) : null;
     let pty;
     if (held && !held.pty.exited) {
-      // Плагин перезагрузили — процесс жив: подхватываем и показываем, что было на экране.
-      clearTimeout(held.timer);
+      // The plugin was reloaded and the process is alive: pick it up and show what was on screen.
+      window.clearTimeout(held.timer);
       pty = held.pty;
       term.write(pty.recent());
       pty.resize(term.cols, term.rows);
     } else {
       const shell = settings.shellPath || process.env.SHELL || DEFAULT_SHELL;
-      const env = Object.assign({}, process.env, { TERM: "xterm-256color", COLORTERM: "truecolor" });
-      if (!env.LANG) env.LANG = "en_US.UTF-8";      // из Dock Obsidian стартует без локали
+      // The tab script reads extra agent arguments from this install's data folder.
+      const env = Object.assign({}, process.env, { TERM: "xterm-256color", COLORTERM: "truecolor",
+        OBS_AGENT_TERMINAL_ARGS_DIR: path.join(this.plugin.dataDir(), "agent-args") });
+      if (!env.LANG) env.LANG = "en_US.UTF-8";      // launched from the Dock, Obsidian has no locale
       pty = spawnPty({ file: shell, args: ["-l", "-i", "-c", this.state.command],
                        cwd: this.state.cwd || process.env.HOME, env, cols: term.cols, rows: term.rows });
     }
@@ -163,23 +188,23 @@ class AgentTerminalView extends ItemView {
     term.onData((data) => pty.write(data));
     term.onTitleChange((title) => this.setLiveTitle(title));
     term.onResize(({ cols, rows }) => pty.resize(cols, rows));
-    // Подряд идущие изменения (тянут окно) — одна подгонка: каждая заставляет программу перерисоваться.
+    // Consecutive changes (dragging the window) make one fit: each fit makes the program redraw.
     let settle = null;
     this.resizeObserver = new ResizeObserver(() => {
-      clearTimeout(settle);
-      settle = setTimeout(() => {
+      window.clearTimeout(settle);
+      settle = window.setTimeout(() => {
         if (!canFit(this.box)) return;
-        try { fit.fit(); } catch (error) { /* вкладку закрыли */ }
+        try { fit.fit(); } catch { /* the tab was closed */ }
       }, RESIZE_SETTLE_MS);
     });
     this.resizeObserver.observe(this.box);
-    // Тот же вид, что у вкладок плагина Terminal: по нему «Активные» читают экран и печатают.
+    // Same shape as Terminal plugin tabs: the Active view reads the screen and types through it.
     const shellInfo = { pid: pty.pid, stdin: { write: (data) => pty.write(data) } };
     this.emulator = { terminal: term, pseudoterminal: Promise.resolve({ shell: Promise.resolve(shellInfo) }) };
     this.registerEvent(this.app.workspace.on("active-leaf-change", (leaf) => {
       if (leaf === this.leaf) term.focus();
     }));
-    // Obsidian меняет тему классом на body (theme-dark / theme-light) и сообщает css-change.
+    // Obsidian switches the theme with a class on body (theme-dark / theme-light) and fires css-change.
     this.registerEvent(this.app.workspace.on("css-change", () => applyTheme(term, document.body)));
     this.themeObserver = new MutationObserver(() => applyTheme(term, document.body));
     this.themeObserver.observe(document.body, { attributes: true, attributeFilter: ["class"] });
@@ -187,8 +212,8 @@ class AgentTerminalView extends ItemView {
   }
 
   /**
-   * Вкладку закрыли — процесс гасим. Выгружается сам плагин (Obsidian в этот момент уже
-   * снял с него _loaded) — процесс ждёт новую копию плагина RECLAIM_MS и только потом гаснет.
+   * The tab was closed: the process ends. When the plugin itself unloads (Obsidian has already
+   * cleared its _loaded), the process waits RECLAIM_MS for the new plugin copy and only then ends.
    */
   async onClose() {
     if (this.resizeObserver) this.resizeObserver.disconnect();
@@ -199,7 +224,7 @@ class AgentTerminalView extends ItemView {
       if (unloading && key && !this.pty.exited) {
         const pty = this.pty;
         pty.onData(null);
-        registry().set(key, { pty, timer: setTimeout(() => { pty.kill(); registry().delete(key); }, RECLAIM_MS) });
+        registry().set(key, { pty, timer: window.setTimeout(() => { pty.kill(); registry().delete(key); }, RECLAIM_MS) });
       } else {
         this.pty.kill();
         if (key) registry().delete(key);
@@ -210,4 +235,4 @@ class AgentTerminalView extends ItemView {
   }
 }
 
-module.exports = { AgentTerminalView, specialKey, canFit, applyTheme };
+export { AgentTerminalView, specialKey, canFit, applyTheme, keepHeldTabs };

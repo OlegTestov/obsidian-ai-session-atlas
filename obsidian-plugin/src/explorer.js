@@ -1,18 +1,18 @@
-// Клики в проводнике файлов: левый — новая вкладка, средний — текущая; уже открытый файл не
-// дублируется — переход к его вкладке. Выключается в настройках. Подмешивается в класс плагина.
-const { TFile } = require("obsidian");
+// File explorer clicks: left opens a new tab, middle the current one; an already open file is not
+// duplicated, its tab is focused instead. Can be turned off in settings. Mixed into the plugin class.
+import { TFile } from "obsidian";
 
 const FILE_TITLE_SELECTOR = ".nav-file-title";
 
 class ExplorerMethods {
   installExplorerClicks() {
-    // Захват: раньше собственного обработчика проводника, иначе он успеет открыть файл сам.
+    // Capture phase: runs before the explorer's own handler, which would open the file itself.
     this.registerDomEvent(document, "click", (e) => this.onExplorerClick(e, true), { capture: true });
     this.registerDomEvent(document, "auxclick", (e) => this.onExplorerClick(e, false), { capture: true });
   }
 
   explorerClicksOn() {
-    return !!(this.settings && this.settings.explorerClicks) && !this.legacyEnabled("swap-click-open");
+    return !!(this.settings && this.settings.explorerClicks);
   }
 
   onExplorerClick(evt, left) {
@@ -22,7 +22,7 @@ class ExplorerMethods {
     const el = evt.target && typeof evt.target.closest === "function" ? evt.target.closest(FILE_TITLE_SELECTOR) : null;
     const file = el && el.getAttribute("data-path")
       ? this.app.vault.getAbstractFileByPath(el.getAttribute("data-path")) : null;
-    // Не файл (папка, устаревший путь) — пусть отработает сам Obsidian, событие не съедаем.
+    // Not a file (a folder, a stale path): Obsidian handles it, the event is not swallowed.
     if (!(file instanceof TFile)) return;
     evt.preventDefault();
     evt.stopImmediatePropagation();
@@ -46,4 +46,4 @@ class ExplorerMethods {
   }
 }
 
-module.exports = { ExplorerMethods };
+export { ExplorerMethods };

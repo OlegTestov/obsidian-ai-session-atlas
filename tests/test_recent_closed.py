@@ -1,4 +1,4 @@
-"""«Недавно закрытые»: свежие интерактивные сессии без живого процесса."""
+"""The "Recently closed" list: fresh interactive sessions without a live process."""
 from __future__ import annotations
 
 from datetime import datetime, timezone

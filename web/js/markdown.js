@@ -1,5 +1,5 @@
-// Markdown ответа Claude: разбор в дерево (чистые функции — тестируются в node) и сборка DOM.
-// Только через DOM: на странице CSP и запрет innerHTML — ни строки разметки из ответа модели.
+// Markdown of Claude's replies: parsing into a tree (pure functions, tested in node) and building the DOM.
+// DOM only: the page has a CSP and no innerHTML, so no markup string from the model's reply.
 (function (root) {
   const SAFE_URL = /^(https?:\/\/|mailto:)/i;
   const INLINE = [
@@ -8,7 +8,7 @@
     { re: /\*\*([^*\n][^\n]*?)\*\*/, make: m => ({ t: "strong", kids: parseInline(m[1]) }) },
     { re: /__([^_\n][^\n]*?)__/, make: m => ({ t: "strong", kids: parseInline(m[1]) }) },
     { re: /~~([^~\n]+)~~/, make: m => ({ t: "del", kids: parseInline(m[1]) }) },
-    // *курсив*, но не маркер списка и не умножение с пробелами вокруг
+    // *italic*, but not a list marker and not multiplication with spaces around
     { re: /(^|[^\w*])\*([^*\s][^*\n]*?)\*(?!\w)/,
       make: m => [{ t: "text", text: m[1] }, { t: "em", kids: parseInline(m[2]) }] },
     { re: /https?:\/\/[^\s<>()\]]+[^\s<>()\].,;:!?'"»]/,
@@ -17,7 +17,7 @@
   const LIST_RE = /^(\s*)([-*+]|\d+[.)])\s+(.*)$/;
   const TABLE_SEP = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
 
-  // Строка в узлы: ищем самое раннее совпадение среди правил, остальное — текст.
+  // Line into nodes: find the earliest match among the rules, the rest is text.
   function parseInline(text) {
     const out = [];
     let rest = String(text);
@@ -50,7 +50,7 @@
     while (i < lines.length) {
       const line = lines[i];
       if (!line.trim()) { i++; continue; }
-      if (/^\s*```/.test(line)) {                          // блок кода
+      if (/^\s*```/.test(line)) {                          // code block
         const body = [];
         i++;
         while (i < lines.length && !/^\s*```/.test(lines[i])) body.push(lines[i++]);
@@ -80,13 +80,13 @@
         continue;
       }
       if (LIST_RE.test(line)) {
-        // Вложенность — по отступу; смена «- …» на «1. …» на том же уровне — новый список.
+        // Nesting by indentation; switching "- …" to "1. …" at the same level starts a new list.
         const top = [];
         const stack = [];
         while (i < lines.length && (LIST_RE.test(lines[i])
                || (lines[i].trim() && /^\s{2,}/.test(lines[i]) && stack.length))) {
           const m = lines[i].match(LIST_RE);
-          if (!m) {                                        // продолжение пункта с отступом
+          if (!m) {                                        // indented continuation of an item
             const items = stack[stack.length - 1].list.items;
             items[items.length - 1].kids.push({ t: "text", text: " " }, ...parseInline(lines[i].trim()));
             i++;
@@ -111,7 +111,7 @@
         blocks.push(...top);
         continue;
       }
-      const para = [];                                     // абзац до пустой строки или блока
+      const para = [];                                     // paragraph up to a blank line or a block
       while (i < lines.length && lines[i].trim() && !LIST_RE.test(lines[i])
              && !/^\s*(```|#{1,6}\s|>)/.test(lines[i]) && !isTable(lines, i)) {
         para.push(parseInline(lines[i++]));
@@ -121,7 +121,7 @@
     return blocks;
   }
 
-  // --- дерево → DOM ------------------------------------------------------------
+  // --- tree → DOM --------------------------------------------------------------
 
   function node(tag, kids) {
     const n = document.createElement(tag);
@@ -163,7 +163,7 @@
       if (b.ordered) list.start = b.start;
       return list;
     }
-    const p = node("p");                                   // абзац: строки через <br>
+    const p = node("p");                                   // paragraph: lines joined with <br>
     b.lines.forEach((ln, k) => {
       if (k) p.appendChild(node("br"));
       inlineDom(ln).forEach(n => p.appendChild(n));
@@ -177,7 +177,8 @@
     return frag;
   }
 
-  const api = { parseMarkdown, parseInline, renderMarkdown, SAFE_URL };
-  if (typeof module !== "undefined" && module.exports) module.exports = api;
-  else Object.assign(root, api);
-})(typeof window !== "undefined" ? window : globalThis);
+  root.parseMarkdown = parseMarkdown;
+  root.parseInline = parseInline;
+  root.renderMarkdown = renderMarkdown;
+  root.SAFE_URL = SAFE_URL;
+})(window);

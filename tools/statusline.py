@@ -1,4 +1,4 @@
-"""Строка состояния из репозитория (для разработки); сам код — atlas/statusline.py."""
+"""Status line run from the repository (for development); the code itself is atlas/statusline.py."""
 import os
 import runpy
 

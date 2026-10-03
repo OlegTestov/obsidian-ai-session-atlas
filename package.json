@@ -1,0 +1,27 @@
+{
+  "name": "session-atlas",
+  "version": "2.1.0",
+  "private": true,
+  "description": "Obsidian plugin to search, watch and resume Claude Code and Codex sessions on macOS.",
+  "license": "MIT",
+  "author": "Oleg Testov",
+  "engines": {
+    "node": ">=20.19"
+  },
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "lint": "eslint .",
+    "test": "node --test --test-force-exit --test-timeout=120000"
+  },
+  "devDependencies": {
+    "@xterm/addon-fit": "0.11.0",
+    "@xterm/addon-web-links": "0.12.0",
+    "@xterm/xterm": "6.0.0",
+    "esbuild": "0.25.10",
+    "eslint": "9.39.5",
+    "eslint-plugin-obsidianmd": "0.4.2",
+    "globals": "16.4.0",
+    "obsidian": "1.13.1",
+    "typescript": "5.4.5"
+  }
+}

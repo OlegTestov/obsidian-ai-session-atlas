@@ -1,27 +1,51 @@
-"""Локальный сервер на stdlib. 127.0.0.1 — не граница доверия, поэтому проверок здесь много."""
+"""Local stdlib server. 127.0.0.1 is not a trust boundary, so there are many checks here."""
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
 import secrets
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
-from . import actions, active, autoclassify, classify, commands, config, db, delete, enrich, feed, index, launch, limits, messages, plans, relocate, runner, search, stats, touched, uploads
+from . import (
+    actions,
+    active,
+    autoclassify,
+    classify,
+    commands,
+    config,
+    db,
+    delete,
+    enrich,
+    feed,
+    index,
+    launch,
+    limits,
+    messages,
+    plans,
+    relocate,
+    runner,
+    search,
+    stats,
+    touched,
+    uploads,
+)
 from .messages import msg
 
 HOST, PORT = "127.0.0.1", 8787
-UPLOAD_BODY_LIMIT = 15 * 1024 * 1024   # 10 МБ картинки в base64 + запас
+UPLOAD_BODY_LIMIT = 15 * 1024 * 1024   # 10 MB image in base64 plus headroom
 STATIC_NAME = re.compile(r"[a-z][a-z0-9-]*\.(js|css)")
 STATIC_TYPES = {"js": "text/javascript; charset=utf-8", "css": "text/css; charset=utf-8"}
 TIMESTAMP = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]{5,15}(?:Z|[+-][0-9:]{4,5})?")
-# Пути, которые зовут модель: при выключенных ИИ-функциях отвечают 403.
+# Paths that call the model: they answer 403 when AI features are off.
 LLM_PATHS = {"/api/job", "/api/classify", "/api/auto-classify"}
 WEB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web")
 
@@ -29,12 +53,12 @@ ALLOWED_HOSTS = {f"127.0.0.1:{PORT}", f"localhost:{PORT}"}
 ALLOWED_ORIGINS = {f"http://127.0.0.1:{PORT}", f"http://localhost:{PORT}"}
 
 
-# Индекс догоняется на каждом открытии и запросе списка: иначе интерфейс показывал каталог
-# четырёхдневной давности, пока не нажмёшь «обновить индекс». Проход без изменений — сотые
-# доли секунды, но живая сессия дописывается постоянно и перечитывается целиком: 2–5 с.
-# Такой проход уходит в фон, ответ получает то, что есть, и флаг — страница перерисуется сама.
-CATCHUP_EVERY = 15.0  # чаще не гоняем: поиск шлёт запрос на каждое нажатие
-CATCHUP_WAIT = 0.3    # быстрый проход успевает, долгий не держит набор текста
+# The index catches up on every page open and list request: otherwise the UI shows a catalog
+# that is days old until you press "update index". A pass with no changes takes hundredths
+# of a second, but a live session is appended constantly and reread in full: 2-5 s.
+# Such a pass runs in the background; the response gets current data and a flag to redraw later.
+CATCHUP_EVERY = 15.0  # no more often: search sends a request on every keystroke
+CATCHUP_WAIT = 0.3    # a fast pass finishes in time; a long one does not block typing
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _catchup_lock = threading.Lock()
 _catchup_proc = None
@@ -42,36 +66,39 @@ _catchup_at = 0.0
 
 
 class _Pass:
-    """Проход индексатора отдельным процессом: в потоке он забирал GIL, и поиск во время
-    прохода отвечал 0.5–0.8 с вместо 0.1."""
+    """Indexer pass in a separate process: in a thread it holds the GIL, and search during
+        the pass answers in 0.5-0.8 s instead of 0.1."""
 
-    def __init__(self) -> None:
+    def __init__(self, command: list[str] | None = None) -> None:
         env = dict(os.environ, PYTHONPATH=REPO_ROOT)
-        self.proc = subprocess.Popen([sys.executable, "-m", "atlas.cli", "index"], cwd=REPO_ROOT,
-                                     env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        # stderr goes to a file, not a pipe: nobody reads a pipe until exit, and a full pipe
+        # buffer would stall the indexer forever.
+        self.err = tempfile.TemporaryFile()  # noqa: SIM115 — lives as long as the pass, closed in is_alive
+        command = command or [sys.executable, "-m", "atlas.cli", "index"]
+        self.proc = subprocess.Popen(command, cwd=REPO_ROOT, env=env, stdout=subprocess.DEVNULL, stderr=self.err)
 
     def is_alive(self) -> bool:
         if self.proc.poll() is None:
             return True
-        if self.proc.returncode:
-            err = self.proc.stderr.read().decode(errors="replace") if self.proc.stderr else ""
-            print(f"atlas index: код {self.proc.returncode}\n{err}", file=sys.stderr)
-            self.proc.returncode = 0  # сообщить один раз
+        if not self.err.closed:
+            if self.proc.returncode:
+                self.err.seek(0)
+                err = self.err.read().decode(errors="replace")[-4000:]
+                print(f"atlas index: exit code {self.proc.returncode}\n{err}", file=sys.stderr)
+            self.err.close()  # report once
         return False
 
     def join(self, timeout: float | None = None) -> None:
-        try:
+        with contextlib.suppress(subprocess.TimeoutExpired):
             self.proc.wait(timeout)
-        except subprocess.TimeoutExpired:
-            pass
 
 
 def catch_up() -> bool:
-    """Догнать индекс. True — проход ещё идёт в фоне, данные в ответе могут быть старыми."""
+    """Catch up the index. True: a pass still runs in the background, response data may be stale."""
     global _catchup_proc, _catchup_at
     with _catchup_lock:
         if _catchup_proc is not None and _catchup_proc.is_alive():
-            return True     # чужой проход не ждём: иначе каждое нажатие во время него +0.3 с
+            return True     # do not wait for another pass: each keystroke would add 0.3 s
         if time.monotonic() - _catchup_at < CATCHUP_EVERY:
             return False
         _catchup_at = time.monotonic()
@@ -81,7 +108,7 @@ def catch_up() -> bool:
 
 
 def runtime_version() -> str | None:
-    """Версия сборки, из которой распакован сервер; у запуска из репозитория её нет."""
+    """Build version the server was unpacked from; a run from the repository has none."""
     try:
         with open(os.path.join(REPO_ROOT, ".version"), encoding="utf-8") as fh:
             return fh.read().strip() or None
@@ -90,17 +117,23 @@ def runtime_version() -> str | None:
 
 
 def csrf_token() -> str:
-    """Живёт в файле 0600: страница получает его при отдаче, чужой origin — нет."""
+    """Lives in a 0600 file: the page gets it when served, a foreign origin does not."""
     path = os.path.join(db.atlas_home(), "csrf.token")
-    if not os.path.exists(path):
-        with open(path, "w") as fh:
+    try:
+        # Created 0600 in one step: no window where the file is readable by others, and of two
+        # concurrent first requests only one writes the token.
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        pass
+    else:
+        with os.fdopen(fd, "w") as fh:
             fh.write(secrets.token_urlsafe(32))
-        os.chmod(path, 0o600)
-    return open(path).read().strip()
+    with open(path, encoding="utf-8") as fh:
+        return fh.read().strip()
 
 
 def export_destinations(lang: str | None = None) -> dict[str, str]:
-    """Allowlist целей экспорта: произвольный путь от страницы не принимается."""
+    """Allowlist of export targets: an arbitrary path from the page is not accepted."""
     home = os.path.expanduser("~")
     out = {}
     for label, path in ((msg("export.desktop", lang), os.path.join(home, "Desktop")),
@@ -119,9 +152,9 @@ def export_destinations(lang: str | None = None) -> dict[str, str]:
     return out
 
 
-# Список активных опрашивают страница (раз в 5 с) и плагин (раз в 10 с). Холодный проход —
-# секунды на чтение хвостов транскриптов; параллельные копии делили GIL и шли по 20 с каждая.
-# Поэтому проход один на всех, а свежий ответ отдаётся повторно ACTIVE_REUSE_SECONDS.
+# The active list is polled by the page (every 5 s) and the plugin (every 10 s). A cold pass
+# takes seconds to read transcript tails; parallel copies share the GIL and take 20 s each.
+# So one pass serves everyone, and a fresh response is reused for ACTIVE_REUSE_SECONDS.
 ACTIVE_REUSE_SECONDS = 2.0
 _active_lock = threading.Lock()
 _active_cached: dict = {"at": 0.0, "sessions": None}
@@ -141,7 +174,7 @@ def _run_job(job_id: str, session_id: str, artifact_kind: str, backend: str, mod
              lang: str = messages.DEFAULT) -> None:
     conn = db.connect()
     try:
-        messages.set_lang(lang, remember=False)     # у фонового потока нет своего запроса
+        messages.set_lang(lang, remember=False)     # a background thread has no request
         actions.set_job_state(conn, job_id, "running")
         result = enrich.produce(conn, session_id, artifact_kind, job_id,
                                 backend=backend, model=model)
@@ -169,18 +202,18 @@ def _run_classify(job_id: str, session_ids: list[str], lang: str = messages.DEFA
 class Handler(BaseHTTPRequestHandler):
     server_version = "SessionAtlas"
 
-    def log_message(self, fmt, *args):  # тише стандартного логгера
+    def log_message(self, fmt, *args):  # quieter than the standard logger
         pass
 
-    # --- инфраструктура ответа ---
+    # --- response infrastructure ---
 
     def _send(self, code: int, body: bytes, content_type: str, nonce: str | None = None) -> None:
         self.send_response(code)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("X-Content-Type-Options", "nosniff")
-        # Страница отдаётся с диска: без no-store браузер держит старую разметку
-        # после обновления интерфейса и показывает её же после перезагрузки.
+        # The page is served from disk: without no-store the browser keeps the old markup
+        # after a UI update and shows it again after a reload.
         self.send_header("Cache-Control", "no-store")
         self.send_header("Referrer-Policy", "no-referrer")
         if nonce:
@@ -188,7 +221,7 @@ class Handler(BaseHTTPRequestHandler):
                 "Content-Security-Policy",
                 f"default-src 'none'; script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}'; "
                 "img-src data:; connect-src 'self'; base-uri 'none'; form-action 'none'; "
-                # Встраивание только в саму себя и в Obsidian — он живёт на схеме app://.
+                # Embedding only in itself and in Obsidian, which lives on the app:// scheme.
                 "frame-ancestors 'self' app:",
             )
         self.end_headers()
@@ -223,10 +256,10 @@ class Handler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             return {}
 
-    # --- маршруты ---
+    # --- routes ---
 
     def _lang(self) -> None:
-        """Язык ответа — язык страницы: заголовок на каждом запросе, без него — английский."""
+        """Response language is the page language: a header on every request, English without it."""
         messages.set_lang(self.headers.get("X-Atlas-Lang"))
 
     def do_GET(self) -> None:
@@ -246,12 +279,12 @@ class Handler(BaseHTTPRequestHandler):
             if url.path == "/health":
                 from . import APP
                 return self._json(200, {"ok": True, "app": APP, "port": PORT,
-                                        "python": "%d.%d" % sys.version_info[:2],
+                                        "python": "{}.{}".format(*sys.version_info[:2]),
                                         "version": runtime_version()})
             conn = db.connect()
             try:
-                index.ensure_indexed(conn)      # после апгрейда схемы соберём индекс заново
-                if url.path == "/api/index-status":           # экран проверок в настройках
+                index.ensure_indexed(conn)      # rebuild the index after a schema upgrade
+                if url.path == "/api/index-status":           # the checks screen in settings
                     count = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
                     return self._json(200, {"sessions": count, "indexing": catch_up()})
                 if url.path == "/api/sessions":
@@ -262,7 +295,7 @@ class Handler(BaseHTTPRequestHandler):
                     sessions = active_sessions(conn)
                     msgs = (query.get("msgs") or ["1"])[0]
                     msgs = min(feed.HISTORY_MAX, int(msgs)) if msgs.isdigit() else 1
-                    if msgs > 1:          # хвост переписки подробной карточки; список в кэше не трогаем
+                    if msgs > 1:          # detailed card's chat tail; cached list untouched
                         sessions = [dict(s, history=feed.messages_tail(
                             active._transcript(conn, s["session_id"], index.PROJECTS_ROOT), msgs))
                             for s in sessions]
@@ -282,8 +315,10 @@ class Handler(BaseHTTPRequestHandler):
                         return self._json(200, dict(touched.session_files(path), session_id=sid,
                                                     home=os.path.expanduser("~")))
                     turns = (query.get("turns") or [str(feed.DEFAULT_TURNS)])[0]
-                    stamp = lambda name: next((v for v in query.get(name) or []
-                                               if TIMESTAMP.fullmatch(v)), None)
+
+                    def stamp(name: str) -> str | None:
+                        return next((v for v in query.get(name) or [] if TIMESTAMP.fullmatch(v)), None)
+
                     page = feed.feed_page(path, int(turns) if turns.isdigit() else feed.DEFAULT_TURNS,
                                           with_events=(query.get("view") or [""])[0] == "steps",
                                           before=stamp("before"), since=stamp("since"))
@@ -321,15 +356,16 @@ class Handler(BaseHTTPRequestHandler):
                 conn.close()
             self._json(404, {"error": msg("server.no_path")})
         except Exception as exc:
-            self._json(500, {"error": f"{type(exc).__name__}: {exc}",
-                             "trace": traceback.format_exc()[-600:]})
+            # The traceback goes to the server log, the page gets only the error itself.
+            traceback.print_exc(file=sys.stderr)
+            self._json(500, {"error": f"{type(exc).__name__}: {exc}"})
 
     def do_POST(self) -> None:
         self._lang()
         if not self._guard(mutating=True):
             return
         url = urlparse(self.path)
-        # Картинка в base64 крупнее обычного запроса: предел поднят только для загрузки.
+        # A base64 image is larger than a normal request: the limit is raised only for uploads.
         body = self._body(UPLOAD_BODY_LIMIT if url.path == "/api/upload" else 1_000_000)
         session_id = body.get("session_id", "")
         conn = db.connect()
@@ -366,7 +402,7 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             conn.close()
 
-    # --- реализация ---
+    # --- implementation ---
 
     def _page(self) -> None:
         nonce = secrets.token_urlsafe(16)
@@ -376,14 +412,14 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, html.encode(), "text/html; charset=utf-8", nonce=nonce)
 
     def _static(self, name: str) -> None:
-        """Скрипты и стили страницы: только файлы web/js с простым именем — ни каталогов, ни «..»."""
+        """Page scripts and styles: only web/js files with a simple name, no directories or `..`."""
         if not STATIC_NAME.fullmatch(name):
             return self._json(404, {"error": msg("server.no_file")})
         path = os.path.join(WEB_DIR, "js", name)
         if not os.path.isfile(path):
             return self._json(404, {"error": msg("server.no_file")})
-        # Токен в скрипты не подставляется: чужая страница может подключить их тегом <script>
-        # и прочитать глобальные переменные. Токен — только во встроенном скрипте страницы.
+        # The token is not put into scripts: a foreign page can load them with a <script> tag
+        # and read the globals. The token goes only into the page's inline script.
         with open(path, "rb") as fh:
             self._send(200, fh.read(), STATIC_TYPES[name.rsplit(".", 1)[1]])
 
@@ -417,7 +453,7 @@ class Handler(BaseHTTPRequestHandler):
                 "indexed_through": db.get_meta(conn, "indexed_through")}
 
     def _facets(self, conn) -> dict:
-        """Отдаёт и карту проект→домены: фильтр проектов сужается выбранными доменами."""
+        """Also returns the project→domains map: the project filter narrows to selected domains."""
         effective = {}
         for row in conn.execute("""
             SELECT s.session_id,
@@ -456,7 +492,7 @@ class Handler(BaseHTTPRequestHandler):
             "topics": sorted(topics),
             "topic_domains": {k: sorted(v) for k, v in topics.items()},
             "unclassified": len(classify.pending(conn)),
-            # Джоба живёт на сервере: страницу можно закрыть и вернуться к прогрессу.
+            # The job lives on the server: the page can be closed and the progress reopened later.
             "classify_job": (lambda r: r["job_id"] if r else None)(conn.execute(
                 "SELECT job_id FROM jobs WHERE action_kind='classification' "
                 "AND state IN ('queued','running') ORDER BY created_at DESC LIMIT 1").fetchone()),
@@ -488,7 +524,7 @@ class Handler(BaseHTTPRequestHandler):
         if kind not in actions.JOB_KINDS:
             return self._json(400, {"error": msg("server.unknown_artifact")})
         backend = body.get("backend", runner.EXTERNAL_BACKEND)
-        model = runner.model_for(kind)[0]           # модель и окно 1M — только из MODELS
+        model = runner.model_for(kind)[0]           # model and 1M window come only from MODELS
         payload = runner.build_payload(conn, session_id, kind)
         if body.get("confirmed") is not True:
             return self._json(400, {"error": msg("server.need_confirm")})
@@ -547,7 +583,7 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, result)
 
     def _export(self, conn, body) -> None:
-        # Подпись могла прийти с языком прошлой отрисовки: принимаем подписи обоих языков.
+        # The label may carry the language of a previous render: accept labels in both languages.
         destinations = {}
         for lang in messages.LANGS:
             destinations.update(export_destinations(lang))
@@ -574,14 +610,14 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {"job_id": job_id, "created": created, "pending": len(ids)})
 
     def _relocate(self, conn, body) -> None:
-        """Сессию из iTerm/VS Code — во вкладку Obsidian: завершить там, вернуть команду resume."""
+        """Move an iTerm/VS Code session to an Obsidian tab: end it there, return `resume`."""
         sid = body.get("session_id", "")
         try:
             stopped = relocate.stop_for_move(sid, body.get("pid"))
         except relocate.RelocateError as exc:
             return self._json(400, {"error": str(exc)})
         cwd = actions.resume_cwd(conn, sid)
-        _active_cached["sessions"] = None          # список активных уже другой
+        _active_cached["sessions"] = None          # the active list has changed
         self._json(200, dict(stopped, cwd=cwd, command=actions.resume_command(cwd, sid)))
 
     def _new_session(self, conn, body) -> None:
@@ -608,7 +644,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": str(exc)})
 
     def _delete(self, conn, body) -> None:
-        """Необратимо: только после окна подтверждения со списком того, что удаляется."""
+        """Irreversible: only after a confirmation dialog listing what gets deleted."""
         if body.get("confirmed") is not True:
             return self._json(400, {"error": msg("server.need_confirm")})
         try:
@@ -619,7 +655,7 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, result)
 
     def _shutdown(self, conn, body) -> None:
-        """Плагин новой версии останавливает сервер старой, который запустил не он."""
+        """A newer plugin stops an older server it did not start."""
         self._json(200, {"ok": True})
         threading.Thread(target=self.server.shutdown, daemon=True).start()
 
@@ -642,9 +678,9 @@ def serve(port: int = PORT) -> None:
     ALLOWED_HOSTS = {f"127.0.0.1:{port}", f"localhost:{port}"}
     ALLOWED_ORIGINS = {f"http://127.0.0.1:{port}", f"http://localhost:{port}"}
     httpd = ThreadingHTTPServer((HOST, port), Handler)
-    autoclassify.start_scheduler()          # ничего не делает, пока автоклассификация выключена
-    print(f"session-atlas слушает http://{HOST}:{port}", flush=True)
+    autoclassify.start_scheduler()          # does nothing while auto-classification is off
+    print(f"session-atlas listening on http://{HOST}:{port}", flush=True)
     try:
         httpd.serve_forever()
     finally:
-        httpd.server_close()         # после /api/shutdown порт свободен сразу
+        httpd.server_close()         # after /api/shutdown the port is free at once

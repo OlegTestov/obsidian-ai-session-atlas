@@ -1,11 +1,9 @@
-"""Лимиты подписки для верхней строки «Активных» — из файла, который пишет строка состояния.
+"""Subscription limits for the top bar of "Active", read from the file the status line writes.
 
-Claude Code отдаёт `rate_limits` только скрипту строки состояния (`tools/statusline.py`),
-тот сохраняет их в `rate-limits.json`. Нет файла — строка состояния не подключена.
+Claude Code gives `rate_limits` only to the status line script (`tools/statusline.py`),
+which saves them to `rate-limits.json`. No file means the status line is not connected.
 """
 from __future__ import annotations
-
-from .messages import msg
 
 import json
 import os
@@ -13,9 +11,10 @@ import time
 from datetime import datetime, timezone
 
 from . import db
+from .messages import msg
 
 LIMITS_FILE = "rate-limits.json"
-WINDOWS = ("five_hour", "seven_day")        # подпись — из messages, на языке страницы
+WINDOWS = ("five_hour", "seven_day")        # labels come from messages, in the page language
 
 
 def _iso(value) -> str | None:
@@ -32,7 +31,7 @@ def _iso(value) -> str | None:
 
 
 def read_limits(home: str | None = None, now: float | None = None) -> dict | None:
-    """{captured_at, age_seconds, windows: [{key, label, used_percentage, resets_at}]} или None."""
+    """{captured_at, age_seconds, windows: [{key, label, used_percentage, resets_at}]} or None."""
     path = os.path.join(home or db.atlas_home(), LIMITS_FILE)
     try:
         with open(path, encoding="utf-8") as fh:

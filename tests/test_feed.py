@@ -1,4 +1,4 @@
-"""Лента сессии: ходы по твоим репликам, инструменты — короткими строками."""
+"""Session feed: turns split by your messages, tools as short lines."""
 from __future__ import annotations
 
 import json
@@ -39,7 +39,7 @@ def test_turns_split_on_your_prompts_and_collect_tools_and_reply():
     assert turns[1]["reply"] is None
     assert turns[1]["steps"] == [{"kind": "mcp", "text": "gitlab: 1",
                                   "detail": ["create_merge_request"]}]
-    en = {s["kind"]: s["text"] for s in feed.build(records(text))[0]["steps"]}   # без заголовка
+    en = {s["kind"]: s["text"] for s in feed.build(records(text))[0]["steps"]}   # without the header
     assert en == {"read": "read 2 files", "edit": "edited 1 file", "bash": "1 command"}
 
 
@@ -74,12 +74,12 @@ def test_feed_reads_only_as_much_tail_as_needed(tmp_path, monkeypatch):
     monkeypatch.setattr(feed, "FIRST_WINDOW", 8 * 1024)
     got = feed.feed(str(path), 5)
     assert [t["prompt"] for t in got] == [f"запрос {i}" for i in range(25, 30)]
-    assert feed.feed(str(path), 100)[0]["prompt"] == "запрос 10"     # не больше MAX_TURNS
+    assert feed.feed(str(path), 100)[0]["prompt"] == "запрос 10"     # no more than MAX_TURNS
     assert feed.feed(str(tmp_path / "нет.jsonl")) == []
 
 
 def _session_file(tmp_path, n, pad=0):
-    """n ходов: запрос и ответ, по минуте; pad — длинный текст, чтобы файл не влез в первое окно."""
+    """n turns: prompt and reply, a minute apart; pad is long text so the file overflows the first window."""
     text = ""
     for i in range(n):
         ts = f"2026-09-27T{10 + i // 60:02d}:{i % 60:02d}:00.000Z"
@@ -93,7 +93,7 @@ def _session_file(tmp_path, n, pad=0):
 def test_feed_pages_from_the_end_back_to_the_start(tmp_path):
     path = _session_file(tmp_path, 45)
     last = feed.feed_page(path, 20)
-    assert [t["prompt"] for t in last["turns"]][0] == "запрос 25" and last["has_more"] is True
+    assert last["turns"][0]["prompt"] == "запрос 25" and last["has_more"] is True
     page = feed.feed_page(path, 20, before=last["turns"][0]["prompt_at"])
     assert page["turns"][0]["prompt"] == "запрос 5" and page["turns"][-1]["prompt"] == "запрос 24"
     first = feed.feed_page(path, 20, before=page["turns"][0]["prompt_at"])
@@ -103,14 +103,14 @@ def test_feed_pages_from_the_end_back_to_the_start(tmp_path):
 
 def test_feed_since_returns_everything_from_the_anchor(tmp_path):
     path = _session_file(tmp_path, 30)
-    anchor = feed.feed_page(path, 20)["turns"][0]["prompt_at"]      # «запрос 10»
+    anchor = feed.feed_page(path, 20)["turns"][0]["prompt_at"]      # "запрос 10"
     live = feed.feed_page(path, 20, since=anchor)["turns"]
     assert live[0]["prompt"] == "запрос 10" and live[-1]["prompt"] == "запрос 29" and len(live) == 20
 
 
 def test_feed_pages_reach_the_start_of_a_file_bigger_than_the_window(tmp_path, monkeypatch):
     monkeypatch.setattr(feed, "FIRST_WINDOW", 4096)
-    monkeypatch.setattr(feed, "MAX_WINDOW", 8192)        # первая порция упирается в предел окна
+    monkeypatch.setattr(feed, "MAX_WINDOW", 8192)        # the first chunk hits the window limit
     path = _session_file(tmp_path, 60, pad=60)
     last = feed.feed_page(path, 20)
     assert last["has_more"] is True
@@ -124,7 +124,7 @@ def test_feed_pages_reach_the_start_of_a_file_bigger_than_the_window(tmp_path, m
         before = page["turns"][0]["prompt_at"]
         if not page["has_more"]:
             break
-    assert seen == [str(i) for i in range(60)]          # каждый ход ровно один раз, до начала
+    assert seen == [str(i) for i in range(60)]          # each turn exactly once, back to the start
 
 
 def test_card_history_is_the_conversation_tail_and_cached(tmp_path, monkeypatch):
@@ -136,4 +136,4 @@ def test_card_history_is_the_conversation_tail_and_cached(tmp_path, monkeypatch)
     calls = []
     real = feed.feed
     monkeypatch.setattr(feed, "feed", lambda *a, **k: calls.append(1) or real(*a, **k))
-    assert feed.messages_tail(path, 5) == tail and calls == []      # файл не менялся — из кэша
+    assert feed.messages_tail(path, 5) == tail and calls == []      # file unchanged — served from cache

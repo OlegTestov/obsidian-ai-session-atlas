@@ -1,18 +1,18 @@
-"""Вкладка «Активные»: какие процессы Claude Code считаются живыми сессиями человека."""
+"""The "Active" tab: which Claude Code processes count as a person's live sessions."""
 from __future__ import annotations
 
 import json
-import time
-from datetime import datetime, timezone
 import os
+import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
 from atlas import active, db, index
 from tests.conftest import assistant_text, rec, user_text
-from tests.test_actions_security import live_server  # noqa: F401 — фикстура
 
 START = "Sat Sep 26 15:39:21 2026"
 
@@ -36,7 +36,7 @@ def claude_dir(tmp_path):
     return write
 
 
-# pid → (ppid, время старта). 900 — Obsidian, 800/801 — прокси PTY двух вкладок.
+# pid → (ppid, start time). 900 is Obsidian, 800/801 are the PTY proxies of two tabs.
 TABLE = {100: (801, START), 200: (800, START), 300: (1, START), 400: (1, "Sun Sep 27 01:00:00 2026"),
          800: (900, START), 801: (900, START), 900: (1, START)}
 
@@ -49,17 +49,17 @@ def _list(atlas_env, claude_dir, conn=None):
 
 def test_only_live_interactive_processes_are_active(atlas_env, claude_dir):
     claude_dir(100, "aaaa-live")
-    claude_dir(555, "bbbb-dead")                                  # процесса нет
-    claude_dir(400, "cccc-reused", procStart=START)               # PID занят другим процессом
+    claude_dir(555, "bbbb-dead")                                  # no such process
+    claude_dir(400, "cccc-reused", procStart=START)               # PID reused by another process
     claude_dir(300, "dddd-print", kind="headless")                # claude -p
-    claude_dir(200, "eeee-sdk", entrypoint="sdk-cli")             # ревьюер, хук, ночной агент
-    (open(os.path.join(claude_dir.folder, "666.json"), "w")).write("{битый")
+    claude_dir(200, "eeee-sdk", entrypoint="sdk-cli")             # reviewer, hook, nightly agent
+    Path(claude_dir.folder, "666.json").write_text("{битый")
     ids = [s["session_id"] for s in _list(atlas_env, claude_dir)]
     assert ids == ["aaaa-live"]
 
 
 def test_proc_start_ignores_padding_of_the_day():
-    """ctime дополняет число пробелом: «Sep  6» и «Sep 6» — одно и то же время."""
+    """ctime pads the day with a space: "Sep  6" and "Sep 6" are the same time."""
     table = {7: (1, "Sat Sep 6 09:00:00 2026")}
     assert active._alive(7, "Sat Sep  6 09:00:00 2026", table)
     assert not active._alive(7, "Sat Sep  6 09:00:01 2026", table)
@@ -72,17 +72,17 @@ def test_ancestors_lead_to_the_terminal_tab(atlas_env, claude_dir):
 
 def test_cards_are_ordered_by_the_last_message_in_the_transcript(atlas_env, write_session,
                                                                  claude_dir):
-    """Индекс догоняет с задержкой: свежесть берётся из хвоста транскрипта."""
+    """The index catches up with a delay: freshness comes from the transcript tail."""
     write_session("p", [user_text("середина", ts="2026-09-20T10:00:00.000Z")], session_id="middle")
     write_session("p", [user_text("новая", ts="2026-09-10T10:00:00.000Z")], session_id="newest")
     write_session("p", [user_text("старая", ts="2026-09-15T10:00:00.000Z")], session_id="oldest")
     conn = _conn(atlas_env)
     index.index_all(conn, root=str(atlas_env["projects"]))
-    # «newest» дописана после индексации, а последняя строка ещё пишется — без перевода строки.
+    # "newest" is appended after indexing, and its last line is still being written — no newline.
     with open(os.path.join(str(atlas_env["projects"]), "p", "newest.jsonl"), "a") as fh:
         fh.write(assistant_text("ответ", ts="2026-09-26T10:00:00.000Z"))
         fh.write('{"type":"assistant","timestamp":"2026-09-27')
-    # Порядок файлов (100, 200, 300) не совпадает с ответом ни прямо, ни обратно.
+    # File order (100, 200, 300) matches the answer neither forwards nor backwards.
     claude_dir(100, "middle")
     claude_dir(200, "newest")
     claude_dir(300, "oldest")
@@ -109,7 +109,7 @@ def test_card_carries_what_the_index_knows(atlas_env, write_session, claude_dir)
     assert known["started_at"].startswith("2026-09-01")
     fresh = cards["fresh-not-indexed"]
     assert not fresh["indexed"] and fresh["title"] == "local-fr"
-    assert fresh["started_at"] == fresh["process_started_at"]      # из startedAt процесса
+    assert fresh["started_at"] == fresh["process_started_at"]      # from the process startedAt
 
 
 def test_real_process_table_sees_this_process():
@@ -132,7 +132,7 @@ def test_api_active_lists_live_sessions(atlas_env, claude_dir, live_server, monk
 
 
 def test_last_message_ignores_tool_noise_and_notifications(tmp_path):
-    """«Сообщение только что» у сессии, где никто не писал: время давали служебные записи."""
+    """A "message just now" on a session nobody wrote in must not come from service records."""
     path = tmp_path / "s.jsonl"
     tool_result = rec(type="user", timestamp="2026-09-27T09:05:00.000Z",
                       message={"role": "user", "content": [
@@ -164,7 +164,7 @@ def test_last_message_looks_past_a_long_tail_of_tool_calls(tmp_path, monkeypatch
 
 
 def test_reply_and_progress_come_from_the_tail(tmp_path):
-    """Хвост ответа — последний текст Claude; «сейчас» — заметка после него (Opus 5.5)."""
+    """The reply tail is Claude's last text; "now" is the note after it (Opus 5.5)."""
     path = tmp_path / "s.jsonl"
     long_answer = "начало отчёта " + "х" * 1500 + " Что делаем дальше?"
     note = rec(type="assistant", timestamp="2026-09-27T09:10:00.000Z",
@@ -176,7 +176,7 @@ def test_reply_and_progress_come_from_the_tail(tmp_path):
                     + user_text("продолжай", ts="2026-09-27T09:08:00.000Z") + note,
                     encoding="utf-8")
     found = active.last_messages(str(path))
-    assert found["last_at"] == "2026-09-27T09:08:00.000Z"          # твой «продолжай»
+    assert found["last_at"] == "2026-09-27T09:08:00.000Z"          # your "продолжай"
     assert found["reply"].endswith("Что делаем дальше?") and found["reply_at"].endswith("09:05:00.000Z")
     assert found["progress"] == "Проверяю тесты"
 
@@ -213,7 +213,7 @@ def test_api_full_reply_by_id(atlas_env, write_session, live_server):
     assert bad.value.code in (400, 404)
 
 
-# --- «работает в фоне»: ход закончен, но сессию разбудит фон, а не ты -----------
+# --- "in background": turn is over, background work (not you) wakes the session -----
 
 SNAP = "/bin/zsh -c source /Users/u/.claude/shell-snapshots/snapshot-zsh-1-x.sh && tail -f log"
 
@@ -244,7 +244,10 @@ def _tool(name, args, ts):
 
 def test_loop_wakeup_goal_and_cron_come_from_the_transcript(tmp_path):
     now = time.time()
-    iso = lambda t: datetime.fromtimestamp(t, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+
+    def iso(t: float) -> str:
+        return datetime.fromtimestamp(t, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+
     path = tmp_path / "s.jsonl"
     path.write_text(
         _tool("CronCreate", {"cron": "*/30 * * * *", "prompt": "p"}, iso(now - 900))
@@ -258,7 +261,7 @@ def test_loop_wakeup_goal_and_cron_come_from_the_transcript(tmp_path):
     assert plan["crons"] == 1 and plan["goal"] == "доделать"
     assert abs(active._as_datetime(plan["wake_at"]).timestamp() - (now + 1140)) < 2
 
-    with open(path, "a") as fh:            # цель выполнена, будильник снят
+    with open(path, "a") as fh:            # goal met, the wake-up is cleared
         fh.write(rec(type="attachment", attachment={"type": "goal_status", "met": True,
                                                     "condition": "доделать"}))
         fh.write(_tool("ScheduleWakeup", {"stop": True}, iso(now - 30)))
@@ -279,7 +282,7 @@ def test_wakeup_in_the_past_is_not_pending(tmp_path):
     ("idle", {"shells": 1}, "background"), ("idle", {"agents": 2}, "background"),
     ("idle", {"wake_at": "2026-09-27T16:30:00+00:00"}, "background"),
     ("idle", {"crons": 1}, "background"),
-    ("idle", {"goal": "доделать"}, "idle"),       # цель без фона — ждёт тебя
+    ("idle", {"goal": "доделать"}, "idle"),       # goal without background work — waits for you
     ("idle", {}, "idle"),
 ])
 def test_activity(status, bg, expected):
@@ -309,7 +312,7 @@ def test_markdown_tail_starts_at_a_line_and_keeps_code_blocks_closed():
 
 
 def test_unanswered_prompt_is_shown_until_claude_replies(tmp_path):
-    """После отправки карточка показывает твоё сообщение, пока не придёт ответ Claude."""
+    """After sending, the card shows your message until Claude's reply arrives."""
     path = tmp_path / "s.jsonl"
     path.write_text(assistant_text("прошлый ответ", ts="2026-09-27T09:00:00.000Z")
                     + user_text("сделай вот это", ts="2026-09-27T09:05:00.000Z"), encoding="utf-8")
@@ -349,7 +352,7 @@ def test_prompt_with_an_image_counts_it(tmp_path):
 
 
 def test_goal_clear_record_ends_the_goal(tmp_path):
-    """/goal clear пишет goal_status с met:true и sentinel:true — снято проверено на живом CLI."""
+    """/goal clear writes goal_status with met:true and sentinel:true — captured from a live CLI."""
     path = tmp_path / "s.jsonl"
     path.write_text(
         rec(type="attachment", attachment={"type": "goal_status", "met": False, "sentinel": True,
@@ -363,9 +366,10 @@ def test_goal_clear_record_ends_the_goal(tmp_path):
 
 
 def test_parallel_polls_share_one_active_pass(monkeypatch):
-    """Страница и плагин опрашивают одновременно: холодный проход — один на всех."""
+    """The page and the plugin poll at the same time: one cold pass serves everyone."""
     import threading
     import time as _time
+
     from atlas import server
     calls = []
 
@@ -383,11 +387,11 @@ def test_parallel_polls_share_one_active_pass(monkeypatch):
     assert len(calls) == 1 and len(out) == 4
     monkeypatch.setitem(server._active_cached, "at", _time.monotonic() - 5)
     server.active_sessions(None)
-    assert len(calls) == 2, "устаревший ответ пересчитывается"
+    assert len(calls) == 2, "a stale answer is recomputed"
 
 
 def test_interrupt_is_not_a_prompt_but_is_reported(tmp_path):
-    """Esc или «Стоп»: запись «[Request interrupted by user]» — не твоя реплика, но запрос прерван."""
+    """Esc or "Stop": the "[Request interrupted by user]" record is not your message, but the request is interrupted."""
     path = tmp_path / "s.jsonl"
     path.write_text(assistant_text("готово", ts="2026-09-27T08:00:00.000Z")
                     + user_text("перепиши всё", ts="2026-09-27T08:05:00.000Z")
@@ -397,7 +401,7 @@ def test_interrupt_is_not_a_prompt_but_is_reported(tmp_path):
     assert found["prompt"] == "перепиши всё"
     assert found["last_at"] == "2026-09-27T08:05:00.000Z"
     assert found["interrupted_at"] == "2026-09-27T08:06:00.000Z"
-    # Старое прерывание до последней реплики — не про неё.
+    # An old interruption before the last message does not apply to it.
     path.write_text(user_text("[Request interrupted by user]", ts="2026-09-27T07:00:00.000Z")
                     + assistant_text("готово", ts="2026-09-27T08:00:00.000Z"), encoding="utf-8")
     assert active.last_messages(str(path))["interrupted_at"] is None

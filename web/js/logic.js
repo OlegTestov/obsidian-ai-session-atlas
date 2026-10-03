@@ -1,11 +1,9 @@
-// Чистая логика вкладки «Активные»: без DOM и сети — тестируется в node (tools/test_page.js).
+// Pure logic of the Active tab: no DOM or network, tested in node (tests/js/page.test.mjs).
 (function (root) {
-  const node = typeof module !== "undefined" && module.exports;
-  const I18 = node ? require("./i18n.js") : root.I18N;
-  if (node) require("./lang-views.js");
+  const I18 = root.I18N;
   const decimal = text => (I18.lang() === "ru" ? text.replace(".", ",") : text);
 
-  // Склонение по-русски; строки страницы склоняет i18nN, эта — для совместимости.
+  // Russian plural; page strings use i18nN, this one stays for compatibility.
   function pluralRu(n, one, few, many) {
     const m10 = n % 10, m100 = n % 100;
     if (m10 === 1 && m100 !== 11) return one;
@@ -13,8 +11,8 @@
     return many;
   }
 
-  // Отрезки не пересекаются — поэтому несколько галочек в периоде тоже имеют смысл.
-  // Подпись — геттер: язык выбирается после загрузки модуля.
+  // The ranges do not overlap, so several period checkboxes make sense too.
+  // The label is a getter: the language is chosen after the script loads.
   const PERIODS = [
     { value: "hour", get label() { return I18.i18n("logic.period.hour"); } },
     { value: "today", get label() { return I18.i18n("logic.period.today"); } },
@@ -43,7 +41,7 @@
     return [periodOf(s.last_message_at, now)];
   }
 
-  // filters — {key: Set}; except — фильтр, который не учитывается (для счётчиков его же списка).
+  // filters is {key: Set}; except is a filter to ignore (for the counts of its own list).
   function passes(s, filters, except, now) {
     return Object.keys(filters).every(key => {
       const want = filters[key];
@@ -51,7 +49,7 @@
     });
   }
 
-  // Значения списка со счётчиками при остальных фильтрах; выбранное остаётся, даже если 0.
+  // List values with counts under the other filters; a selected value stays even at 0.
   function filterOptions(sessions, filters, key, now) {
     const counts = new Map();
     sessions.filter(s => passes(s, filters, key, now))
@@ -69,7 +67,7 @@
     return m && +m[1] <= max && +m[2] <= max ? { c: +m[1], r: +m[2] } : null;
   }
 
-  // Что разбудит сессию без тебя — словами; время форматирует вызывающий.
+  // What wakes the session without you, in words; the caller formats the time.
   function backgroundReasons(b, fmtTime) {
     if (!b) return [];
     const out = [];
@@ -80,8 +78,8 @@
     return out;
   }
 
-  // Твоё сообщение без ответа: только что отправленное (пока транскрипт не догнал) или из
-  // транскрипта. dropSent — отправленное из карточки уже не нужно держать.
+  // Your message without a reply: just sent (until the transcript catches up) or from
+  // the transcript. dropSent: the message sent from the card no longer needs keeping.
   function unansweredPrompt(s, sent) {
     const t = iso => (iso ? new Date(iso).getTime() : 0);
     let dropSent = false;
@@ -98,8 +96,8 @@
     return { prompt: null, dropSent };
   }
 
-  // Где только что отправленное из карточки, пока транскрипт его не показал: в очереди (набрано,
-  // пока Claude работал), ещё в пути — или пропало (вкладка не приняла ввод, диалог перехватил).
+  // Where a message just sent from the card is until the transcript shows it: queued (typed
+  // while Claude worked), still on its way, or lost (the tab rejected input, a dialog took it).
   const DELIVERY_WAIT_MS = 15000;
   function deliveryState(s, sent, now) {
     if (!sent) return null;
@@ -109,7 +107,7 @@
     return "sending";
   }
 
-  // Подсказки слэш-команд: пока набрано «/слово» без пробела. Сначала — начинающиеся с набранного.
+  // Slash-command hints while "/word" is typed without a space. Prefix matches come first.
   function commandMatches(list, text) {
     const m = /^\/([^\s]*)$/.exec(text || "");
     if (!m) return [];
@@ -120,13 +118,13 @@
     return starts.concat(inside);
   }
 
-  // История отправленного, как в шелле: index −1 — свой черновик, 0 — последнее отправленное.
+  // Sent history, as in a shell: index −1 is your draft, 0 is the last sent message.
   function historyStep(history, index, dir) {
     const next = Math.max(-1, Math.min(history.length - 1, index + (dir === "up" ? 1 : -1)));
     return { index: next, text: next < 0 ? null : history[history.length - 1 - next] };
   }
 
-  // Контекст сессии: доля окна и тон — от 80% уже близко к автоматической компактации.
+  // Session context: the window share and tone; from 80% auto-compaction is close.
   function contextLevel(s) {
     if (!s.context_tokens || !s.context_window) return null;
     const pct = Math.round(100 * s.context_tokens / s.context_window);
@@ -137,7 +135,7 @@
                + (pct >= 80 ? I18.i18n("logic.context.soon") : "") };
   }
 
-  // Недельный лимит и лимит 5 часов — строкой для верхней панели; устаревшее помечаем.
+  // Weekly and 5-hour limits as a line for the top bar; stale data is marked.
   function limitsText(l, fmtWhen) {
     if (!l || !l.windows || !l.windows.length) return null;
     const parts = l.windows.map(w => `${w.label} ${Math.round(w.used_percentage)}%`
@@ -148,9 +146,9 @@
              tone: top >= 90 ? "warn" : top >= 75 ? "mid" : "ok", stale };
   }
 
-  // Порядок карточек не зависит от свежести сообщений — иначе они прыгают при каждом ответе:
-  // закреплённые (в порядке закрепления), затем по времени запуска, новые сверху. Скрытые до
-  // следующего сообщения уходят: hidden — {id: last_message_at на момент скрытия}.
+  // Card order does not depend on message freshness, otherwise cards jump on every reply:
+  // pinned (in pin order), then by start time, newest on top. Cards hidden until the
+  // next message drop out: hidden is {id: last_message_at at hiding time}.
   function arrangeSessions(list, pinned, hidden) {
     const pins = pinned || [];
     const hid = hidden || {};
@@ -163,7 +161,7 @@
       if (pa !== pb) return (pa < 0 ? 1e9 : pa) - (pb < 0 ? 1e9 : pb);
       return started(b) - started(a) || (a.session_id < b.session_id ? -1 : 1);
     });
-    // Скрытые, у которых появилось новое сообщение, — вернуть; записи о них больше не нужны.
+    // Hidden cards that got a new message come back; their records are no longer needed.
     const stale = Object.keys(hid).filter(id => {
       const s = list.find(x => x.session_id === id);
       return !s || hid[id] !== (s.last_message_at || "");
@@ -171,7 +169,7 @@
     return { visible, hiddenCount: list.length - visible.length, stale };
   }
 
-  // Стрелки и j/k по карточкам: влево-вправо — соседняя, вверх-вниз — на ряд (cols карточек).
+  // Arrows and j/k over cards: left/right to the neighbour, up/down by a row (cols cards).
   function nextCard(ids, current, key, cols) {
     if (!ids.length) return null;
     const i = ids.indexOf(current);
@@ -181,7 +179,7 @@
     return ids[Math.max(0, Math.min(ids.length - 1, i + step))];
   }
 
-  // Стоимость: записанная Claude Code (на дату) и оценка сейчас — по токенам.
+  // Cost: as recorded by Claude Code (as of a date) and a current estimate from tokens.
   function costText(s, fmtDay) {
     if (s.cost_now != null && (s.cost_usd == null || s.cost_now - s.cost_usd >= 0.005)) {
       return "≈ $" + s.cost_now.toFixed(2);
@@ -190,8 +188,8 @@
     return "$" + s.cost_usd.toFixed(2) + (s.cost_recorded_at && fmtDay ? I18.i18n("logic.cost.on", { day: fmtDay(s.cost_recorded_at) }) : "");
   }
 
-  // Строка карточки коротко: «26.08 16:36 · 12 ч назад · 396 ходов · ≈$832 · 606k/1M».
-  // Полный текст — в подсказке. ago и fmtStart даёт страница: форматы времени там.
+  // Short card line: "26.08 16:36 · 12 h ago · 396 turns · ≈$832 · 606k/1M".
+  // The full text is in the tooltip. ago and fmtStart come from the page, which owns time formats.
   function shortTokens(n) {
     return n >= 1e6 ? (n / 1e6).toFixed(n % 1e6 ? 1 : 0).replace(/\.0$/, "") + "M"
       : Math.round(n / 1000) + "k";
@@ -214,7 +212,7 @@
       + shortTokens(s.context_window), tone: ctx.tone, hint: ctx.hint } : null };
   }
 
-  // Связь с терминалом словами. health — ответ плагина; askedAt — когда спросили без ответа.
+  // Terminal link in words. health is the plugin answer; askedAt is when it was asked without an answer.
   const HOST_REPLY_MS = 3000;
   function terminalStatus(embedded, health, askedAt, now) {
     if (!embedded) return { ok: false, reason: I18.i18n("logic.term.notObsidian") };
@@ -227,7 +225,7 @@
     return { ok: !!health.ok, reason: health.reason || null };
   }
 
-  // Задачи агента: «3/7», что идёт сейчас и весь список в подсказку. null — задач нет.
+  // Agent tasks: "3/7", what runs now and the full list for the tooltip. null when there are no tasks.
   const TASK_MARK = { completed: "✓", in_progress: "▶", pending: "○" };
   function tasksSummary(t) {
     if (!t || !t.total) return null;
@@ -237,7 +235,7 @@
              finished: t.done === t.total };
   }
 
-  // Лента, «Шаги»: сколько шёл вызов — «0,8 с», «42 с», «3 мин», «1 ч 05 мин».
+  // Feed, Steps: how long a call ran: "0.8 s", "42 s", "3 min", "1 h 05 min".
   function durationText(sec) {
     if (sec == null || sec < 0) return "";
     if (sec < 10) return I18.i18n("logic.dur.sec", { n: decimal(sec.toFixed(1)) });
@@ -246,22 +244,22 @@
     if (min < 60) return I18.i18n("logic.dur.min", { n: min });
     return I18.i18n("logic.dur.hm", { h: Math.floor(min / 60), m: String(min % 60).padStart(2, "0") });
   }
-  // Какие шаги оставляет фильтр ленты. Текст рассуждений виден только во «всех».
+  // Which steps the feed filter keeps. Reasoning text shows only under "all".
   const STEP_FILTERS = { all: null, error: ev => ev.status === "error", bash: ev => ev.kind === "bash",
                          edit: ev => ev.kind === "edit", agent: ev => ev.kind === "agent" };
   function stepPasses(ev, filter) {
     const f = STEP_FILTERS[filter];
     return !f || f(ev);
   }
-  // Путь файла в ленте: от папки сессии, иначе от домашней — «~/Code/x/a.py».
+  // File path in the feed: relative to the session folder, otherwise to home: "~/Code/x/a.py".
   function relPath(path, cwd, home) {
     if (cwd && path.startsWith(cwd.replace(/\/$/, "") + "/")) return path.slice(cwd.replace(/\/$/, "").length + 1);
     if (home && path.startsWith(home + "/")) return "~" + path.slice(home.length);
     return path;
   }
 
-  // Быстрый переход (⌘K): все слова запроса — в названии или подписи; живые — выше закрытых,
-  // совпадение с началом названия — выше совпадения в середине. Пустой запрос — всё по порядку.
+  // Quick jump (⌘K): every query word is in the title or subtitle; live ranks above closed,
+  // a title-prefix match ranks above a mid-title one. An empty query lists everything in order.
   function jumpMatches(items, query, limit) {
     const words = String(query || "").toLowerCase().split(/\s+/).filter(Boolean);
     const scored = [];
@@ -276,16 +274,16 @@
     return scored.slice(0, limit || 12).map(x => x[3]);
   }
 
-  /** Прежние сообщения для подробной карточки: всё до того, что показывает её последний блок
-   *  (твой запрос без ответа или последний ответ), не больше limit − 1. */
+  /** Earlier messages for the detailed card: everything before what its last block shows
+   *  (your unanswered prompt or the last reply), at most limit − 1. */
   function cardHistory(s, unanswered, limit) {
     const shownAt = unanswered ? unanswered.at : s.reply_at;
     const list = (s.history || []).filter(m => !shownAt || !m.at || m.at < shownAt);
     return limit > 1 ? list.slice(-(limit - 1)) : [];
   }
 
-  /** Порядок карточек, пока ты на вкладке: прежние — на своих местах, новые — в конец, ушедшие
-   *  выпадают. frozen = null — порядок ещё не снят: берём свежую сортировку и запоминаем её. */
+  /** Card order while you are on the tab: existing cards keep their places, new ones go to the end,
+   *  departed ones drop out. frozen = null means no order yet: take a fresh sort and remember it. */
   function applyFrozenOrder(sorted, frozen) {
     const ids = sorted.map(s => s.session_id);
     if (!frozen) return { list: sorted, frozen: ids };
@@ -297,8 +295,8 @@
     return { list, frozen: list.map(s => s.session_id) };
   }
 
-  /** Пометки ряда «Недавно закрытые»: сессия ушла из списка (открылась) — пометка снимается,
-   *  иначе при следующем закрытии ряд снова писал бы «открываю…». Ожидание открытия — не дольше ttl. */
+  /** Notes on the Recently closed rows: a session that left the list (opened) loses its note,
+   *  otherwise on the next close the row would say "opening…" again. Opening waits at most ttl. */
   const CLOSED_NOTE_TTL_MS = 60000;
   function pruneClosedNotes(notes, closedIds, now, ttl) {
     const still = new Set(closedIds || []);
@@ -312,6 +310,5 @@
   const api = { cardHistory, applyFrozenOrder, pruneClosedNotes, CLOSED_NOTE_TTL_MS, pluralRu, tasksSummary, jumpMatches, durationText, stepPasses, relPath, terminalStatus, infoParts, shortTokens, arrangeSessions, contextLevel, limitsText, deliveryState, DELIVERY_WAIT_MS, commandMatches,
                 historyStep, PERIODS, periodOf, valuesOf, passes, filterOptions, parseLayout,
                 backgroundReasons, unansweredPrompt, nextCard, costText };
-  if (typeof module !== "undefined" && module.exports) module.exports = api;
-  else root.AtlasLogic = api;           // своё пространство имён: в active.js есть обёртки
-})(typeof window !== "undefined" ? window : globalThis);
+  root.AtlasLogic = api;           // own namespace: active.js has wrappers
+})(window);

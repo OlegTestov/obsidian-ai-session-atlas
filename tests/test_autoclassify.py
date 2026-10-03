@@ -1,4 +1,4 @@
-"""Раз в час: тема и «Что сделано» у новых и изменившихся сессий. Выключено по умолчанию."""
+"""Hourly: topic and "What was done" for new and changed sessions. Off by default."""
 from __future__ import annotations
 
 import calendar
@@ -36,7 +36,7 @@ class Recorder:
 
     def __call__(self, conn, ids, job_id=None):
         self.calls.append(list(ids))
-        for sid in ids:                          # как настоящая: пишет классификацию
+        for sid in ids:                          # like the real one: writes the classification
             conn.execute("INSERT OR REPLACE INTO classification (session_id, domain, topic, summary, "
                          "confidence, content_hash, classifier_version, model, backend, created_at) "
                          "VALUES (?,?,?,?,?,?,?,?,?,?)", (sid, "personal", "t", "s", 0.9, "h", 1, "m", "b", "t"))
@@ -70,12 +70,12 @@ def test_first_pass_takes_new_and_only_remembers_already_classified(atlas_env, w
     conn = _setup(atlas_env, write_session)
     assert [sid for sid, _ in autoclassify.candidates(conn, now=NOW)] == [OLD]
     seen = conn.execute("SELECT turns_sig FROM auto_marks WHERE session_id=?", (DONE,)).fetchone()
-    assert seen is not None, "размеченная без отметки — запомнена, но не пересчитывается"
+    assert seen is not None, "a labelled session without a mark is remembered but not recomputed"
 
 
 def test_new_messages_bring_a_session_back(atlas_env, write_session):
     conn = _setup(atlas_env, write_session)
-    autoclassify.candidates(conn, now=NOW)                  # отметка для DONE
+    autoclassify.candidates(conn, now=NOW)                  # mark for DONE
     write_session("p", [user_text("уже размечена", ts="2026-09-27T09:00:00.000Z"),
                         assistant_text("ответ", ts="2026-09-27T09:10:00.000Z"),
                         user_text("а теперь ещё вот что", ts="2026-09-27T11:00:00.000Z")],
@@ -93,8 +93,8 @@ def test_hourly_run_classifies_summarizes_and_marks(atlas_env, write_session):
     assert out["classified"] == 1 and out["summaries"] == 1
     job = conn.execute("SELECT state FROM jobs WHERE action_kind='classification'").fetchone()
     assert job["state"] == "done"
-    assert _tick(conn, NOW + 600, run, summ) is None, "раньше часа — молчит"
-    # Через час: OLD и DONE не менялись, а FRESH как раз исполнилось полчаса — берётся только она.
+    assert _tick(conn, NOW + 600, run, summ) is None, "silent before an hour passes"
+    # An hour later: OLD and DONE are unchanged, FRESH just turned half an hour old — only it is taken.
     later = _tick(conn, NOW + 3601, run, summ)
     assert later["candidates"] == 1 and run.calls[-1] == [FRESH]
     autoclassify.set_enabled(conn, False)
@@ -141,14 +141,14 @@ def test_setting_and_marks_survive_rebuild(atlas_env, write_session):
     conn = _setup(atlas_env, write_session)
     autoclassify.set_enabled(conn, True)
     autoclassify.candidates(conn, now=NOW)
-    db.drop_derived(conn)                      # то, что делает `atlas rebuild`
+    db.drop_derived(conn)                      # what `atlas rebuild` does
     index.index_all(conn, root=str(atlas_env["projects"]), full=True)
     assert autoclassify.enabled(conn)
     assert conn.execute("SELECT count(*) FROM auto_marks").fetchone()[0] >= 1
 
 
 def test_summary_goes_the_same_way_as_the_button(atlas_env, write_session, monkeypatch):
-    """Разрешение на отправку — на это состояние сессии и эту модель, потом обычный produce."""
+    """Send permission covers this session state and this model, then a normal produce."""
     conn = _setup(atlas_env, write_session)
     from atlas import enrich, runner
     produced = []
@@ -171,4 +171,4 @@ def test_changes_after_a_run_are_picked_up_next_hour(atlas_env, write_session):
                         assistant_text("сделал", ts="2026-09-27T12:10:00.000Z")], session_id=OLD)
     index.index_all(conn, root=str(atlas_env["projects"]))
     _tick(conn, NOW + 3601, run, summ)
-    assert OLD in run.calls[-1], "новое в сессии после прохода — в следующий проход"
+    assert OLD in run.calls[-1], "session changes after a pass go to the next pass"

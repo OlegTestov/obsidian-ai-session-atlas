@@ -1,8 +1,8 @@
-"""«Статистика» за период: сессии, токены, активное время, цена по API, попадание в кэш.
+"""The "Stats" view for a period: sessions, tokens, active time, API-priced cost, cache hit rate.
 
-Считается по ответам, а не по сессиям: сессия, начатая до периода, попадает в него той частью,
-что пришлась на период. Ответ, скопированный возобновлённой сессией, считается один раз.
-Сабагенты входят в токены и цену, но не во время (см. atlas/activity.py).
+Counted by replies, not sessions: a session started before the period contributes only the part
+that falls within it. A reply copied by a resumed session counts once.
+Subagents count toward tokens and cost, but not time (see atlas/activity.py).
 """
 from __future__ import annotations
 
@@ -14,12 +14,12 @@ from datetime import datetime, timedelta, timezone
 from .messages import msg
 
 PERIODS = {"today": None, "7d": 7, "30d": 30, "90d": 90, "all": None}
-TOP = 30                     # строк разбивки: страница сама режет до видимых
+TOP = 30                     # breakdown rows: the page trims them to what is visible
 SESSIONS_EACH = 10
 
 
 def window(period: str, now: datetime | None = None) -> tuple[datetime | None, datetime]:
-    """(начало, конец) в местном времени. «Сегодня» — с полуночи, «всё» — без начала."""
+    """(start, end) in local time. "Today" starts at midnight, "all" has no start."""
     now = now or datetime.now().astimezone()
     if period == "today":
         return now.replace(hour=0, minute=0, second=0, microsecond=0), now
@@ -28,7 +28,7 @@ def window(period: str, now: datetime | None = None) -> tuple[datetime | None, d
 
 
 def _utc(dt: datetime | None) -> str:
-    # Время в транскриптах — `2026-09-27T18:42:01.304Z`: сравниваем строки того же вида.
+    # Transcript timestamps look like `2026-09-27T18:42:01.304Z`: compare strings of the same form.
     if dt is None:
         return ""
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
@@ -54,7 +54,7 @@ def _rows(conn: sqlite3.Connection, since: datetime | None, until: datetime, aut
 
 
 def wall_seconds(rows) -> float:
-    """Время за экраном: активные отрезки всех сессий, слитые там, где они шли параллельно."""
+    """Screen time: active spans of all sessions, merged where they ran in parallel."""
     spans = []
     for r in rows:
         act = r["act"] or 0
@@ -77,7 +77,7 @@ def wall_seconds(rows) -> float:
 
 
 def tool_group(name: str) -> tuple[str, str]:
-    """(панель, строка). MCP — по серверу, а не по вызову; скиллы и агенты — отдельно."""
+    """(panel, row). MCP is grouped by server, not by call; skills and agents separately."""
     if name.startswith("mcp__"):
         return "tools", "MCP " + name.split("__")[1]
     if name.startswith("Skill:"):
@@ -119,7 +119,7 @@ def _totals(rows) -> dict:
 
 
 def _series(rows, since: datetime | None, until: datetime) -> dict:
-    """По часам, если период — сутки, иначе по дням; пустые промежутки заполнены нулями."""
+    """Hourly if the period is one day, otherwise daily; empty slots are filled with zeros."""
     hourly = since is not None and until - since <= timedelta(hours=36)
     width = 13 if hourly else 10
     acc: dict[str, Counter] = defaultdict(Counter)
@@ -189,7 +189,7 @@ def _breakdowns(conn: sqlite3.Connection, rows) -> dict:
                     calls[panel][name] += 1
         hour = int(r["lh"][11:13])
         hours[hour] += act
-        week[(r["wd"] + 6) % 7][hour] += act          # понедельник — первая строка
+        week[(r["wd"] + 6) % 7][hour] += act          # Monday is the first row
 
     def top(dim, n=TOP, key="cost"):
         items = sorted(by[dim].items(), key=lambda kv: -kv[1][key])[:n]
@@ -197,7 +197,7 @@ def _breakdowns(conn: sqlite3.Connection, rows) -> dict:
                  "tokens": v["tokens"], "prompts": v["prompts"], "answers": v["answers"]}
                 for k, v in items]
 
-    # Страница сортирует сама — по цене, токенам или времени: сессий — первые по каждому.
+    # The page sorts by cost, tokens or time itself, so sessions are the top ones by each.
     picked = {}
     for key in ("cost", "tokens", "active_s"):
         for item in top("session", SESSIONS_EACH, key):
@@ -238,7 +238,7 @@ def summary(conn: sqlite3.Connection, period: str = "7d", automation: bool = Fal
            "until": until.isoformat(), "automation": automation,
            "totals": _totals(rows), "series": _series(rows, since, until)}
     out.update(_breakdowns(conn, rows))
-    # Прошлый такой же отрезок — для сравнения «больше / меньше, чем обычно».
+    # The previous span of equal length, for "more / less than usual" comparison.
     if since is not None:
         prev = _rows(conn, since - (until - since), since, automation)
         out["previous"] = _totals(prev)

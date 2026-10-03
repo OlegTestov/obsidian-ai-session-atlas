@@ -1,11 +1,11 @@
-"""Тексты, которые сервер отдаёт странице, на двух языках.
+"""Texts the server sends to the page, in two languages.
 
-Язык — из заголовка `X-Atlas-Lang` каждого запроса: server.py кладёт его в thread-local, глубокие
-модули читают `request_lang()`. Фоновые потоки (джобы, автоклассификация) получают язык явно
-через `use_lang`. Без заголовка — английский.
+The language comes from each request's `X-Atlas-Lang` header: server.py puts it in a thread-local,
+deeper modules read `request_lang()`. Background threads (jobs, auto-classification) get the
+language explicitly via `use_lang`. No header means English.
 
-Это язык интерфейса. Язык ответа модели — отдельная настройка (`prompts.lang()`).
-Идентификаторы данных (темы, домены, коды статусов) сюда не попадают.
+This is the interface language. The model's reply language is a separate setting (`prompts.lang()`).
+Data identifiers (topics, domains, status codes) do not belong here.
 """
 from __future__ import annotations
 
@@ -16,11 +16,11 @@ LANGS = ("en", "ru")
 DEFAULT = "en"
 
 _local = threading.local()
-_last = {"lang": DEFAULT}          # язык последнего запроса страницы — для фонового планировщика
+_last = {"lang": DEFAULT}          # language of the page's last request, for the background scheduler
 
-# Множественное число — списком: en [one, other], ru [one, few, many]; {n} — само число.
+# Plurals are lists: en [one, other], ru [one, few, many]; {n} is the number itself.
 MESSAGES: dict[str, dict] = {
-    # --- server.py: ошибки маршрутов и защиты ---
+    # --- server.py: routing and protection errors ---
     "server.bad_host": {"en": "wrong Host", "ru": "неверный Host"},
     "server.foreign_origin": {"en": "foreign Origin", "ru": "чужой Origin"},
     "server.no_origin": {"en": "mutating request without Origin",
@@ -115,7 +115,7 @@ MESSAGES: dict[str, dict] = {
     "query.how.forms": {"en": "any word form", "ru": "любая форма слова"},
     "query.how.phrase": {"en": "whole phrase", "ru": "фраза целиком"},
 
-    # --- steps.py: шаги хода в ленте, по одному ---
+    # --- steps.py: turn steps in the feed, one at a time ---
     "step.edit": {"en": "edit {name}", "ru": "правка {name}"},
     "step.write": {"en": "wrote {name}", "ru": "записал {name}"},
     "step.read": {"en": "read {name}", "ru": "прочитал {name}"},
@@ -129,10 +129,10 @@ MESSAGES: dict[str, dict] = {
                        "ru": ["прочитал {n} файл", "прочитал {n} файла", "прочитал {n} файлов"]},
     "step.search_many": {"en": ["searched {n} time", "searched {n} times"],
                          "ru": ["искал {n} раз", "искал {n} раза", "искал {n} раз"]},
-    # --- limits.py: окна лимитов подписки ---
+    # --- limits.py: subscription limit windows ---
     "limits.five_hour": {"en": "5 hours", "ru": "5 часов"},
     "limits.seven_day": {"en": "week", "ru": "неделя"},
-    # --- feed.py: шаги хода ---
+    # --- feed.py: turn steps ---
     "feed.edited": {"en": ["edited {n} file", "edited {n} files"],
                     "ru": ["правил {n} файл", "правил {n} файла", "правил {n} файлов"]},
     "feed.commands": {"en": ["{n} command", "{n} commands"],
@@ -146,8 +146,8 @@ MESSAGES: dict[str, dict] = {
                     "ru": ["{n} сабагент", "{n} сабагента", "{n} сабагентов"]},
     "feed.web": {"en": "web: {n}", "ru": "веб: {n}"},
 
-    # --- карточка фактов сессии: payload (runner.py) и сигнал классификатора (classify.py) ---
-    # Уходит модели и показывается в предпросмотре «что уйдёт наружу».
+    # --- session fact card: payload (runner.py) and classifier signal (classify.py) ---
+    # Sent to the model and shown in the "what will be sent out" preview.
     "fact.session": {"en": "# Session {sid}", "ru": "# Сессия {sid}"},
     "fact.title": {"en": "Title: {value}", "ru": "Заголовок: {value}"},
     "fact.period": {"en": "Period: {start} → {end}", "ru": "Период: {start} → {end}"},
@@ -220,13 +220,13 @@ MESSAGES: dict[str, dict] = {
 
 
 def normalize(value) -> str:
-    """Любое значение заголовка → en | ru; неизвестное и пустое — язык по умолчанию."""
+    """Any header value → en | ru; unknown or empty gives the default language."""
     value = str(value or "").strip().lower()
     return value if value in LANGS else DEFAULT
 
 
 def set_lang(value, remember: bool = True) -> str:
-    """Язык текущего потока. remember — запомнить как язык страницы для фоновых проходов."""
+    """Thread language. remember: keep it as the page language for background passes."""
     lang = normalize(value)
     _local.lang = lang
     if remember and value:
@@ -239,13 +239,13 @@ def request_lang() -> str:
 
 
 def last_lang() -> str:
-    """Язык последнего запроса с заголовком: на нём планировщик пишет ошибки для страницы."""
+    """Language of the last request with the header: the scheduler writes page errors in it."""
     return _last["lang"]
 
 
 @contextmanager
 def use_lang(value):
-    """Язык на время блока — для фонового потока, у которого нет своего запроса."""
+    """Language for the duration of the block, for a background thread that has no request."""
     prev = getattr(_local, "lang", None)
     _local.lang = normalize(value)
     try:
@@ -260,7 +260,7 @@ def _pick(key: str, lang: str | None):
 
 
 def msg(key: str, lang: str | None = None, **values) -> str:
-    """Текст по ключу на языке запроса (или явном); {имя} подставляется из values."""
+    """Text by key in the request's (or the given) language; {name} is filled from values."""
     text = _pick(key, lang)
     return text.format(**values) if values else text
 
@@ -277,7 +277,7 @@ def plural_index(n: int, lang: str) -> int:
 
 
 def plural(key: str, n: int, lang: str | None = None, **values) -> str:
-    """Форма по числу: en [one, other], ru [one, few, many]."""
+    """Form by number: en [one, other], ru [one, few, many]."""
     lang = normalize(lang) if lang else request_lang()
     forms = MESSAGES[key].get(lang) or MESSAGES[key][DEFAULT]
     return forms[plural_index(n, lang)].format(n=n, **values)

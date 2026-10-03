@@ -1,4 +1,4 @@
-"""Правила: проект, вид сессии, домен, чувствительность. Без БД; что где лежит — из config."""
+"""Rules: project, session kind, domain, sensitivity. No DB; locations come from config."""
 from __future__ import annotations
 
 import os
@@ -6,11 +6,11 @@ import posixpath
 import re
 from dataclasses import dataclass
 
-from . import config
+from . import config, paths
 
 HOME = os.path.expanduser("~")
 
-# Подпапка конкретной сессии, а не проект: /private/tmp/claude-501/<slug>/<uuid>/scratchpad/...
+# A single session's subfolder, not a project: /private/tmp/claude-501/<slug>/<uuid>/scratchpad/...
 SCRATCHPAD_RE = re.compile(r"^/private/tmp/claude-\d+/[^/]+/[0-9a-f-]{36}/scratchpad(/|$)")
 
 UNCLASSIFIED = "unclassified"
@@ -21,11 +21,11 @@ class Workspace:
     kind: str  # project | scratchpad | home | unknown
     project_id: str | None
     root: str | None
-    area: str | None  # первый уровень под корнем; для vault — его папка верхнего уровня
+    area: str | None  # first level under the root; for a vault, its top-level folder
 
 
 def _under(path: str, root: str) -> bool:
-    """Сравнение по компонентам пути, а не startswith: /Code-old не под /Code."""
+    """Compares path components, not startswith: /Code-old is not under /Code."""
     try:
         return os.path.commonpath([os.path.normpath(path), root]) == root
     except ValueError:
@@ -33,13 +33,13 @@ def _under(path: str, root: str) -> bool:
 
 
 def normalize(path: str, cwd_at_record: str | None = None) -> str:
-    """Абсолютный лексически нормализованный путь; относительный — от cwd на момент записи."""
+    """Absolute, lexically normalized path; a relative one is resolved against the cwd at record time."""
     if not path:
         return ""
     if not os.path.isabs(path) and cwd_at_record:
         path = os.path.join(cwd_at_record, path)
     path = os.path.expanduser(path)
-    # /tmp на macOS — симлинк на /private/tmp; приводим к одной форме, не трогая диск.
+    # On macOS /tmp is a symlink to /private/tmp; normalize to one form without touching the disk.
     if path.startswith("/tmp/"):
         path = "/private" + path
     return os.path.normpath(path)
@@ -62,27 +62,28 @@ def classify_path(path: str, cwd_at_record: str | None = None) -> Workspace:
         if _under(p, prefix) and p != prefix:
             rel_to_prefix = posixpath.relpath(p, prefix)
             name = rel_to_prefix.split("/")[0]
-            # Файл, лежащий прямо в корне проектов, проектом не является.
+            # A file directly in the projects root is not a project.
             if rel_to_prefix == name and (name.startswith(".") or os.path.splitext(name)[1]):
                 return Workspace("unknown", None, None, None)
             root = os.path.join(prefix, name)
             if root in containers:
-                continue  # это контейнер, проект уровнем глубже
+                continue  # a container; the project is one level deeper
             rel = posixpath.relpath(p, root)
             return Workspace("project", name, root, None if rel == "." else rel.split("/")[0])
-    if _under(p, os.path.join(HOME, ".claude")):
-        return Workspace("project", "claude-config", os.path.join(HOME, ".claude"), None)
+    claude = paths.claude_dir()
+    if _under(p, claude):
+        return Workspace("project", "claude-config", claude, None)
     if p == HOME:
         return Workspace("home", None, None, None)
     return Workspace("unknown", None, None, None)
 
 
-# Headless-поверхности. Всё остальное (cli, claude-desktop, ide) — человек за клавиатурой.
+# Headless surfaces. Everything else (cli, claude-desktop, ide) is a human at the keyboard.
 HEADLESS_ENTRYPOINTS = {"sdk-cli", "sdk", "sdk-ts", "sdk-py"}
 
 
 def session_kind(entrypoint: str | None, human_turns: int) -> str:
-    """Фоновые прогоны (хуки, ночной агент) идут через SDK или вовсе без промптов человека."""
+    """Background runs (hooks, nightly agent) go through the SDK or have no human prompts at all."""
     if entrypoint in HEADLESS_ENTRYPOINTS:
         return "automation"
     if human_turns == 0:
@@ -91,7 +92,7 @@ def session_kind(entrypoint: str | None, human_turns: int) -> str:
 
 
 def resolve_projects(cwds: list[str], file_paths: list[str]) -> tuple[list[tuple[str, str]], str]:
-    """Возвращает [(project_id, role)] с ровно одним primary и workspace_kind сессии."""
+    """Returns [(project_id, role)] with exactly one primary, plus the session workspace_kind."""
     workspace_kind = "project"
     primary: str | None = None
     for cwd in cwds:
@@ -107,7 +108,7 @@ def resolve_projects(cwds: list[str], file_paths: list[str]) -> tuple[list[tuple
         if ws.project_id and ws.project_id != primary and ws.project_id not in touched:
             touched.append(ws.project_id)
     if primary is None:
-        # Скретчпад-сессия правила реальные файлы — берём их проект основным.
+        # A scratchpad session edited real files: their project becomes the primary one.
         if touched:
             primary, touched = touched[0], touched[1:]
         else:
@@ -116,8 +117,8 @@ def resolve_projects(cwds: list[str], file_paths: list[str]) -> tuple[list[tuple
 
 
 def resolve_domains(cwds: list[str], file_paths: list[str]) -> list[str]:
-    """Домен по пути — только где его задал человек: область vault или проект целиком.
-    Репозиторий сам по себе о домене не говорит — остальное решает классификатор."""
+    """Domain from the path only where a human set it: a vault area or a whole project.
+    A repository alone says nothing about the domain; the classifier decides the rest."""
     domains: list[str] = []
     vault_ids = {vid for _, vid in config.vaults()}
     rules = [(r[0].split("/")[0], r[1]) for r in config.get("vault_domain_rules") or []
@@ -136,7 +137,7 @@ def resolve_domains(cwds: list[str], file_paths: list[str]) -> list[str]:
 
 
 def resolve_sensitivity(cwds: list[str], file_paths: list[str]) -> str:
-    """По умолчанию unclassified, и это запрещает отправку наружу. Fail-closed."""
+    """Defaults to unclassified, which blocks sending data out. Fail-closed."""
     rules = config.get("sensitive") or {}
     areas = set(rules.get("vault_areas") or [])
     projects = set(rules.get("projects") or [])
@@ -150,7 +151,7 @@ def resolve_sensitivity(cwds: list[str], file_paths: list[str]) -> str:
     return UNCLASSIFIED
 
 
-# Claude Code иногда называет сессию первой строкой сводки компактации — это не заголовок.
+# Claude Code sometimes names a session after the first line of a compaction summary; that is not a title.
 COMPACT_TITLE_PREFIX = "This session is being continued"
 
 

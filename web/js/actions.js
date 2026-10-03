@@ -1,6 +1,7 @@
-// Действия с сессией (восстановить, хендофф, описание) и справка.
-// Классический скрипт: общий глобальный контекст с остальными файлами страницы.
-// --- действия ---------------------------------------------------------------
+// Session actions (restore, handoff, description) and help.
+// Classic script: shares one global scope with the other page files.
+/* exported showResume, startArtifact, buildHelp, deleteSession -- used by other page scripts */
+// --- actions ---------------------------------------------------------------
 
 function modal(title, note, body, okLabel, onOk) {
   $("#m-title").textContent = title;
@@ -43,7 +44,7 @@ function showResume(s, fork) {
   if (!a.can_open_terminal) $("#m-ok").disabled = true;
 }
 
-// Две стадии: сначала показываем, что именно уйдёт наружу, и только потом зовём модель.
+// Two stages: first show exactly what leaves the machine, only then call the model.
 async function startArtifact(id, kind, thenLaunch) {
   let prev;
   try { prev = await api("/api/preview", { session_id:id, artifact_kind:kind }); }
@@ -86,7 +87,7 @@ async function poll(jobId, id, kind, thenLaunch) {
       $("#m-note").textContent = i18n("common.error", { msg: job.error }); $("#m-ok").disabled = false; return;
     }
     if (job.state === "cancel_requested") { $("#m-note").textContent = i18n("actions.cancelled"); return; }
-    await new Promise(r => setTimeout(r, 2500));
+    await new Promise(r => window.setTimeout(r, 2500));
   }
   $("#m-note").textContent = i18n("actions.tooLong");
 }
@@ -96,7 +97,7 @@ function readable(payload) {
     const d = JSON.parse(payload);
     return i18n("actions.readable",
       { did: d.did, result: d.result, open: d.open || "—", outcome: d.work_outcome });
-  } catch (_) { return payload; }
+  } catch { return payload; }
 }
 
 async function launch(id) {
@@ -114,9 +115,9 @@ async function launch(id) {
   modal(i18n("actions.newFromThisTitle"), i18n("actions.compressedCopy"), body);
 }
 
-// --- справка ---
+// --- help ---
 
-// Пишется через DOM, а не разметкой в строке: на странице действует CSP и запрет innerHTML.
+// Built through the DOM, not markup in a string: the page has a CSP and no innerHTML.
 function buildHelp() {
   const box = $("#help-body");
   if (box.childElementCount) return;
@@ -170,7 +171,7 @@ function buildHelp() {
   p(i18n("help.outP"));
 }
 
-// Удаление сессии: сначала список того, что исчезнет, потом одно явное подтверждение.
+// Deleting a session: first the list of what disappears, then one explicit confirmation.
 const DELETE_KINDS = [["transcript", "delete.kind.transcript"], ["subagents", "delete.kind.subagents"],
   ["file_history", "delete.kind.file_history"], ["session_env", "delete.kind.session_env"],
   ["tasks", "delete.kind.tasks"], ["todos", "delete.kind.todos"], ["handoff", "delete.kind.handoff"]];
@@ -219,5 +220,5 @@ async function deleteSession(s) {
     });
   $("#m-ok").classList.add("danger");
   $("#m-copy").classList.add("hidden");
-  $("#m-close").focus();                 // случайный Enter закрывает окно, а не удаляет
+  $("#m-close").focus();                 // a stray Enter closes the dialog instead of deleting
 }

@@ -1,4 +1,4 @@
-"""Очередь сообщений, набранных во время работы Claude: по записям queue-operation."""
+"""Queue of messages typed while Claude works, built from queue-operation records."""
 from __future__ import annotations
 
 import json
@@ -31,7 +31,7 @@ def test_fifo_and_system_notifications_are_hidden():
         + op("enqueue", '<agent-message from="a1">hand-back')
         + op("enqueue", "первое моё") + op("enqueue", "второе моё")
         + op("dequeue")).splitlines()]
-    # Первым в очереди было уведомление — dequeue снял его, а не последнее моё сообщение.
+    # A notification was first in the queue, so dequeue removed it, not my last message.
     assert [q["text"] for q in prompt_queue.replay(records)] == ["первое моё", "второе моё"]
     records.append(json.loads(op("dequeue")))
     assert [q["text"] for q in prompt_queue.replay(records)] == ["первое моё", "второе моё"]

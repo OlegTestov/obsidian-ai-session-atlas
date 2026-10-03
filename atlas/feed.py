@@ -1,8 +1,8 @@
-"""Лента сессии для боковой панели: последние ходы — твой запрос, что делал Claude, его ответ.
+"""Session feed for the side panel: recent turns with your prompt, what Claude did, its reply.
 
-Ход начинается твоей репликой (см. `active.is_message`). Вызовы инструментов сворачиваются
-в короткие строки: «правил 3 файла», «команд: 2». Читается хвост транскрипта, окно растёт,
-пока не наберётся нужное число ходов — у живой сессии это обычно последние сотни КБ.
+A turn starts with your message (see `active.is_message`). Tool calls collapse into short
+lines: "edited 3 files", "commands: 2". The transcript tail is read with a growing window
+until it holds enough turns; for a live session that is usually the last few hundred KB.
 """
 from __future__ import annotations
 
@@ -20,11 +20,11 @@ MAX_WINDOW = 16 * 1024 * 1024
 PROMPT_CHARS = 2000
 REPLY_CHARS = 4000
 DETAIL_ITEMS = 6
-HISTORY_PROMPT_CHARS = 1500       # хвост переписки в карточке: короче, чем в ленте
+HISTORY_PROMPT_CHARS = 1500       # conversation tail in the card: shorter than in the feed
 HISTORY_REPLY_CHARS = 2000
 HISTORY_CACHE_SIZE = 64
 HISTORY_MAX = 30
-_history_cache: "OrderedDict[tuple, list]" = OrderedDict()
+_history_cache: OrderedDict[tuple, list] = OrderedDict()
 
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 SEARCH_TOOLS = {"Grep", "Glob"}
@@ -47,7 +47,7 @@ def _short(text: str, limit: int = 70) -> str:
 
 
 def _tool_key(name: str, args: dict) -> tuple[str, str | None]:
-    """Группа и строка подробностей для одного вызова."""
+    """Group and detail line for one call."""
     if name in EDIT_TOOLS:
         path = args.get("file_path") or args.get("notebook_path") or ""
         return "edit", os.path.basename(path) or None
@@ -69,8 +69,8 @@ def _tool_key(name: str, args: dict) -> tuple[str, str | None]:
 
 
 def summarize(calls: list[tuple[str, dict]]) -> list[dict]:
-    """[(имя, аргументы)] → [{kind, text, detail[]}] в порядке первого появления группы."""
-    groups: "OrderedDict[str, dict]" = OrderedDict()
+    """[(name, args)] -> [{kind, text, detail[]}] in order of each group's first appearance."""
+    groups: OrderedDict[str, dict] = OrderedDict()
     for name, args in calls:
         key, detail = _tool_key(name, args if isinstance(args, dict) else {})
         g = groups.setdefault(key, {"n": 0, "detail": []})
@@ -113,7 +113,7 @@ def _new_turn(rec: dict) -> dict:
 
 
 def build(records, with_events: bool = False) -> list[dict]:
-    """Ходы по порядку. Записи до первой твоей реплики в окне — хвост чужого хода, пропускаем."""
+    """Turns in order. Records before your first message in the window are an earlier turn's tail; skipped."""
     turns: list[dict] = []
     for rec in records:
         kind = rec.get("type")
@@ -156,7 +156,7 @@ def _window(path: str, size: int, window: int) -> list[dict]:
         fh.seek(max(0, size - window))
         lines = fh.read().split(b"\n")
     if window < size:
-        lines = lines[1:]                 # первая строка окна обрезана
+        lines = lines[1:]                 # the window's first line is cut
     out = []
     for raw in lines:
         try:
@@ -179,7 +179,7 @@ def feed(path: str | None, turns: int = DEFAULT_TURNS, with_events: bool = False
     window = FIRST_WINDOW
     while True:
         built = build(_window(path, size, window), with_events)
-        # Хвост хода, начатого до окна, `build` отбрасывает — остальные ходы в окне целые.
+        # `build` drops the tail of a turn started before the window; the other turns are whole.
         if len(built) >= turns or window >= size or window >= MAX_WINDOW:
             return built[-turns:]
         window *= 4
@@ -187,9 +187,9 @@ def feed(path: str | None, turns: int = DEFAULT_TURNS, with_events: bool = False
 
 def feed_page(path: str | None, turns: int = DEFAULT_TURNS, with_events: bool = False,
               before: str | None = None, since: str | None = None) -> dict:
-    """Порция ленты. before — ходы раньше этого времени (листаешь вверх), since — все ходы
-    с этого времени (живой конец, пока лента открыта). Опора — время хода, а не номер от конца:
-    у живой сессии конец растёт, и номера сдвигались бы."""
+    """A page of the feed. before: turns earlier than this time (scrolling up); since: all turns
+    from this time on (live end while the feed is open). Keyed by turn time, not index from the end:
+    a live session's end keeps growing, so indexes would shift."""
     if not path:
         return {"turns": [], "has_more": False}
     turns = max(1, min(MAX_TURNS, int(turns)))
@@ -197,14 +197,17 @@ def feed_page(path: str | None, turns: int = DEFAULT_TURNS, with_events: bool = 
         size = os.path.getsize(path)
     except OSError:
         return {"turns": [], "has_more": False}
-    cap = None if (before or since) else MAX_WINDOW    # листая вверх, можно дойти до начала
+    cap = None if (before or since) else MAX_WINDOW    # scrolling up may reach the very beginning
     window = FIRST_WINDOW
     while True:
         built = build(_window(path, size, window), with_events)
         whole = window >= size
-        at = lambda t: t.get("prompt_at") or ""
+
+        def at(t: dict) -> str:
+            return t.get("prompt_at") or ""
+
         if since:
-            # Ход, начатый в момент since, целиком в окне, если окно начинается не позже него.
+            # A turn started at `since` is fully in the window if the window starts no later than it.
             if whole or (built and at(built[0]) <= since):
                 return {"turns": [t for t in built if at(t) >= since], "has_more": None}
         else:
@@ -215,7 +218,7 @@ def feed_page(path: str | None, turns: int = DEFAULT_TURNS, with_events: bool = 
 
 
 def messages_tail(path: str | None, count: int) -> list[dict]:
-    """Последние сообщения переписки — твои и агента, без шагов: для подробной карточки."""
+    """Last conversation messages, yours and the agent's, without steps: for the detail card."""
     if not path or count < 1:
         return []
     try:

@@ -1,19 +1,21 @@
-"""Раз в час: тема, строка описания и «Что сделано» — у новых сессий и у изменившихся.
+"""Hourly: topic, description line and "What was done" for new and changed sessions.
 
-Выключено, пока не включили явно: каждая сессия уходит в Claude (классификация пачкой и
-«Что сделано» по одной) и ест ту же недельную квоту подписки, что и интерактивная работа.
+Off until explicitly enabled: every session goes to Claude (batch classification and
+"What was done" one by one) and uses the same weekly subscription quota as interactive work.
 
-«Изменилась» — с прошлого прохода в ней появились реплики: сигнатура «ходы человека : записи
-агента» из индекса сравнивается с запомненной в `auto_marks`. Уже размеченные сессии без
-отметки на первом проходе только запоминаются — иначе он пересчитал бы весь каталог разом.
-Сессии моложе получаса ждут: в первые минуты ещё не о чем судить.
+"Changed" means new messages appeared since the last pass: the "human turns : agent records"
+signature from the index is compared with the one stored in `auto_marks`. Already classified
+sessions without a mark are only recorded on the first pass, otherwise it would redo the whole
+catalog at once. Sessions younger than half an hour wait: early on there is nothing to judge.
 """
 from __future__ import annotations
 
 import json
 import sqlite3
+import sys
 import threading
 import time
+import traceback
 from datetime import datetime, timezone
 
 from . import actions, classify, db, enrich, messages, runner
@@ -22,7 +24,7 @@ KEY_ENABLED = "auto_classify"
 KEY_LAST = "auto_classify_last"
 INTERVAL_SECONDS = 3600
 MIN_AGE_SECONDS = 1800
-MAX_PER_RUN = 8               # столько сессий за проход целиком: тема и «Что сделано»
+MAX_PER_RUN = 8               # sessions per pass, fully: topic and "What was done"
 TICK_SECONDS = 60
 SUMMARY_KIND = "catalog_summary"
 
@@ -65,7 +67,7 @@ def _iso(ts: float | None) -> str | None:
 
 
 def _ensure_marks(conn: sqlite3.Connection) -> None:
-    # Не в DERIVED: переживает rebuild, иначе после пересборки всё выглядело бы изменившимся.
+    # Not in DERIVED: survives rebuild, otherwise everything would look changed after a rebuild.
     conn.execute("CREATE TABLE IF NOT EXISTS auto_marks (session_id TEXT PRIMARY KEY, "
                  "turns_sig TEXT NOT NULL, marked_at TEXT NOT NULL)")
 
@@ -77,9 +79,9 @@ def _mark(conn: sqlite3.Connection, session_id: str, sig: str) -> None:
 
 
 def candidates(conn: sqlite3.Connection, now: float | None = None) -> list[tuple[str, str]]:
-    """[(id, сигнатура)]: без классификации или с новыми репликами. Свежие по активности — первыми."""
+    """[(id, signature)]: unclassified or with new messages. Most recently active first."""
     _ensure_marks(conn)
-    # Время в транскриптах — `2026-09-27T18:42:01.304Z`: строки сравниваются в том же виде.
+    # Transcript timestamps look like `2026-09-27T18:42:01.304Z`: strings are compared in that form.
     cutoff = datetime.fromtimestamp((now or time.time()) - MIN_AGE_SECONDS,
                                     timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
     rows = conn.execute(
@@ -96,14 +98,14 @@ def candidates(conn: sqlite3.Connection, now: float | None = None) -> list[tuple
     out = []
     for r in rows:
         if r["done"] and r["seen"] is None:
-            _mark(conn, r["sid"], r["sig"])          # первая встреча: запомнить, не пересчитывать
+            _mark(conn, r["sid"], r["sig"])          # first sighting: record, do not recompute
         elif not r["done"] or r["seen"] != r["sig"]:
             out.append((r["sid"], r["sig"]))
     return out[:MAX_PER_RUN]
 
 
 def summarize(conn: sqlite3.Connection, session_id: str, job_id: str) -> None:
-    """«Что сделано» тем же путём, что кнопка: разрешение на это состояние сессии и вызов."""
+    """Builds "What was done" the same way as the button: grant for this session state, then call."""
     model, _ = runner.model_for(SUMMARY_KIND)
     payload = runner.build_payload(conn, session_id, SUMMARY_KIND)
     runner.grant_egress(conn, session_id, payload["content_hash"], SUMMARY_KIND,
@@ -117,14 +119,14 @@ def _job_running(conn: sqlite3.Connection) -> bool:
 
 
 def tick(conn: sqlite3.Connection, now: float | None = None, run=None, summary=None) -> dict | None:
-    """Один шаг планировщика. None — не время (выключено, рано или уже идёт классификация)."""
+    """One scheduler step. None means not now (disabled, too early, or a classification is running)."""
     now = now or time.time()
     if not enabled(conn) or not runner.llm_enabled() or _job_running(conn):
         return None
     last = _meta(conn, KEY_LAST)
     if last and now - float(last) < INTERVAL_SECONDS:
         return None
-    _set_meta(conn, KEY_LAST, repr(now))      # и при пустом проходе: следующий через час
+    _set_meta(conn, KEY_LAST, repr(now))      # also on an empty pass: next one in an hour
     found = candidates(conn, now)
     if not found:
         return {"classified": 0, "summaries": 0, "candidates": 0}
@@ -150,27 +152,28 @@ def tick(conn: sqlite3.Connection, now: float | None = None, run=None, summary=N
         except Exception as exc:
             errors.append(messages.msg("auto.summary_failed", sid=sid[:8],
                                        error=f"{type(exc).__name__}: {exc}"))
-        _mark(conn, sid, sig)                  # не вышло — повторим, когда в сессии будет новое
+        _mark(conn, sid, sig)                  # on failure, retry when the session has something new
     out = dict(result, summaries=done, candidates=len(ids), errors=errors[:8])
     actions.set_job_state(conn, job_id, "done", result=json.dumps(out, ensure_ascii=False))
     return out
 
 
 def start_scheduler(stop: threading.Event | None = None) -> threading.Thread:
-    """Фоновый поток сервера: раз в минуту спрашивает, не пора ли."""
+    """Background server thread: checks once a minute whether a run is due."""
     stop = stop or threading.Event()
 
     def loop() -> None:
         while not stop.wait(TICK_SECONDS):
             try:
-                # Своего запроса у планировщика нет: ошибки — на языке, которым страница спрашивала последней.
+                # The scheduler has no request of its own: errors use the language of the page's last request.
                 messages.set_lang(messages.last_lang(), remember=False)
                 conn = db.connect()
                 try:
                     tick(conn)
                 finally:
                     conn.close()
-            except Exception:                  # планировщик не должен ронять сервер
+            except Exception:                  # the scheduler must not crash the server
+                traceback.print_exc(file=sys.stderr)
                 continue
 
     thread = threading.Thread(target=loop, name="auto-classify", daemon=True)

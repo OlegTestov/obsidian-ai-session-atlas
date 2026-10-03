@@ -1,4 +1,4 @@
-"""Лента: шаги хода по порядку и файлы сессии."""
+"""Feed: turn steps in order and session files."""
 from __future__ import annotations
 
 import json
@@ -45,7 +45,7 @@ def _turn():
 
 def test_steps_speak_the_page_language():
     from atlas import messages
-    assert _turn()["events"][2]["text"] == "read 2 files"          # без заголовка — английский
+    assert _turn()["events"][2]["text"] == "read 2 files"          # no header means English
     with messages.use_lang("ru"):
         ev = _turn()
     assert ev["events"][2]["text"] == "прочитал 2 файла" and ev["events"][5]["text"] == "агент Explore: найти вызовы"
@@ -59,7 +59,7 @@ def test_steps_keep_order_merge_reads_and_show_errors():
     assert ev["events"][2]["text"] == "прочитал 2 файла" and "/x/c.py" in ev["events"][2]["detail"]
     bash = ev["events"][4]
     assert bash["status"] == "error" and bash["took"] == 60.0 and "FAILED" in bash["error"]
-    assert ev["events"][5]["status"] == "run"            # результата ещё нет — идёт
+    assert ev["events"][5]["status"] == "run"            # no result yet, so it is running
     assert ev["events"][5]["text"] == "агент Explore: найти вызовы"
     assert ev["errors"] == 1
 
@@ -108,9 +108,9 @@ def test_files_read_only_appended_tail(tmp_path):
     assert touched.session_files(str(path))["files"][0]["read"] == 1
     with open(path, "a") as fh:
         fh.write(call("Read", {"file_path": "/p/a.py"}, "2", "2026-09-27T10:01:00.000Z"))
-        fh.write('{"type":"assistant","message":{"content":[{"type":"tool_use"')   # недописанная
+        fh.write('{"type":"assistant","message":{"content":[{"type":"tool_use"')   # partially written
     assert touched.session_files(str(path))["files"][0]["read"] == 2
-    os.truncate(path, 0)                                     # файл переписан — считаем заново
+    os.truncate(path, 0)                                     # the file was rewritten, so it is counted from scratch
     path.write_text(call("Write", {"file_path": "/p/b.py", "content": "x"}, "3", "2026-09-27T10:02:00.000Z"))
     got = touched.session_files(str(path))["files"]
     assert [f["path"] for f in got] == ["/p/b.py"]
@@ -121,7 +121,7 @@ def test_files_do_not_reread_what_was_already_counted(tmp_path):
     path = tmp_path / "s.jsonl"
     path.write_text(call("Read", {"file_path": "/p/a.py"}, "1", "2026-09-27T10:00:00.000Z"))
     touched.session_files(str(path))
-    with open(path, "r+") as fh:                  # то же место и длина: прочитанное не трогаем
+    with open(path, "r+") as fh:                  # same position and length: what was already read stays as is
         text = fh.read()
         fh.seek(0)
         fh.write(text.replace("/p/a.py", "/p/z.py"))

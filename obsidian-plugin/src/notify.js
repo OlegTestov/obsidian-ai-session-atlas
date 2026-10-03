@@ -1,21 +1,22 @@
-// Уведомления: сессия закончила ход и ждёт тебя. Опрос сервера идёт из плагина, а не со
-// страницы: вкладка каталога может быть закрыта или в фоне, а знать хочется сразу.
-const { Notice } = require("obsidian");
-const http = require("http");
-const { ATLAS_PORT, VIEW_TYPE } = require("./constants");
-const { translate } = require("./i18n");
+// Notifications: a session finished its turn and waits for you. The plugin polls the server, not
+// the page: the catalog tab may be closed or in the background, and the news should arrive at once.
+import { Notice } from "obsidian";
+import * as electron from "electron";
+import * as http from "http";
+import { VIEW_TYPE } from "./constants";
+import { translate } from "./i18n";
 
 const POLL_MS = 10000;
 const NOTICE_MS = 10000;
 const WORKING = new Set(["busy", "background"]);
 
 const activityOf = (s) => s.activity || s.status || "idle";
-// «Ждут тебя» — как на странице: всё, что не работает и не в фоне.
+// "Waiting for you", as on the page: everything that is neither working nor in the background.
 const isWaiting = (s) => !WORKING.has(activityOf(s));
 
 /**
- * Кто начал ждать с прошлого опроса. prev — Map id → activity; новой сессии нет в prev, и
- * уведомлять о ней не надо: она ещё ничего не сделала. Диалог (waiting) — всегда повод.
+ * Who started waiting since the last poll. prev is a Map id → activity; a new session is not in
+ * prev and needs no notification: it has done nothing yet. A dialog (waiting) always counts.
  */
 function waitingTransitions(prev, sessions) {
   const next = new Map();
@@ -32,7 +33,7 @@ function waitingTransitions(prev, sessions) {
   return { next, started, waiting };
 }
 
-/** t — переводчик плагина; без него — русский, как в тестах и на странице. */
+/** t is the plugin's translator; without it the text is Russian. */
 function noticeText(s, t) {
   const tr = t || ((key, vars) => translate("ru", key, vars));
   const title = (s.title || tr("notify.session")).slice(0, 80);
@@ -42,18 +43,18 @@ function noticeText(s, t) {
 function windowFocused() {
   try {
     return typeof document.hasFocus === "function" ? document.hasFocus() : true;
-  } catch (error) {
+  } catch {
     return true;
   }
 }
 
 function raiseWindow() {
   try {
-    const remote = require("electron").remote;
+    const remote = electron.remote;
     const win = remote && remote.getCurrentWindow();
     if (win) { win.show(); win.focus(); }
-  } catch (error) {
-    // без electron.remote хватит фокуса окна страницы
+  } catch {
+    // without electron.remote, focusing the page window is enough
   }
   if (typeof window.focus === "function") window.focus();
 }
@@ -64,17 +65,17 @@ function atlasTitle(count) {
 
 class NotifyMethods {
   startWatch() {
-    this.lastActivity = null;           // null — первого опроса ещё не было
+    this.lastActivity = null;           // null: no poll yet
     this.waitingCount = 0;
     this.registerInterval(window.setInterval(() => this.pollActive(), POLL_MS));
     this.pollActive();
   }
 
-  /** Сервер спрашиваем через node http: fetch из Obsidian — чужой origin для сервера. */
+  /** The server is asked through node http: a fetch from Obsidian is a foreign origin to the server. */
   fetchActive(timeout = 8000) {
     return new Promise((resolve) => {
       const request = http.get(
-        { host: "127.0.0.1", port: ATLAS_PORT, path: "/api/active", timeout },
+        { host: "127.0.0.1", port: this.atlasPort(), path: "/api/active", timeout },
         (response) => {
           let body = "";
           response.setEncoding("utf8");
@@ -82,7 +83,7 @@ class NotifyMethods {
           response.on("end", () => {
             try {
               resolve(response.statusCode === 200 ? JSON.parse(body) : null);
-            } catch (error) {
+            } catch {
               resolve(null);
             }
           });
@@ -104,7 +105,7 @@ class NotifyMethods {
       this.lastActivity = next;
       this.setWaitingCount(waiting);
       await this.trackOpenSessions(data.sessions);
-      // Первый опрос молчит сам: все сессии для него новые.
+      // The first poll stays silent by itself: every session is new to it.
       if (this.settings && this.settings.notify) {
         for (const s of started) await this.notifyWaiting(s);
       }
@@ -116,18 +117,18 @@ class NotifyMethods {
   async notifyWaiting(s) {
     const tab = await this.tabForSession(s);
     const focused = windowFocused();
-    // Смотришь прямо на эту вкладку — уведомление только мешает.
-    if (focused && tab && this.app.workspace.activeLeaf === tab.leaf) return;
+    // You are looking right at this tab: a notification would only get in the way.
+    if (focused && tab && this.activeLeaf() === tab.leaf) return;
     const go = () => { if (tab) this.actOnTab("focus-tab", tab.pid, s.title || ""); };
     const t = (key, vars) => this.t(key, vars);
     const notice = new Notice(noticeText(s, t) + (tab ? t("notify.click") : ""), NOTICE_MS);
     const box = notice && (notice.noticeEl || notice.containerEl);
     if (tab && box && typeof box.addEventListener === "function") box.addEventListener("click", go);
-    // Уведомление Obsidian видно, только если смотришь в его окно, — иначе ещё и системное.
+    // An Obsidian notice is visible only in its own window; otherwise a system one is shown too.
     if (!focused && this.settings && this.settings.systemNotify) this.systemNotify(s, go);
   }
 
-  /** Уведомление macOS: в Electron это обычный Web Notification, клик поднимает Obsidian. */
+  /** A macOS notification: a plain Web Notification in Electron; a click raises Obsidian. */
   systemNotify(s, go) {
     const Native = window.Notification;
     if (typeof Native !== "function" || Native.permission === "denied") return false;
@@ -140,7 +141,7 @@ class NotifyMethods {
     return true;
   }
 
-  /** Вкладка терминала сессии: процесс claude — потомок PTY своей вкладки. */
+  /** The session's terminal tab: the claude process descends from its tab's PTY. */
   async tabForSession(s) {
     const ancestors = new Set(Array.isArray(s.ancestors) ? s.ancestors : []);
     return (await this.terminalTabs()).find((t) => ancestors.has(t.pid)) || null;
@@ -155,4 +156,4 @@ class NotifyMethods {
   }
 }
 
-module.exports = { NotifyMethods, waitingTransitions, noticeText, atlasTitle, POLL_MS };
+export { NotifyMethods, waitingTransitions, noticeText, atlasTitle, POLL_MS };

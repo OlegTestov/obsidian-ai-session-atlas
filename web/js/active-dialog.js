@@ -1,14 +1,15 @@
-// «Активные»: диалог сессии (разрешение или вопрос) прямо в карточке.
-// Классический скрипт: общий глобальный контекст с остальными файлами страницы.
-// Текст диалога читает плагин с экрана вкладки: в транскрипте его ещё нет, пока диалог открыт.
-const dialogs = new Map();            // id сессии → {dialog, reason}
-const dialogAnswers = new Map();      // nonce → id сессии
-const dialogNotes = new Map();        // id сессии → {note, cls}
+// Active: a session dialog (permission or question) right in the card.
+// Classic script: shares one global scope with the other page files.
+/* exported handleDialogMessage, dialogBlock, stopButton, handleStopMessage -- used by other page scripts */
+// The plugin reads the dialog text from the tab's screen: the transcript lacks it while the dialog is open.
+const dialogs = new Map();            // session id → {dialog, reason}
+const dialogAnswers = new Map();      // nonce → session id
+const dialogNotes = new Map();        // session id → {note, cls}
 const DIALOG_TIMEOUT_MS = 6000;
 
 const isWaitingSession = s => (s.activity || s.status) === "waiting";
 
-// Ждущим сессиям с вкладкой в Obsidian — прочитать диалог. Ответ придёт сообщением.
+// Waiting sessions with a tab in Obsidian: read the dialog. The answer arrives as a message.
 function requestDialogs() {
   const waiting = new Set();
   activeSessions.filter(isWaitingSession).forEach(s => {
@@ -19,7 +20,7 @@ function requestDialogs() {
   [...dialogs.keys()].forEach(sid => { if (!waiting.has(sid)) dialogs.delete(sid); });
 }
 
-// Сообщения плагина о диалогах. true — сообщение разобрано здесь.
+// Plugin messages about dialogs. true means the message is handled here.
 function handleDialogMessage(d) {
   if (d.type === "dialog" && typeof d.sessionId === "string") {
     dialogs.set(d.sessionId, { dialog: d.dialog || null, reason: d.reason || null });
@@ -32,10 +33,10 @@ function handleDialogMessage(d) {
     if (d.ok) {
       dialogs.delete(sid);
       dialogNotes.set(sid, { note: i18n("active.answerSent"), cls: "ok" });
-      setTimeout(() => { dialogNotes.delete(sid); loadActive(); }, 1500);
+      window.setTimeout(() => { dialogNotes.delete(sid); loadActive(); }, 1500);
     } else {
       dialogNotes.set(sid, { note: i18n("active.notSent", { reason: d.reason || i18n("active.errorWord") }), cls: "bad" });
-      requestDialogs();                   // экран мог смениться — перечитать
+      requestDialogs();                   // the screen may have changed: read it again
     }
     lastSignature = "";
     renderActive(null, true);
@@ -52,7 +53,7 @@ function answerDialogOption(s, pid, option) {
                                  option: option.n, text: option.text, nonce });
   lastSignature = "";
   renderActive(null, true);
-  setTimeout(() => {
+  window.setTimeout(() => {
     if (!dialogAnswers.has(nonce)) return;
     dialogAnswers.delete(nonce);
     dialogNotes.set(s.session_id, { note: i18n("active.noHostReply"), cls: "bad" });
@@ -60,10 +61,10 @@ function answerDialogOption(s, pid, option) {
   }, DIALOG_TIMEOUT_MS);
 }
 
-// Блок диалога в карточке. null — сессия не ждёт решения.
+// Dialog block in the card. null when the session is not waiting for a decision.
 function dialogBlock(s, pid, full) {
   if (!isWaitingSession(s)) return null;
-  // Ждёт из-за панели команды, чей ответ уже в карточке, — там и кнопка «Закрыть панель».
+  // Waits because of a command panel whose answer is already in the card, along with the Close panel button.
   const own = commandOutputs.get(s.session_id);
   if (own && own.panel) return null;
   const box = el("div", "dialog");
@@ -87,7 +88,7 @@ function dialogBlock(s, pid, full) {
   }
   if (d.kind === "plan") return planBlock(s, pid, d, full, busy, note, box);
   if (d.kind === "panel") {
-    // Панель команды (/usage, /effort…). Если её ответ уже в карточке — там и кнопка закрыть.
+    // Command panel (/usage, /effort…). If its answer is already in the card, the close button is there too.
     box.appendChild(el("div", "t", i18n("active.panelOpen", { title: d.title })));
     box.appendChild(el("pre", "det" + (full ? "" : " short"), full ? d.panel : d.title));
     const close = el("button", null, i18n("active.closePanel"));
@@ -101,7 +102,7 @@ function dialogBlock(s, pid, full) {
   const head = el("div", "t", d.kind === "permission" ? i18n("active.permission", { title: d.title }) : d.title);
   box.appendChild(head);
   if (d.details.length) {
-    // Компактно — первая строка (команда или путь): без неё «Да» нажимать вслепую.
+    // Compact: the first line (command or path); without it "Yes" is pressed blind.
     const pre = el("pre", "det" + (full ? "" : " short"), full ? d.details.join("\n") : d.details[0]);
     pre.title = d.details.join("\n");
     box.appendChild(pre);
@@ -113,7 +114,7 @@ function dialogBlock(s, pid, full) {
   }
   const opts = el("div", "opts");
   d.options.forEach((o, i) => {
-    // Сжимается только длинная подпись: «1. Yes» и «3. No» видны целиком всегда.
+    // Only a long label shrinks: "1. Yes" and "3. No" are always fully visible.
     const cls = [i === 0 ? "primary" : "", o.text.length > 18 ? "long" : ""].join(" ").trim();
     const b = el("button", cls || null, `${o.n}. ${o.text}`);
     b.type = "button";
@@ -128,9 +129,9 @@ function dialogBlock(s, pid, full) {
   return box;
 }
 
-// --- «Стоп»: одно Esc во вкладку, как в терминале; только с подтверждением ---
-const stopRequests = new Map();       // nonce → id сессии
-const stopNotes = new Map();          // id сессии → текст
+// --- Stop: a single Esc into the tab, as in the terminal; only with confirmation ---
+const stopRequests = new Map();       // nonce → session id
+const stopNotes = new Map();          // session id → text
 
 const canStop = s => ["busy", "waiting"].includes(s.activity || s.status);
 
@@ -161,7 +162,7 @@ function confirmStop(s, pid) {
       renderActive(null, true);
     });
   $("#m-copy").classList.add("hidden");
-  $("#m-close").focus();                // случайный Enter не должен прерывать
+  $("#m-close").focus();                // a stray Enter must not interrupt
 }
 
 function handleStopMessage(d) {
@@ -170,7 +171,7 @@ function handleStopMessage(d) {
   stopRequests.delete(d.nonce);
   stopNotes.set(sid, d.ok ? i18n("active.stopped")
     : i18n("active.notStopped", { reason: d.reason || i18n("active.errorWord") }));
-  setTimeout(() => { stopNotes.delete(sid); lastSignature = ""; loadActive(); }, d.ok ? 1500 : 5000);
+  window.setTimeout(() => { stopNotes.delete(sid); lastSignature = ""; loadActive(); }, d.ok ? 1500 : 5000);
   lastSignature = "";
   renderActive(null, true);
   return true;

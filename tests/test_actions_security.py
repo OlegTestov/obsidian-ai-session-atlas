@@ -1,40 +1,40 @@
-"""Действия, идемпотентность джоб, fail-closed egress и защита локального сервера."""
+"""Actions, job idempotency, fail-closed egress and local server protection."""
 from __future__ import annotations
 
 import json
 import os
 import re
-import threading
+import sys
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 import pytest
 
 from atlas import actions, db, enrich, index, prompts, runner, search
-from tests.conftest import write_config, user_text
-
+from tests.conftest import user_text, write_config
 
 
 def page_source(here: str) -> str:
-    """Страница целиком: разметка, стили и скрипты лежат в web/index.html и web/js/."""
+    """The whole page: markup, styles and scripts live in web/index.html and web/js/."""
     import glob as _glob
-    parts = [open(os.path.join(here, "web", "index.html"), encoding="utf-8").read()]
+    parts = [Path(here, "web", "index.html").read_text(encoding="utf-8")]
     for path in sorted(_glob.glob(os.path.join(here, "web", "js", "*"))):
-        parts.append(open(path, encoding="utf-8").read())
+        parts.append(Path(path).read_text(encoding="utf-8"))
     return "\n".join(parts)
 
 def _conn(atlas_env):
     return db.connect(os.path.join(str(atlas_env["home"]), "atlas.sqlite3"))
 
 
-# --- команды --------------------------------------------------------------
+# --- commands -------------------------------------------------------------
 
 def test_apostrophe_in_path_does_not_break_the_command():
     cwd = "/Users/u/Anna's Code/demo"
     import shlex
     cmd = actions.resume_command(cwd, "11111111-1111-1111-1111-111111111111")
-    # Апостроф экранирован, поэтому в строке его не видно буквально — важно, что шелл
-    # разбирает команду обратно ровно в те же аргументы.
+    # The apostrophe is escaped, so it is not visible literally — what matters is that the shell
+    # parses the command back into exactly the same arguments.
     assert shlex.split(cmd.split("&&", 1)[0]) == ["cd", cwd]
     assert shlex.split(cmd.split("&&", 1)[1])[:2] == ["claude", "--resume"]
 
@@ -53,7 +53,7 @@ def test_new_session_command_carries_a_real_first_prompt():
     assert "Прочитай" in cmd
 
 
-# --- джобы ----------------------------------------------------------------
+# --- jobs ----------------------------------------------------------------
 
 def test_double_press_returns_the_same_job(atlas_env, write_session):
     write_session("p", [user_text("работа")], session_id="11111111-1111-1111-1111-111111111111")
@@ -80,7 +80,7 @@ def test_cancel_marks_intent_and_worker_sees_it(atlas_env):
     job, _ = actions.claim_job(conn, "s", "handoff", "hash-a")
     assert actions.cancel_job(conn, job) is True
     assert actions.is_cancelled(conn, job) is True
-    assert actions.cancel_job(conn, job) is False   # повторная отмена ничего не меняет
+    assert actions.cancel_job(conn, job) is False   # a repeated cancel changes nothing
 
 
 def test_pending_launch_becomes_lineage_only_after_the_session_appears(atlas_env, write_session):
@@ -110,7 +110,7 @@ def test_grant_is_bound_to_one_content_state(atlas_env):
                         runner.EXTERNAL_BACKEND, runner.DEFAULT_MODEL)
     runner.check_egress(conn, "s", "hash-a", "handoff",
                         runner.EXTERNAL_BACKEND, runner.DEFAULT_MODEL)
-    with pytest.raises(runner.EgressDenied):     # сессия дописана — разрешение аннулировано
+    with pytest.raises(runner.EgressDenied):     # session got appended — permission is revoked
         runner.check_egress(conn, "s", "hash-b", "handoff",
                             runner.EXTERNAL_BACKEND, runner.DEFAULT_MODEL)
 
@@ -121,7 +121,7 @@ def test_local_backend_needs_no_grant(atlas_env):
 
 
 def test_runner_transcripts_are_not_indexed(atlas_env, write_session):
-    """Компрессор пишет свои транскрипты — иначе он начнёт обогащать сам себя."""
+    """The compressor writes its own transcripts — otherwise it would start enriching itself."""
     write_session("-Users-x-session-atlas-runner", [user_text("сжимаю сессию")])
     write_session("normal", [user_text("настоящая работа")])
     conn = _conn(atlas_env)
@@ -129,7 +129,7 @@ def test_runner_transcripts_are_not_indexed(atlas_env, write_session):
     assert stats["seen"] == 1
 
 
-# --- контракты LLM --------------------------------------------------------
+# --- LLM contracts --------------------------------------------------------
 
 def test_summary_contract_rejects_malformed_output():
     with pytest.raises(ValueError):
@@ -151,7 +151,7 @@ def test_handoff_without_required_sections_is_an_error():
 
 
 def test_historical_text_is_framed_as_data_not_instructions():
-    """Промпт из старого транскрипта не должен стать командой новой сессии."""
+    """A prompt from an old transcript must not become a command for a new session."""
     for lg, frame in (("ru", "не инструкции"), ("en", "not instructions")):
         for template in (prompts.summary(lg), prompts.handoff(lg), prompts.classify(lg)):
             assert frame in template, lg
@@ -165,24 +165,7 @@ def test_payload_samples_the_whole_session_not_just_the_edges():
     assert "m50" in picked or "m40" in picked or "m60" in picked
 
 
-# --- сервер ---------------------------------------------------------------
-
-@pytest.fixture
-def live_server(atlas_env):
-    from atlas import server
-    import socket
-    with socket.socket() as probe:              # свободный порт: параллельные прогоны не мешают
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
-    server.PORT = port
-    server.ALLOWED_HOSTS = {f"127.0.0.1:{port}", f"localhost:{port}"}
-    server.ALLOWED_ORIGINS = {f"http://127.0.0.1:{port}"}
-    from http.server import ThreadingHTTPServer
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), server.Handler)
-    threading.Thread(target=httpd.serve_forever, daemon=True).start()
-    yield f"http://127.0.0.1:{port}", server.csrf_token()
-    httpd.shutdown()
-
+# --- server ---------------------------------------------------------------
 
 def _post(url, body, headers):
     req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST",
@@ -234,25 +217,25 @@ def test_bad_session_id_is_refused_before_any_work(live_server):
 
 
 def test_page_never_injects_transcript_text_as_html():
-    """Транскрипты содержат HTML и JS написанных артефактов — это реальный XSS-вектор."""
+    """Transcripts contain HTML and JS of written artifacts — a real XSS vector."""
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     html = page_source(here)
     assert not re.search(r"\.innerHTML\s*=", html)
     assert not re.search(r"\.outerHTML\s*=", html)
     assert not re.search(r"insertAdjacentHTML|document\.write\(", html)
-    assert "Content-Security-Policy" not in html      # заголовок ставит сервер, не страница
+    assert "Content-Security-Policy" not in html      # the header is set by the server, not the page
 
 
 def test_unique_index_guards_the_race_python_cannot(atlas_env):
-    """Ранний возврат в claim_job не спасает от гонки двух потоков — спасает индекс в БД."""
+    """The early return in claim_job does not prevent a two-thread race — the DB index does."""
     conn = _conn(atlas_env)
     row = conn.execute(
         "SELECT sql FROM sqlite_master WHERE type='index' AND name='ux_jobs_active'"
     ).fetchone()
-    assert row is not None, "индекс ux_jobs_active пропал"
+    assert row is not None, "index ux_jobs_active is missing"
     assert "UNIQUE" in row["sql"].upper()
 
-    # И он действительно запрещает второй активный джоб на тот же кортеж.
+    # And it really forbids a second active job for the same tuple.
     import sqlite3
     conn.execute("INSERT INTO jobs (job_id, session_id, action_kind, content_hash, state, "
                  "created_at, updated_at) VALUES ('j1','s','handoff','h','queued','t','t')")
@@ -261,7 +244,7 @@ def test_unique_index_guards_the_race_python_cannot(atlas_env):
                      "created_at, updated_at) VALUES ('j2','s','handoff','h','running','t','t')")
 
 
-# --- классификация ---
+# --- classification ---
 
 def test_sensitive_sessions_are_never_queued_for_external_classification(atlas_env,
                                                                         write_session):
@@ -284,10 +267,10 @@ def test_classifier_verdict_contract():
         classify._verdict({"domain": "выдуманный", "topic": "x"})
     with pytest.raises(ValueError):
         classify._verdict({"domain": "personal", "topic": "  "})
-    # «разное» с высокой уверенностью — противоречие, уверенность сбрасывается.
+    # "разное" (misc) with high confidence is a contradiction, so confidence is reset.
     assert classify._verdict(
         {"domain": "personal", "topic": "разное", "confidence": 0.95})["confidence"] < 0.5
-    # Однострочное описание — часть контракта: оно идёт в строку списка.
+    # The one-line summary is part of the contract: it goes into the list row.
     v = classify._verdict({"domain": "personal", "topic": "Почта",
                            "summary": "  Разбирали   личную почту  ", "confidence": 0.9})
     assert v["summary"] == "Разбирали личную почту"
@@ -303,13 +286,13 @@ def test_batch_parser_keeps_only_valid_entries():
     assert out[1]["topic"] == "почта"
 
 
-# --- переименование ---
+# --- renaming ---
 
 def test_rename_appends_one_line_and_keeps_the_transcript_intact(atlas_env, write_session):
-    """Единственная запись в транскрипт: только append строки того же вида, что пишет Claude."""
+    """The only write to a transcript: append a single line of the same shape Claude writes."""
     sid = "99999999-9999-9999-9999-999999999999"
     path = write_session("p", [user_text("исходная работа")], session_id=sid)
-    before = open(path, encoding="utf-8").read()
+    before = Path(path).read_text(encoding="utf-8")
     conn = _conn(atlas_env)
     index.index_all(conn, root=str(atlas_env["projects"]))
 
@@ -317,10 +300,10 @@ def test_rename_appends_one_line_and_keeps_the_transcript_intact(atlas_env, writ
     assert result["title"] == "Понятное имя"
     assert result["written_to_transcript"] is True and result["error"] is None
 
-    after = open(path, encoding="utf-8").read()
-    assert after.startswith(before)                      # прежние строки не тронуты
+    after = Path(path).read_text(encoding="utf-8")
+    assert after.startswith(before)                      # existing lines are untouched
     added = after[len(before):].strip().splitlines()
-    assert len(added) == 1                               # ровно одна новая строка
+    assert len(added) == 1                               # exactly one new line
     rec_added = json.loads(added[0])
     assert rec_added == {"type": "custom-title", "customTitle": "Понятное имя", "sessionId": sid}
 
@@ -333,12 +316,12 @@ def test_rename_appends_one_line_and_keeps_the_transcript_intact(atlas_env, writ
 def test_rename_can_skip_the_transcript(atlas_env, write_session):
     sid = "aaaaaaaa-9999-9999-9999-999999999999"
     path = write_session("p", [user_text("работа")], session_id=sid)
-    before = open(path, encoding="utf-8").read()
+    before = Path(path).read_text(encoding="utf-8")
     conn = _conn(atlas_env)
     index.index_all(conn, root=str(atlas_env["projects"]))
     result = actions.rename_session(conn, sid, "Только в каталоге", write_to_transcript=False)
     assert result["written_to_transcript"] is False
-    assert open(path, encoding="utf-8").read() == before
+    assert Path(path).read_text(encoding="utf-8") == before
     assert search.load_session(conn, sid)["title"] == "Только в каталоге"
 
 
@@ -351,17 +334,17 @@ def test_rename_refuses_empty_and_bad_id(atlas_env):
 
 
 def test_rename_opens_the_transcript_in_append_mode():
-    """Пиннит именно режим: мутация на «w» однажды пережила откат через кэш байткода."""
+    """Pins the mode itself: a mutation to "w" once survived a revert via the bytecode cache."""
     import inspect
     src = inspect.getsource(actions.rename_session)
     assert '"a", encoding="utf-8"' in src
     assert '"w"' not in src
 
 
-# --- встраивание в Obsidian ---
+# --- embedding in Obsidian ---
 
 def test_csp_allows_framing_only_by_self_and_obsidian(live_server):
-    """Obsidian живёт на схеме app://; всё остальное встраивать страницу не должно."""
+    """Obsidian runs on the app:// scheme; nothing else may embed the page."""
     base, _ = live_server
     with urllib.request.urlopen(base + "/", timeout=5) as r:
         csp = r.headers.get("Content-Security-Policy")
@@ -370,7 +353,7 @@ def test_csp_allows_framing_only_by_self_and_obsidian(live_server):
 
 
 def test_page_talks_to_the_host_only_when_embedded():
-    """Мост включается сам по факту фрейма: снаружи Obsidian поведение прежнее."""
+    """The bridge turns on by itself when framed: outside Obsidian the behaviour is unchanged."""
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     html = page_source(here)
     assert "const EMBEDDED = window.parent !== window;" in html
@@ -379,46 +362,46 @@ def test_page_talks_to_the_host_only_when_embedded():
 
 
 def test_menu_hidden_rule_matches_id_specificity():
-    """#menu сильнее .hidden по специфичности: скрытие обязано быть написано тем же весом."""
+    """#menu beats .hidden on specificity: the hiding rule must have the same weight."""
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     html = page_source(here)
     assert "#menu.hidden{display:none}" in html
-    # И слушатель закрытия ровно один, а не по одному на каждое открытие карточки.
+    # And there is exactly one close listener, not one per card opening.
     assert html.count('document.addEventListener("click"') == 1
 
 
 def test_help_is_built_from_dom_not_markup_strings():
-    """Справка пишется через DOM: на странице CSP и запрет innerHTML."""
+    """Help is built via the DOM: the page has a CSP and bans innerHTML."""
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     html = page_source(here)
     assert 'id="help-btn"' in html and "function buildHelp()" in html
     assert "Какую кнопку нажимать" in html
-    # Диалог длиннее экрана — тело обязано прокручиваться, иначе верх обрезан.
+    # The dialog is taller than the screen — the body must scroll, or the top is cut off.
     assert "max-height:82vh" in html
 
 
 def test_dialog_display_is_scoped_to_open_attribute():
-    """Браузер прячет закрытый <dialog> сам; правило по id его перебивало и диалог не исчезал."""
+    """The browser hides a closed <dialog> itself; an id rule overriding that keeps the dialog visible."""
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     html = page_source(here)
     assert "#help[open]{display:flex" in html
     help_rule = html.split("#help{", 1)[1].split("}", 1)[0]
-    assert "display" not in help_rule, "display у #help без [open] снова ломает закрытие"
+    assert "display" not in help_rule, "display on #help without [open] breaks closing"
 
 
 def test_page_uses_no_native_dialogs():
-    """В Obsidian страница живёт в Electron: prompt/alert/confirm там не работают молча."""
+    """In Obsidian the page runs in Electron: prompt/alert/confirm silently do nothing there."""
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     html = page_source(here)
-    # Комментарии не код: в них эти слова упоминаются как раз с объяснением, почему их нет.
+    # Comments are not code: they mention these words precisely to explain why they are absent.
     code = "\n".join(line for line in html.splitlines() if not line.strip().startswith("//"))
     for fn in ("prompt(", "alert(", "confirm("):
-        assert not re.search(r"(?<![\w.])" + re.escape(fn), code), f"{fn} не работает в Electron"
+        assert not re.search(r"(?<![\w.])" + re.escape(fn), code), f"{fn} does not work in Electron"
     assert 'id="rename"' in html and "#rename[open]{display:block}" in html
 
 
 def test_running_classification_is_visible_to_a_fresh_page(atlas_env, write_session):
-    """Джоба живёт на сервере: страницу можно закрыть и вернуться к прогрессу."""
+    """A job lives on the server: the page can be closed and the progress picked up again."""
     from atlas import server
     sid = "bbbbbbbb-1111-2222-3333-444444444444"
     write_session("p", [user_text("работа")], session_id=sid)
@@ -436,59 +419,59 @@ def test_running_classification_is_visible_to_a_fresh_page(atlas_env, write_sess
 
 
 def test_long_quote_cannot_widen_the_card():
-    """Путь в 178 символов раздвигал колонку грида: карточка уезжала вправо с полосой прокрутки."""
+    """A 178-character path must not widen the grid column and push the card right with a scrollbar."""
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     html = page_source(here)
     quote_rule = html.split(".quote{", 1)[1].split("}", 1)[0]
     assert "overflow-wrap:anywhere" in quote_rule
-    assert "white-space:pre-wrap" in quote_rule, "переносы в запросе несут смысл"
+    assert "white-space:pre-wrap" in quote_rule, "line breaks in a prompt carry meaning"
     card_rule = html.split("#card{", 1)[1].split("}", 1)[0]
-    assert "min-width:0" in card_rule, "ячейка грида без min-width:0 растёт под содержимое"
+    assert "min-width:0" in card_rule, "a grid cell without min-width:0 grows to fit its content"
 
 
 def test_responses_are_never_cached():
-    """Разметка живёт на диске: закешированная страница переживает обновление интерфейса."""
+    """Markup lives on disk: a cached page survives a UI update."""
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    src = open(os.path.join(here, "atlas", "server.py"), encoding="utf-8").read()
+    src = Path(here, "atlas", "server.py").read_text(encoding="utf-8")
     assert 'self.send_header("Cache-Control", "no-store")' in src
 
 
 def test_layout_picker_has_a_css_class_for_every_cell():
-    """Размеры раскладки — только классами: CSP не пускает style. Нет класса — выбор молча не работает."""
+    """Layout sizes use classes only: the CSP blocks style. No class means the choice silently fails."""
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     html = page_source(here)
-    for n in range(1, 6):                       # компактный вид — до 5 × 5
+    for n in range(1, 6):                       # compact view — up to 5 × 5
         assert f".agrid.c{n}{{grid-template-columns:repeat({n}," in html
         assert f".agrid.r{n}{{grid-auto-rows:" in html
-    for n in range(1, 5):                       # подробный — до 4 × 4
+    for n in range(1, 5):                       # detailed view — up to 4 × 4
         assert f".agrid.full.r{n}{{grid-auto-rows:" in html
     assert "const LAYOUT_MAX = { compact: 5, full: 4 };" in html
 
 
 def test_keys_hint_is_a_button_that_opens_help():
-    """Подсказка по клавишам — кнопка с окном: всплывающий title в Obsidian почти не виден."""
+    """The keyboard hint is a button with a dialog: a title tooltip is barely visible in Obsidian."""
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     html = page_source(here)
     assert 'el("button", "keys", "?")' in html
     assert 'keys.addEventListener("click", showKeys)' in html
     assert "function showKeys()" in html and 'modal(i18n("keys.title")' in html
-    # Справка прячет «Копировать» — остальные окна обязаны вернуть кнопку.
+    # Help hides the "Copy" button — the other dialogs must bring it back.
     assert '$("#m-copy").classList.remove("hidden");' in html
 
 
 def test_server_down_shows_a_banner_and_keeps_the_cards():
-    """Упал сервер: сетевая ошибка api() зажигает плашку, карточки не стираются ошибкой."""
+    """Server down: a network error in api() shows a banner; cards are not wiped by the error."""
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     html = page_source(here)
     assert 'id="server-banner"' in html
     assert "serverStatus(false);" in html and "serverStatus(true);" in html
-    assert 'if (e.name === "AbortError") throw e;' in html, "отменённый поиск — не падение сервера"
+    assert 'if (e.name === "AbortError") throw e;' in html, "a cancelled search is not a server failure"
     assert "if (!serverDown || !activeSessions.length) {" in html
     assert 'tellHost("ensure-server", {});' in html
 
 
 def test_models_come_from_settings_and_default_to_sonnet(tmp_path):
-    """Без настроек — алиас sonnet, доступный на любом тарифе, и без суффикса [1m]."""
+    """Without settings: the sonnet alias, available on any plan, and no [1m] suffix."""
     write_config(os.environ["ATLAS_HOME"], {"models": {}})
     assert runner.model_for("classification") == ("sonnet", "low")
     assert runner.model_for("что-то новое") == ("sonnet", "medium")
@@ -506,7 +489,7 @@ def test_force_1m_adds_the_suffix_and_widens_the_budget():
                                                       "handoff": ["claude-sonnet-5", "medium"]},
                                             "force_1m": True})
     assert runner.model_for("catalog_summary") == ("claude-sonnet-5[1m]", "low")
-    assert runner.budget_chars("handoff") == small * 5         # окно 1M против 200k
+    assert runner.budget_chars("handoff") == small * 5         # 1M window vs 200k
 
 
 def test_index_status_for_the_setup_screen(live_server, write_session):
@@ -518,10 +501,10 @@ def test_index_status_for_the_setup_screen(live_server, write_session):
 
 
 def test_server_serves_every_file_the_page_loads(live_server):
-    """Страница целиком через сервер: каждый скрипт и стиль из index.html отдаётся с верным типом."""
+    """The whole page via the server: every script and style from index.html is served with the right type."""
     base, _ = live_server
-    html = open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                             "web", "index.html"), encoding="utf-8").read()
+    html = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                "web", "index.html").read_text(encoding="utf-8")
     names = re.findall(r'(?:src|href)="/static/([^"]+)"', html)
     assert "i18n.js" in names and len(names) > 20
     for name in names:
@@ -540,8 +523,34 @@ def test_shutdown_needs_the_token_and_stops_the_server(live_server):
     for _ in range(40):
         try:
             urllib.request.urlopen(f"{base}/health", timeout=1)
-        except OSError:              # отказ или тишина: цикл обработки остановлен
+        except OSError:              # refused or silent: the serve loop has stopped
             break
         time.sleep(0.1)
     else:
-        raise AssertionError("сервер не остановился")
+        raise AssertionError("server did not stop")
+
+
+def test_csrf_token_file_is_private_from_creation(atlas_env, monkeypatch):
+    """The token file is created 0600 at once, not chmod-ed after a world-readable write."""
+    from atlas import server
+    monkeypatch.setattr(os, "chmod", lambda *a, **k: None)   # a late chmod must not be what protects it
+    old_umask = os.umask(0)
+    try:
+        token = server.csrf_token()
+    finally:
+        os.umask(old_umask)
+    path = os.path.join(db.atlas_home(), "csrf.token")
+    assert os.stat(path).st_mode & 0o777 == 0o600
+    assert len(token) >= 32 and server.csrf_token() == token
+
+
+def test_index_pass_with_a_lot_of_stderr_finishes(capsys):
+    """stderr of the indexer goes to a file: a pipe nobody reads would stall the process."""
+    from atlas import server
+    noisy = [sys.executable, "-c", "import sys; sys.stderr.write('x' * 300000); sys.exit(3)"]
+    p = server._Pass(noisy)
+    p.join(20)
+    assert not p.is_alive()
+    assert "exit code 3" in capsys.readouterr().err
+    assert not p.is_alive()                     # reported once, no second print
+    assert capsys.readouterr().err == ""

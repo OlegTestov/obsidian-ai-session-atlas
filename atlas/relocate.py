@@ -1,8 +1,8 @@
-"""Перенос сессии из iTerm/VS Code во вкладку Obsidian.
+"""Moves a session from iTerm/VS Code into an Obsidian tab.
 
-`--resume` рядом с живым процессом дал бы два процесса над одним транскриптом. Поэтому
-сначала процесс завершается: SIGTERM — Claude Code выходит штатно, как по Ctrl+C, и
-транскрипт остаётся целым, — и только потом сессия открывается заново уже в Obsidian.
+`--resume` next to a live process would give two processes over one transcript. So the
+process is stopped first: on SIGTERM Claude Code exits cleanly, as with Ctrl+C, and the
+transcript stays intact; only then is the session reopened in Obsidian.
 """
 from __future__ import annotations
 
@@ -25,9 +25,9 @@ def _command(table: dict, pid: int) -> str:
 
 
 def host_app(pid: int, table: dict) -> str | None:
-    """Приложение, в котором запущена сессия: самое верхнее `.app` в цепочке родителей.
+    """The app the session runs in: the topmost `.app` in the parent chain.
 
-    Ближние бывают служебными — прокси PTY плагина Terminal живёт в Python.app.
+    Closer ones can be helpers: the Terminal plugin's PTY proxy runs in Python.app.
     """
     found = None
     for ancestor in active.ancestors(pid, table):
@@ -38,7 +38,7 @@ def host_app(pid: int, table: dict) -> str | None:
 
 
 class RelocateError(ValueError):
-    """Объяснение уходит пользователю как есть."""
+    """The message is shown to the user as is."""
 
 
 def _state(pid: int, sessions_dir: str) -> dict | None:
@@ -50,7 +50,7 @@ def _state(pid: int, sessions_dir: str) -> dict | None:
 
 
 def _gone(pid: int, proc_start: str | None, table_fn) -> bool:
-    """Завершился — нет в таблице или зомби (`<defunct>`: родитель ещё не забрал код выхода)."""
+    """Exited: missing from the table or a zombie (`<defunct>`: the parent has not reaped it yet)."""
     table = table_fn()
     return not active._alive(pid, proc_start, table) \
         or _command(table, pid).strip() == "<defunct>"
@@ -58,7 +58,7 @@ def _gone(pid: int, proc_start: str | None, table_fn) -> bool:
 
 def stop_for_move(session_id: str, pid, *, sessions_dir: str | None = None, table_fn=None,
                   wait: float = EXIT_WAIT_SECONDS, sleep=time.sleep) -> dict:
-    """Проверить, что PID — именно эта живая сессия вне Obsidian, и завершить её."""
+    """Checks that the PID is this exact live session outside Obsidian, then stops it."""
     sessions_dir = sessions_dir or active.SESSIONS_DIR
     table_fn = table_fn or active.process_table
     if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 1:

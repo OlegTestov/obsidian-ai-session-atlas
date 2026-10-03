@@ -1,4 +1,4 @@
-"""Подсказки слэш-команд: встроенные и твои скиллы и команды."""
+"""Slash command suggestions: built-ins plus your skills and commands."""
 from __future__ import annotations
 
 from atlas import commands
@@ -19,13 +19,13 @@ def test_builtin_first_then_skills_and_commands(tmp_path):
     out = commands.all_commands(str(tmp_path))
     names = [c["name"] for c in out]
     assert names[0] == "goal" and out[0]["kind"] == "builtin"
-    # Скилл вызывается по имени папки, а не по полю name.
+    # A skill is invoked by its folder name, not by the name field.
     chrome = next(c for c in out if c["name"] == "connect-chrome")
     assert chrome["kind"] == "skill" and chrome["description"] == "Launch GStack Browser"
     assert "open-gstack-browser" not in names and "_private" not in names and "no-md" not in names
     distill = next(c for c in out if c["name"] == "distill")
     assert distill["kind"] == "command" and distill["description"] == "Выжать сессию в память"
-    assert names.count("goal") == 1, "встроенная не дублируется одноимённой командой"
+    assert names.count("goal") == 1, "a built-in is not duplicated by a command with the same name"
 
 
 def test_long_description_is_cut(tmp_path):
@@ -45,7 +45,7 @@ def test_everyday_builtins_are_offered(tmp_path):
     for must in ("goal", "effort", "model", "compact", "clear", "context", "loop", "rewind",
                  "usage", "mcp", "skills", "resume", "rename"):
         assert must in names, must
-    assert names.index("effort") < len(commands.FREQUENT), "частые — в начале списка подсказок"
+    assert names.index("effort") < len(commands.FREQUENT), "frequent ones come first in the suggestions"
     assert len(names) == len(set(names))
 
 
@@ -80,7 +80,7 @@ def test_plugins_enabled_project_and_org_are_offered_as_plugin_colon_name(tmp_pa
                                                         encoding="utf-8")
     names = {c["name"]: c for c in commands.all_commands(str(tmp_path))}
     assert {"on:deploy", "on:status", "proj:notes", "platform-diagnostics:check-md"} <= set(names)
-    assert "off:hidden" not in names, "выключенный плагин не предлагается"
+    assert "off:hidden" not in names, "a disabled plugin is not suggested"
     assert names["on:deploy"]["kind"] == "plugin" and names["on:deploy"]["description"] == "скилл deploy"
 
 

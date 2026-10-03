@@ -1,4 +1,4 @@
-"""Дочитывание дописанного: тот же индекс, что и полный проход, но без переписывания сессии."""
+"""Tail reading of appended data: the same index as a full pass, without rewriting the session."""
 from __future__ import annotations
 
 import os
@@ -12,7 +12,7 @@ def _conn(home, name="atlas.sqlite3"):
 
 
 def _dump(conn):
-    """Всё, что видит пользователь: карточки, поиск и строки индекса."""
+    """Everything the user sees: cards, search and index rows."""
     sessions = [dict(r) for r in conn.execute(
         "SELECT session_id, title, human_turns, machine_turns, last_activity_at, last_prompt "
         "FROM sessions ORDER BY session_id")]
@@ -30,7 +30,7 @@ def test_appended_turns_are_read_from_where_the_last_pass_stopped(atlas_env, wri
                          session_id="live")
     conn = _conn(atlas_env["home"])
     index.index_all(conn, root=str(atlas_env["projects"]))
-    with open(path, "a", encoding="utf-8") as fh:        # сессия живёт дальше
+    with open(path, "a", encoding="utf-8") as fh:        # the session keeps going
         fh.write(assistant_text("ещё ответ на первый", ts="2026-09-27T09:02:00.000Z"))
         fh.write(user_text("второй запрос ABC-1359", ts="2026-09-27T09:03:00.000Z"))
         fh.write(assistant_tool("Bash", {"command": "pytest -q"}, ts="2026-09-27T09:04:00.000Z"))
@@ -41,7 +41,7 @@ def test_appended_turns_are_read_from_where_the_last_pass_stopped(atlas_env, wri
     fresh = _conn(tmp_path, "fresh.sqlite3")
     index.index_all(fresh, root=str(atlas_env["projects"]), full=True)
     assert _dump(conn) == _dump(fresh)
-    # второй запрос — отдельный ход, первый дописан ответом
+    # the second prompt is a separate turn, the first one gets the appended answer
     turns = dict(conn.execute("SELECT turn, user_text FROM fts WHERE turn>0 ORDER BY turn"))
     assert turns == {1: "первый запрос про прокси", 2: "второй запрос ABC-1359"}
     assert search.search(conn, "1359") and search.search(conn, "зелёные", scope="all")
@@ -52,7 +52,7 @@ def test_unfinished_last_line_is_left_for_the_next_pass(atlas_env, write_session
     conn = _conn(atlas_env["home"])
     index.index_all(conn, root=str(atlas_env["projects"]))
     with open(path, "a") as fh:
-        fh.write('{"type":"user","timestamp":"2026-09-27T09:01')     # запись ещё пишется
+        fh.write('{"type":"user","timestamp":"2026-09-27T09:01')     # the record is still being written
     index.index_all(conn, root=str(atlas_env["projects"]))
     with open(path, "a") as fh:
         fh.write(':00.000Z","message":{"role":"user","content":"продолжение"},'
@@ -66,7 +66,7 @@ def test_rewritten_file_is_indexed_from_scratch(atlas_env, write_session):
     path = write_session("p", [user_text("первая версия файла")], session_id="s")
     conn = _conn(atlas_env["home"])
     index.index_all(conn, root=str(atlas_env["projects"]))
-    with open(path, "w") as fh:                           # тот же файл, другое начало
+    with open(path, "w") as fh:                           # same file, different start
         fh.write(user_text("совсем другое содержимое") + user_text("и ещё строка"))
     stats = index.index_all(conn, root=str(atlas_env["projects"]))
     assert stats["full"] == 1 and stats["tail"] == 0
@@ -87,7 +87,7 @@ def test_subagent_change_goes_through_a_full_pass(atlas_env, write_session):
 
 
 def test_words_in_two_neighbouring_prompts_are_not_near(atlas_env, write_session):
-    """Запросы в индексе больше не склеены: близость через границу сообщений не засчитывается."""
+    """Prompts in the index are not joined: proximity across a message boundary does not count."""
     write_session("p", [user_text("про другое"), user_text("открыли окно"),
                         user_text("новостей стало больше")], session_id="apart")
     write_session("p", [user_text("начнём"), user_text("сломалось окно новостей")],
@@ -101,11 +101,11 @@ def test_words_in_two_neighbouring_prompts_are_not_near(atlas_env, write_session
 
 
 def test_column_weights_line_up_with_columns():
-    """session_id — первая колонка: без нуля впереди веса съезжали на соседнюю колонку."""
+    """session_id is the first column: without a leading zero the weights shift to the next column."""
     w = search._weights()
     assert w[0] == 0.0 and w[1] == search.COLUMN_WEIGHTS["title"]
     assert w[2] == search.COLUMN_WEIGHTS["user_text"] and w[-1] == 0.0
-    assert len(w) == len(search.FTS_COLUMNS) + 2              # + session_id и turn
+    assert len(w) == len(search.FTS_COLUMNS) + 2              # + session_id and turn
 
 
 def test_compaction_summary_starts_its_own_turn(atlas_env, write_session):
@@ -123,7 +123,7 @@ def test_compaction_summary_starts_its_own_turn(atlas_env, write_session):
 
 
 def test_reindex_flag_is_rechecked_under_the_lock(atlas_env, write_session, monkeypatch):
-    """Сервер ждал лок, пока пересборку делал CLI, — и потом пересобирал всё второй раз."""
+    """The server must not wait for the lock while the CLI rebuilds and then rebuild everything again."""
     write_session("p", [user_text("что-то")])
     conn = _conn(atlas_env["home"])
     index.index_all(conn, root=str(atlas_env["projects"]))
@@ -136,7 +136,7 @@ def test_reindex_flag_is_rechecked_under_the_lock(atlas_env, write_session, monk
     @contextmanager
     def lock_after_someone_rebuilt():
         with real_lock():
-            db.set_meta(conn, "needs_reindex", "0")      # другой процесс успел раньше
+            db.set_meta(conn, "needs_reindex", "0")      # another process got there first
             conn.commit()
             yield
     monkeypatch.setattr(index, "writer_lock", lock_after_someone_rebuilt)

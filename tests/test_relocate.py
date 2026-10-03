@@ -1,4 +1,4 @@
-"""Перенос сессии во вкладку Obsidian: завершается только нужный живой процесс вне Obsidian."""
+"""Moving a session into an Obsidian tab: only the right live process outside Obsidian is stopped."""
 from __future__ import annotations
 
 import json
@@ -24,7 +24,7 @@ def child():
 
 
 def fake_table(child_pid, app_command):
-    """Настоящая таблица, но родители процесса — выдуманное приложение и прокси."""
+    """A real table, but the process parents are a made-up app and a proxy."""
     def table_fn():
         table = dict(active.process_table())
         if child_pid in table:
@@ -67,7 +67,7 @@ def test_refuses_and_does_not_touch_the_process(tmp_path, child, case):
     with pytest.raises(relocate.RelocateError):
         relocate.stop_for_move(session, pid, sessions_dir=str(tmp_path),
                                table_fn=fake_table(child.pid, app))
-    assert child.poll() is None, "процесс не тронут"
+    assert child.poll() is None, "the process is untouched"
 
 
 def test_reused_pid_is_not_killed(tmp_path, child):
@@ -83,9 +83,9 @@ def test_process_that_ignores_sigterm_is_reported(tmp_path):
                                  "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(60)"])
     try:
         import time as _t
-        _t.sleep(0.3)                              # успеть поставить обработчик сигнала
+        _t.sleep(0.3)                              # give it time to install the signal handler
         write_state(tmp_path, stubborn.pid)
-        with pytest.raises(relocate.RelocateError, match="did not exit"):   # без заголовка — en
+        with pytest.raises(relocate.RelocateError, match="did not exit"):   # no header means en
             relocate.stop_for_move("sess-1", stubborn.pid, sessions_dir=str(tmp_path),
                                    table_fn=fake_table(stubborn.pid, ITERM), wait=0.5)
     finally:

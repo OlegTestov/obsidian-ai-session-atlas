@@ -1,10 +1,11 @@
-"""Что попадает в индекс и что не попадает никогда."""
+"""What goes into the index and what never does."""
 from __future__ import annotations
+
+from pathlib import Path
 
 from atlas import config
 from atlas.parse import COMPACT_PREFIX, parse_file
-from tests.conftest import (assistant_text, assistant_tool, image_block, rec,
-                            tool_result, user_text)
+from tests.conftest import assistant_text, assistant_tool, image_block, rec, tool_result, user_text
 
 
 def test_tool_result_and_image_never_reach_the_index(write_session):
@@ -22,7 +23,7 @@ def test_tool_result_and_image_never_reach_the_index(write_session):
 
 
 def test_non_text_block_is_rejected_by_type_even_if_it_carries_a_text_field(write_session):
-    """Защита — проверка типа блока, а не то, что у tool_result просто нет поля text."""
+    """The guard is the block type check, not the fact that tool_result has no text field."""
     path = write_session("p", [
         rec(type="user", timestamp="2026-09-01T10:00:00.000Z", cwd="/Users/u/Code/demo",
             entrypoint="cli",
@@ -42,7 +43,7 @@ def test_compaction_summary_is_not_a_human_prompt(write_session):
         user_text("продолжай"),
     ])
     f = parse_file(path, "s2")
-    assert f.human_turns == 1                     # сводка не считается ходом человека
+    assert f.human_turns == 1                     # a summary is not a human turn
     assert f.user_text == ["продолжай"]
     assert f.summaries and "делали X" in f.summaries[0]
 
@@ -52,9 +53,9 @@ def test_sidechain_text_kept_separately(write_session):
         user_text("задача"),
         assistant_text("ответ агента-сабагента", ts="2026-09-01T10:05:00.000Z"),
     ])
-    lines = open(path, encoding="utf-8").read().splitlines(keepends=True)
+    lines = Path(path).read_text(encoding="utf-8").splitlines(keepends=True)
     side = lines[1].replace('"type": "assistant"', '"type": "assistant", "isSidechain": true')
-    open(path, "w", encoding="utf-8").write(lines[0] + side)
+    Path(path).write_text(lines[0] + side, encoding="utf-8")
     f = parse_file(path, "s3")
     assert f.assistant_text == []
     assert f.subagent_text and f.subagent_turns == 1
@@ -66,8 +67,8 @@ def test_incomplete_last_line_is_left_for_the_next_pass(write_session, tmp_path)
         fh.write('{"type":"user","message":{"content":[{"type":"text","text":"хвост')
     f = parse_file(path, "s4")
     assert f.user_text == ["первая"]
-    assert f.bad_lines == 0                       # недописанная строка не «битая», а незавершённая
-    assert f.complete_bytes < len(open(path, "rb").read())
+    assert f.bad_lines == 0                       # a partial line is incomplete, not «broken»
+    assert f.complete_bytes < len(Path(path).read_bytes())
 
 
 def test_file_paths_come_from_file_tools_only(write_session):
@@ -80,13 +81,13 @@ def test_file_paths_come_from_file_tools_only(write_session):
 
 
 def test_ticket_regex_matches_alternatives_not_literal_pipes():
-    TICKET_RE = config.ticket_re()          # префиксы — из тестового профиля
+    TICKET_RE = config.ticket_re()          # prefixes come from the test profile
     assert TICKET_RE.findall("правим ABC-1548 и XYZ-3133") == ["ABC-1548", "XYZ-3133"]
-    assert TICKET_RE.findall("ABC|XYZ-12") == ["XYZ-12"]   # литеральная черта не матчится целиком
+    assert TICKET_RE.findall("ABC|XYZ-12") == ["XYZ-12"]   # a literal pipe does not match as a whole
     assert TICKET_RE.findall("QQQ-1548") == []
-    assert TICKET_RE.findall("префикс ABC-1 в тексте") == []   # обрывок, не тикет
+    assert TICKET_RE.findall("префикс ABC-1 в тексте") == []   # a fragment, not a ticket
     assert TICKET_RE.findall("ABC-12") == ["ABC-12"]
-    assert TICKET_RE.findall("AABC-1548") == []            # граница слова работает
+    assert TICKET_RE.findall("AABC-1548") == []            # word boundary works
 
 
 def test_manual_title_beats_ai_title(write_session):
@@ -100,7 +101,7 @@ def test_manual_title_beats_ai_title(write_session):
 
 
 def test_slash_command_prompt_is_made_readable():
-    """В карточке «последний запрос» не должен быть сырой обёрткой слэш-команды."""
+    """The card's «last prompt» must not be a raw slash-command wrapper."""
     from atlas.parse import readable_prompt
     raw = ("<command-message>loop</command-message>\n<command-name>/loop</command-name>\n"
            "<command-args>30m Фаза 3, реалтайм XYZ</command-args>")
@@ -109,7 +110,7 @@ def test_slash_command_prompt_is_made_readable():
 
 
 def test_slash_command_is_unwrapped_when_the_transcript_is_parsed(write_session):
-    """Проверяем не саму функцию, а что разбор её действительно применяет."""
+    """Checks not the function itself but that parsing actually applies it."""
     path = write_session("p", [user_text(
         "<command-message>loop</command-message>\n<command-name>/loop</command-name>\n"
         "<command-args>30m проверить DAG</command-args>")])
@@ -119,8 +120,9 @@ def test_slash_command_is_unwrapped_when_the_transcript_is_parsed(write_session)
 
 
 def test_no_ticket_prefixes_means_no_tickets(tmp_path):
-    from tests.conftest import write_config
     import os
+
+    from tests.conftest import write_config
     write_config(os.environ["ATLAS_HOME"], {"ticket_prefixes": []})
     assert config.ticket_re() is None
     write_config(os.environ["ATLAS_HOME"], {"ticket_prefixes": ["OPS", "bad prefix", "a|b"]})

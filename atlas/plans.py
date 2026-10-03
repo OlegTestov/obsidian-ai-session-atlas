@@ -1,14 +1,17 @@
-"""Текст плана для диалога «план готов»: `~/.claude/plans/<slug>.md`.
+"""Plan text for the "plan ready" dialog: `~/.claude/plans/<slug>.md`.
 
-Файл пишется до диалога, а slug сессии Claude Code записывает в каждую запись транскрипта.
-Путь с экрана вкладки тоже годится — но только имя файла внутри каталога планов.
+The file is written before the dialog, and Claude Code writes the session slug into every
+transcript entry. A path from the tab's screen also works, but only as a file name inside
+the plans folder.
 """
 from __future__ import annotations
 
 import os
 import re
 
-PLANS_DIR = os.path.expanduser("~/.claude/plans")
+from . import paths
+
+PLANS_DIR = os.path.join(paths.claude_dir(), "plans")
 NAME = re.compile(r"[\w.-]+\.md")
 SLUG = re.compile(rb'"slug"\s*:\s*"([\w.-]+)"')
 TAIL = 512 * 1024
@@ -28,7 +31,7 @@ def _slug(transcript: str) -> str | None:
 
 def plan_text(transcript: str | None, screen_path: str | None = None,
               plans_dir: str | None = None) -> dict | None:
-    """{name, text, truncated} или None. Имя с экрана — первым: это ровно тот план, что в диалоге."""
+    """{name, text, truncated} or None. The on-screen name goes first: it is the plan in the dialog."""
     folder = plans_dir or PLANS_DIR
     names = []
     if screen_path:

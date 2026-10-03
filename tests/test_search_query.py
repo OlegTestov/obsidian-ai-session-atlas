@@ -1,4 +1,4 @@
-"""Поиск глазами пользователя: что находится, что подсвечивается, как понят запрос."""
+"""Search from the user's view: what is found, what is highlighted, how the query is understood."""
 from __future__ import annotations
 
 import json
@@ -10,7 +10,6 @@ import pytest
 
 from atlas import db, index, messages, query, search
 from tests.conftest import assistant_text, user_text
-from tests.test_actions_security import live_server  # noqa: F401 — фикстура
 
 
 def _conn(atlas_env):
@@ -29,10 +28,10 @@ def _hit_texts(match: dict) -> list[str]:
     return [s["t"] for s in match["segments"] if s["hit"]]
 
 
-# --- числа и идентификаторы ------------------------------------------------
+# --- numbers and identifiers ----------------------------------------------
 
 def test_number_does_not_match_numbers_it_starts_with(atlas_env, write_session):
-    """Жалоба владельца: «1359» выдавало сессии с «13»."""
+    """Owner complaint: «1359» returned sessions containing «13»."""
     conn = _indexed(atlas_env, write_session,
                     [user_text("переделываем фронт ABC-1359")],
                     [user_text("адрес: Лихоборская наб., 13, стр.71")],
@@ -52,10 +51,10 @@ def test_ticket_and_its_bare_number_find_the_same_session(atlas_env, write_sessi
     assert len(search.search(conn, "abc-1359")) == 1
 
 
-# --- подсветка --------------------------------------------------------------
+# --- highlighting ----------------------------------------------------------
 
 def test_russian_quotes_in_text_are_not_mistaken_for_highlight(atlas_env, write_session):
-    """Метки «» совпадали с кавычками в тексте, и подсвечивались куски целых фраз."""
+    """«» markers collided with quotes in the text and highlighted chunks of whole phrases."""
     conn = _indexed(atlas_env, write_session, [user_text(
         "это «снимок до перезаписи», сейчас там ABC-1359 и «ещё что-то» рядом")])
     match = search.search(conn, "1359")[0]["matches"][0]
@@ -92,7 +91,7 @@ def test_hits_are_counted_per_field(atlas_env, write_session):
     assert hit["hits"] == 4
 
 
-# --- операторы --------------------------------------------------------------
+# --- operators -------------------------------------------------------------
 
 @pytest.fixture
 def windows(atlas_env, write_session):
@@ -109,7 +108,7 @@ def test_minus_excludes_a_word(windows):
 
 def test_quotes_keep_a_phrase_together(windows):
     assert len(search.search(windows, '"окно новостей"')) == 1
-    assert len(search.search(windows, "окно новостей")) == 2  # «новости … окна» тоже
+    assert len(search.search(windows, "окно новостей")) == 2  # «новости … окна» too
 
 
 def test_or_joins_alternatives(windows):
@@ -119,7 +118,7 @@ def test_or_joins_alternatives(windows):
 
 def test_only_exclusions_explain_instead_of_failing(windows):
     res = search.run(windows, "-окно")
-    assert res["results"] == [] and "without a minus" in res["error"]       # без заголовка — en
+    assert res["results"] == [] and "without a minus" in res["error"]       # no header — en
     with messages.use_lang("ru"):
         res = search.run(windows, "-окно")
     assert res["results"] == [] and "без минуса" in res["error"]
@@ -131,18 +130,18 @@ def test_noise_tokens_do_not_break_the_query(windows):
 
 
 def test_short_russian_words_match_their_forms(atlas_env, write_session):
-    """«окно» короче порога основы — без перебора форм «окна» не нашлось бы."""
+    """«окно» is shorter than the stem floor — without enumerating forms «окна» would not be found."""
     conn = _indexed(atlas_env, write_session,
                     [user_text("перенесли окна настроек")],
                     [user_text("новый план релиза")],
                     [user_text("поставили плагин")])
     assert len(search.search(conn, "окно")) == 1
-    assert len(search.search(conn, "плана")) == 1   # и не «плагин»
+    assert len(search.search(conn, "плана")) == 1   # and not «плагин»
     assert len(search.search(conn, "план")) == 1
 
 
 def test_consonant_final_word_is_not_cut_into_a_different_word(atlas_env, write_session):
-    """«замер» усечённый до «заме*» находил «заметки» и «замечания»."""
+    """«замер» truncated to «заме*» would find «заметки» and «замечания»."""
     conn = _indexed(atlas_env, write_session,
                     [user_text("сделали замеры скорости")],
                     [user_text("записал заметки после звонка")])
@@ -172,7 +171,7 @@ def test_plan_explains_how_each_word_was_read():
     assert [p["how"] for p in en] == ["exact", "any word form", "whole phrase"]
 
 
-# --- объём выдачи и соседняя область ----------------------------------------
+# --- result size and the neighbouring scope -------------------------------
 
 def test_total_counts_everything_not_only_the_page(atlas_env, write_session):
     conn = _indexed(atlas_env, write_session,
@@ -190,7 +189,7 @@ def test_sessions_found_only_outside_prompts_are_announced(atlas_env, write_sess
     assert search.run(conn, "webpack", scope="all")["elsewhere"] is None
 
 
-# --- сервер -----------------------------------------------------------------
+# --- server ----------------------------------------------------------------
 
 def test_server_list_carries_plan_total_and_segments(atlas_env, write_session, live_server):
     _indexed(atlas_env, write_session,
@@ -201,14 +200,14 @@ def test_server_list_carries_plan_total_and_segments(atlas_env, write_session, l
     with urllib.request.urlopen(url, timeout=5) as r:
         data = json.loads(r.read())
     assert data["count"] == 1 and data["shown"] == 1
-    assert data["plan"][0]["how"] == "exact"                # без заголовка — английский
+    assert data["plan"][0]["how"] == "exact"                # no header — English
     ru = urllib.request.Request(url, headers={"X-Atlas-Lang": "ru"})
     with urllib.request.urlopen(ru, timeout=5) as r:
         assert json.loads(r.read())["plan"][0]["how"] == "точно"
     assert _hit_texts(data["results"][0]["matches"][0]) == ["1359"]
 
 
-# --- догонка индекса сервером -------------------------------------------------
+# --- server-side index catch-up ---------------------------------------------
 
 def _list(base, **params):
     url = f"{base}/api/sessions?" + urllib.parse.urlencode(params)
@@ -225,7 +224,7 @@ def fresh_catch_up(monkeypatch):
 
 
 class _FakePass:
-    """Проход, которым управляет тест: сколько раз запущен и когда закончится."""
+    """A pass controlled by the test: how many times it started and when it finishes."""
     started = 0
 
     def __init__(self):
@@ -244,9 +243,9 @@ class _FakePass:
 
 def test_transcript_written_after_indexing_reaches_the_server_list(
         atlas_env, write_session, live_server, fresh_catch_up):
-    """Интерфейс показывал индекс четырёхдневной давности, пока не нажмёшь «обновить».
+    """Without catch-up the UI shows a four-day-old index until you press «refresh».
 
-    Настоящий проход: отдельный процесс `atlas index` с тем же ATLAS_HOME.
+    A real pass: a separate `atlas index` process with the same ATLAS_HOME.
     """
     import time
     _indexed(atlas_env, write_session, [user_text("старая сессия про прокси")])
@@ -281,14 +280,14 @@ def test_long_catch_up_does_not_hold_the_answer(atlas_env, live_server, fresh_ca
     assert _list(base)["indexing"] is True
     assert time.monotonic() - started < fresh_catch_up.CATCHUP_WAIT + 1.0
     again = time.monotonic()
-    assert _list(base)["indexing"] is True and fake.started == 1  # идущий не перезапускается
-    assert time.monotonic() - again < fresh_catch_up.CATCHUP_WAIT  # и его не ждут
+    assert _list(base)["indexing"] is True and fake.started == 1  # a running pass is not restarted
+    assert time.monotonic() - again < fresh_catch_up.CATCHUP_WAIT  # and is not waited for
     fresh_catch_up._catchup_proc.done.set()
     assert _list(base)["indexing"] is False
 
 
 def test_connect_does_not_wait_for_a_running_writer(atlas_env):
-    """Каждый запрос сервера открывает соединение; фоновый индексатор держит запись секундами."""
+    """Each server request opens a connection; the background indexer holds the write lock for seconds."""
     import sqlite3
     import time
     path = os.path.join(str(atlas_env["home"]), "atlas.sqlite3")
@@ -304,15 +303,15 @@ def test_connect_does_not_wait_for_a_running_writer(atlas_env):
         writer.rollback()
 
 
-# --- порядок по релевантности и подстрочный поиск по путям -------------------
+# --- relevance order and substring search in paths --------------------------
 
 def test_relevance_prefers_title_then_words_side_by_side(atlas_env, write_session):
-    """Один bm25 поднимал огромные сессии, где слова запроса разбросаны по всему тексту."""
+    """Plain bm25 ranks huge sessions high where query words are scattered across the text."""
     noise = "шум " * 40
-    # Шум по краям: запросы в индексе склеены, и конец одного соседствует с началом другого.
+    # Noise at the edges: prompts are joined in the index, so one's end abuts the next one's start.
     scattered = [user_text(f"{noise} окно {noise} новостей {noise} окно {noise} новостей {noise}")
                  for _ in range(8)]
-    write_session("p", [user_text("про другое")] + scattered, session_id="scattered")
+    write_session("p", [user_text("про другое"), *scattered], session_id="scattered")
     write_session("p", [user_text("начнём"), user_text(noise * 20 + " сломалось окно новостей")],
                   session_id="together")
     write_session("p", [user_text("Окно новостей: переделка"), user_text(noise * 20)],

@@ -1,11 +1,11 @@
-// Строки страницы: статистика, лента, закрытые, клавиши, новая сессия, команды, переход. Ключи — с префиксом «stats / feed / closed / keys / new / cmd / jump.»; en и ru — одинаковый набор ключей.
-// Множественное число — массивом: ru [one, few, many], en [one, other]; {n} — само число.
-// Числа статистики: в ru между числом и единицей — неразрывный пробел ( ).
+// Page strings: statistics, feed, closed, keys, new session, commands, jump. Keys start with "stats / feed / closed / keys / new / cmd / jump."; en and ru have the same key set.
+// Plurals are arrays: ru [one, few, many], en [one, other]; {n} is the number.
+// Statistics numbers: in ru a non-breaking space (U+00A0) separates the number and the unit.
 (function (root) {
-  const I = typeof module !== "undefined" && module.exports ? require("./i18n.js") : root.I18N;
+  const I = root.I18N;
   I.add({
     en: {
-      // --- Статистика: логика (stats-logic.js) ---
+      // --- Statistics: logic (stats-logic.js) ---
       "stats.period.today": "Today",
       "stats.period.today.prev": "vs. yesterday at this time",
       "stats.period.7d": "7 days",
@@ -24,7 +24,7 @@
       "stats.num.hours": "{h} h",
       "stats.num.minutes": "{m} min",
       "stats.num.hoursMinutes": "{h} h {m} min",
-      // --- Статистика: вид (stats.js) ---
+      // --- Statistics: view (stats.js) ---
       "stats.weekdays": "Mon Tue Wed Thu Fri Sat Sun",
       "stats.auto": "background runs",
       "stats.auto.hint": "Sessions without a human: nightly, hooks, claude -p. They use the same subscription",
@@ -67,7 +67,7 @@
       "stats.panel.skills": "Skills and commands · calls",
       "stats.panel.agents": "Agents · runs",
 
-      // --- Лента сессии (active-feed.js, active-feed-views.js) ---
+      // --- Session feed (active-feed.js, active-feed-views.js) ---
       "feed.views.hint": "Turns — prompts and replies; steps — every call in order; files — what the session edited",
       "feed.button": "feed",
       "feed.button.hint": "The whole session: your prompts, what Claude did, its replies. Latest first; scroll up for earlier turns",
@@ -117,7 +117,7 @@
       "feed.files.noEdits": "no edits via tools",
       "feed.files.readOnly": "Read only · {n}",
 
-      // --- Недавно закрытые (active-closed.js) ---
+      // --- Recently closed (active-closed.js) ---
       "closed.opening": "opening…",
       "closed.failed": "failed: {msg}",
       "closed.closedAgo": "closed {ago}",
@@ -130,7 +130,7 @@
       "closed.title": "Recently closed",
       "closed.title.hint": "Sessions with work in the last 8 hours whose process has already exited",
 
-      // --- Клавиши (active-keys.js) ---
+      // --- Keys (active-keys.js) ---
       "keys.help.arrows": "↑ ↓ ← →  or  j k",
       "keys.help.select": "select a card",
       "keys.help.answer": "reply field",
@@ -143,7 +143,7 @@
       "keys.intro": "They work when the cursor isn't in an input field. Clicking a card also selects it; "
         + "in compact view Enter switches to the detailed one.",
 
-      // --- Новая сессия (active-new.js) ---
+      // --- New session (active-new.js) ---
       "newsess.button": "+ Session",
       "newsess.button.hint": "Start Claude Code in the chosen folder with a first prompt",
       "newsess.loadingDirs": "loading folders…",
@@ -154,7 +154,7 @@
       "newsess.notStarted": "not started: {msg}",
       "newsess.outside": "Outside Obsidian: run the command in a terminal.",
 
-      // --- Команды (active-commands.js) ---
+      // --- Commands (active-commands.js) ---
       "cmd.model.default": "default",
       "cmd.output": "{cmd} output · {ago}",
       "cmd.closePanel": "Close panel",
@@ -165,13 +165,13 @@
       "cmd.model": "model:",
       "cmd.choice.hint": "{cmd} {value} — Claude Code will remember this for new sessions too",
 
-      // --- Переход ⌘K (jump.js) ---
+      // --- Jump ⌘K (jump.js) ---
       "jump.label": "Go to session",
       "jump.placeholder": "Go to session: title, topic, project…",
       "jump.hint": "↑ ↓ — select · Enter — go · Esc — close",
       "jump.empty": "nothing found",
 
-      // --- Логика «Активных» (logic.js) ---
+      // --- Active logic (logic.js) ---
       "logic.period.hour": "in the last hour",
       "logic.period.today": "today, over an hour ago",
       "logic.period.yesterday": "yesterday",
@@ -198,7 +198,7 @@
       "logic.dur.hm": "{h} h {m} min",
     },
     ru: {
-      // --- Статистика: логика (stats-logic.js) ---
+      // --- Statistics: logic (stats-logic.js) ---
       "stats.period.today": "Сегодня",
       "stats.period.today.prev": "ко вчера на это время",
       "stats.period.7d": "7 дней",
@@ -217,7 +217,7 @@
       "stats.num.hours": "{h} ч",
       "stats.num.minutes": "{m} мин",
       "stats.num.hoursMinutes": "{h} ч {m} мин",
-      // --- Статистика: вид (stats.js) ---
+      // --- Statistics: view (stats.js) ---
       "stats.weekdays": "Пн Вт Ср Чт Пт Сб Вс",
       "stats.auto": "фоновые прогоны",
       "stats.auto.hint": "Сессии без человека: nightly, хуки, claude -p. Тратят ту же подписку",
@@ -260,7 +260,7 @@
       "stats.panel.skills": "Скиллы и команды · вызовов",
       "stats.panel.agents": "Агенты · запусков",
 
-      // --- Лента сессии (active-feed.js, active-feed-views.js) ---
+      // --- Session feed (active-feed.js, active-feed-views.js) ---
       "feed.views.hint": "Ходы — запросы и ответы; шаги — каждый вызов по порядку; файлы — что сессия правила",
       "feed.button": "лента",
       "feed.button.hint": "Вся сессия: твои запросы, что делал Claude, его ответы. Сначала конец, раньше — листая вверх",
@@ -310,7 +310,7 @@
       "feed.files.noEdits": "правок инструментами не было",
       "feed.files.readOnly": "Только прочитаны · {n}",
 
-      // --- Недавно закрытые (active-closed.js) ---
+      // --- Recently closed (active-closed.js) ---
       "closed.opening": "открываю…",
       "closed.failed": "не вышло: {msg}",
       "closed.closedAgo": "закрыта {ago}",
@@ -323,7 +323,7 @@
       "closed.title": "Недавно закрытые",
       "closed.title.hint": "Сессии с работой за последние 8 часов, чей процесс уже завершён",
 
-      // --- Клавиши (active-keys.js) ---
+      // --- Keys (active-keys.js) ---
       "keys.help.arrows": "↑ ↓ ← →  или  j k",
       "keys.help.select": "выбрать карточку",
       "keys.help.answer": "поле ответа",
@@ -336,7 +336,7 @@
       "keys.intro": "Работают, когда курсор не в поле ввода. Клик по карточке тоже выбирает её; "
         + "Enter в компактном виде переключает в подробный.",
 
-      // --- Новая сессия (active-new.js) ---
+      // --- New session (active-new.js) ---
       "newsess.button": "+ Сессия",
       "newsess.button.hint": "Запустить Claude Code в выбранной папке с первым запросом",
       "newsess.loadingDirs": "загружаю папки…",
@@ -347,7 +347,7 @@
       "newsess.notStarted": "не запущено: {msg}",
       "newsess.outside": "Вне Obsidian: выполни команду в терминале.",
 
-      // --- Команды (active-commands.js) ---
+      // --- Commands (active-commands.js) ---
       "cmd.model.default": "по умолчанию",
       "cmd.output": "Ответ {cmd} · {ago}",
       "cmd.closePanel": "Закрыть панель",
@@ -358,13 +358,13 @@
       "cmd.model": "модель:",
       "cmd.choice.hint": "{cmd} {value} — Claude Code запомнит это и для новых сессий",
 
-      // --- Переход ⌘K (jump.js) ---
+      // --- Jump ⌘K (jump.js) ---
       "jump.label": "Перейти к сессии",
       "jump.placeholder": "Перейти к сессии: название, тема, проект…",
       "jump.hint": "↑ ↓ — выбрать · Enter — перейти · Esc — закрыть",
       "jump.empty": "ничего не нашлось",
 
-      // --- Логика «Активных» (logic.js) ---
+      // --- Active logic (logic.js) ---
       "logic.period.hour": "за последний час",
       "logic.period.today": "сегодня, раньше часа",
       "logic.period.yesterday": "вчера",
@@ -391,4 +391,4 @@
       "logic.dur.hm": "{h} ч {m} мин",
     },
   });
-})(typeof window !== "undefined" ? window : globalThis);
+})(window);

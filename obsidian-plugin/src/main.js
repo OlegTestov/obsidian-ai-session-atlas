@@ -1,29 +1,29 @@
-const { Notice, Plugin } = require("obsidian");
-const http = require("http");
-const {
+import { Notice, Plugin } from "obsidian";
+import * as fsSync from "fs";
+import * as http from "http";
+import * as path from "path";
+import {
   VIEW_TYPE,
   AGENT_VIEW_TYPE,
   ATLAS_PORT,
-  ATLAS_ORIGIN,
+  DEV_PORT,
+  DEV_MARKER,
   HOST_SOURCE,
-} = require("./constants");
-const { TerminalMethods } = require("./terminal");
-const { InputMethods } = require("./input");
-const { AtlasView } = require("./view");
-const { AgentTerminalView } = require("./term-view");
-const { AgentMethods } = require("./agents");
-const { GuardMethods } = require("./guard");
-const { RuntimeMethods } = require("./runtime");
-const { StatusLineMethods } = require("./statusline");
-const { ReloadMethods } = require("./reload");
-const { ExplorerMethods } = require("./explorer");
-const { resolveLanguage, obsidianLanguage, translate } = require("./i18n");
-const { NotifyMethods } = require("./notify");
-const { RestoreMethods } = require("./restore");
-const { AtlasSettingTab, DEFAULT_SETTINGS } = require("./settings");
-
-// Старые плагины, чьи функции теперь здесь: пока включены, их части не дублируем.
-const LEGACY = { "agent-terminal-ribbons": "Agent Terminal Ribbons", "swap-click-open": "Swap Click Open" };
+} from "./constants";
+import { TerminalMethods } from "./terminal";
+import { InputMethods } from "./input";
+import { AtlasView } from "./view";
+import { AgentTerminalView, keepHeldTabs } from "./term-view";
+import { AgentMethods } from "./agents";
+import { GuardMethods } from "./guard";
+import { RuntimeMethods } from "./runtime";
+import { StatusLineMethods } from "./statusline";
+import { ReloadMethods } from "./reload";
+import { ExplorerMethods } from "./explorer";
+import { resolveLanguage, obsidianLanguage, translate } from "./i18n";
+import { NotifyMethods } from "./notify";
+import { RestoreMethods } from "./restore";
+import { AtlasSettingTab, DEFAULT_SETTINGS } from "./settings";
 
 class SessionAtlasPlugin extends Plugin {
   async onload() {
@@ -35,35 +35,33 @@ class SessionAtlasPlugin extends Plugin {
     this.registerView(VIEW_TYPE, (leaf) => new AtlasView(leaf, this));
     this.registerView(AGENT_VIEW_TYPE, (leaf) => new AgentTerminalView(leaf, this));
 
-    this.addRibbonIcon("library", "Session Atlas", () => this.openAtlas());
+    this.addRibbonIcon("library", this.t("atlas.open"), () => this.openAtlas());
     this.addCommand({
-      id: "open-session-atlas",
+      id: "open-catalog",
       name: this.t("atlas.open"),
       callback: () => this.openAtlas(),
     });
     this.addCommand({
-      id: "reload-session-atlas",
+      id: "reload-plugin",
       name: this.t("reload.command"),
       checkCallback: (checking) => (checking ? this.canReloadInPlace() : this.reloadInPlace()),
     });
-    if (!this.legacyEnabled("agent-terminal-ribbons")) this.addAgentButtons();
+    this.addAgentButtons();
     try {
       if (!saved.agentArgs && this.adoptAgentArgs()) await this.saveData(this.settings);
       this.writeAgentArgs();
-    } catch (error) { console.error("Session Atlas: аргументы агентов", error); }
+    } catch (error) { console.error("Session Atlas: could not sync agent arguments", error); }
     this.app.workspace.onLayoutReady(() => this.detectAgents().catch(() => {}));
     this.app.workspace.onLayoutReady(() => this.watchOwnBuild());
-    // Сервер нужен не только вкладке каталога: уведомления опрашивают его постоянно, а фоновую
-    // вкладку Obsidian не создаёт, пока на неё не переключишься.
+    this.app.workspace.onLayoutReady(() => keepHeldTabs(this.app.workspace));
+    // Not only the catalog tab needs the server: notifications poll it constantly, and Obsidian
+    // does not create a background tab until you switch to it.
     this.app.workspace.onLayoutReady(() => this.ensureServer().catch(() => {}));
-    for (const [id, name] of Object.entries(LEGACY)) {
-      if (this.legacyEnabled(id)) new Notice(this.t("legacy.enabled", { name }), 15000);
-    }
     this.installExplorerClicks();
     this.patchCloseTabCommand();
 
-    // Сообщения приходят из iframe каталога. Источник проверяем строго: на этой странице
-    // лежит текст чужих сессий, и выполнять по нему команды можно только от самого каталога.
+    // Messages come from the catalog iframe. The origin is checked strictly: the page shows text
+    // from other sessions, and only the catalog itself may trigger commands.
     this.onMessage = (event) => this.handleMessage(event);
     window.addEventListener("message", this.onMessage);
     this.register(() => window.removeEventListener("message", this.onMessage));
@@ -73,16 +71,16 @@ class SessionAtlasPlugin extends Plugin {
     this.registerEvent(
       this.app.workspace.on("window-open", (win) => this.installCloseGuard(win && win.doc))
     );
-    // Опрос после раскладки: на старте Obsidian вкладки терминала ещё не восстановлены.
+    // Polling starts after layout: at Obsidian start-up the terminal tabs are not restored yet.
     this.app.workspace.onLayoutReady(() => this.startWatch());
   }
 
   onunload() {
-    // Вкладки не отцепляем: Obsidian восстановит их сам при следующем запуске.
+    // Tabs stay attached: Obsidian restores them itself on the next start.
     this.stopServer();
   }
 
-  /** Строка на языке плагина: выбор в настройках, иначе язык Obsidian. */
+  /** A string in the plugin's language: the settings choice, else Obsidian's language. */
   lang() {
     return resolveLanguage(this.settings && this.settings.language, obsidianLanguage());
   }
@@ -91,12 +89,7 @@ class SessionAtlasPlugin extends Plugin {
     return translate(this.lang(), key, vars);
   }
 
-  legacyEnabled(id) {
-    const plugins = this.app && this.app.plugins;
-    return !!(plugins && plugins.enabledPlugins && plugins.enabledPlugins.has(id));
-  }
-
-  // --- вкладка каталога ---
+  // --- catalog tab ---
 
   async openAtlas(hash) {
     const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE);
@@ -105,9 +98,9 @@ class SessionAtlasPlugin extends Plugin {
     this.app.workspace.revealLeaf(leaf);
   }
 
-  /** Сервер мог не подняться: без него вкладка показала бы пустую страницу. */
+  /** The server may be down: without it the tab would show a blank page. */
   async ensureServer() {
-    if (this.startingServer) return this.startingServer;     // два окна — один запуск
+    if (this.startingServer) return this.startingServer;     // two windows, one start
     this.startingServer = this.startServer().then((r) => {
       this.startingServer = null;
       this.serverProblem = r.ok ? null : r.reason;
@@ -117,18 +110,31 @@ class SessionAtlasPlugin extends Plugin {
     return this.startingServer;
   }
 
-  atlasPort() { return ATLAS_PORT; }
+  /** A development install (marker next to main.js) uses its own port and data folder. */
+  isDevInstall() {
+    if (this.devInstall === undefined) {
+      const adapter = this.app && this.app.vault && this.app.vault.adapter;
+      const dir = this.manifest && this.manifest.dir;
+      this.devInstall = !!(adapter && adapter.getBasePath && dir
+        && fsSync.existsSync(path.join(adapter.getBasePath(), dir, DEV_MARKER)));
+    }
+    return this.devInstall;
+  }
 
-  /** Перерисовать открытые вкладки каталога (настройка страницы поменялась). */
+  atlasPort() { return this.isDevInstall() ? DEV_PORT : ATLAS_PORT; }
+
+  atlasOrigin() { return `http://127.0.0.1:${this.atlasPort()}`; }
+
+  /** Re-render open catalog tabs (a page setting changed). */
   reloadAtlasViews() {
     for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
       if (leaf.view && typeof leaf.view.render === "function") leaf.view.render();
     }
   }
 
-  /** Кнопка «Поднять» на странице: тот же запуск, что при открытии вкладки. */
+  /** The page's start-server button: the same start as opening the tab. */
   async raiseServer(target) {
-    if (this.raisingServer) return;          // второе нажатие не запускает второй подъём
+    if (this.raisingServer) return;          // a second click does not start a second launch
     this.raisingServer = true;
     let ok = false;
     let reason = null;
@@ -141,21 +147,21 @@ class SessionAtlasPlugin extends Plugin {
       this.raisingServer = false;
     }
     if (target && typeof target.postMessage === "function") {
-      target.postMessage({ source: HOST_SOURCE, type: "server-ensured", ok, reason }, ATLAS_ORIGIN);
+      target.postMessage({ source: HOST_SOURCE, type: "server-ensured", ok, reason }, this.atlasOrigin());
     }
   }
 
   /**
-   * Проверяем через node, а не fetch. Fetch из Obsidian идёт с origin `app://obsidian.md`,
-   * то есть кросс-оригин: сервер такие отклоняет по Origin, а браузер зарезал бы их без
-   * CORS-заголовков. Ослаблять проверку Origin ради health-пробы нельзя.
+   * Checked through node, not fetch. A fetch from Obsidian carries the origin `app://obsidian.md`,
+   * so it is cross-origin: the server rejects it by Origin, and the browser would block it without
+   * CORS headers. The Origin check must not be relaxed for a health probe.
    */
   async isServerUp(timeout = 2000) {
     const info = await this.healthInfo(timeout);
     return !!info && info.app === "session-atlas";
   }
 
-  /** Ответ /health: {app, port, python} — или null, если на порту никого нет. */
+  /** The /health answer: {app, port, python}, or null when nothing listens on the port. */
   healthInfo(timeout = 2000) {
     return new Promise((resolve) => {
       const request = http.get(
@@ -166,7 +172,7 @@ class SessionAtlasPlugin extends Plugin {
           response.on("data", (chunk) => { body += chunk; });
           response.on("end", () => {
             if (response.statusCode !== 200) return resolve({ app: null });
-            try { resolve(JSON.parse(body)); } catch (error) { resolve({ app: null }); }
+            try { resolve(JSON.parse(body)); } catch { resolve({ app: null }); }
           });
         }
       );
@@ -175,10 +181,10 @@ class SessionAtlasPlugin extends Plugin {
     });
   }
 
-  // --- мост в терминал ---
+  // --- bridge to the terminal ---
 
   handleMessage(event) {
-    if (event.origin !== ATLAS_ORIGIN) return;
+    if (event.origin !== this.atlasOrigin()) return;
     const data = event.data;
     if (!data || data.source !== "session-atlas") return;
     if (data.type === "resume" || data.type === "new-session") {
@@ -220,14 +226,14 @@ class SessionAtlasPlugin extends Plugin {
       return;
     }
     if (data.type === "focus-tab" || data.type === "close-tab") {
-      // PID — только число: по нему ищется СВОЯ вкладка терминала, чужой процесс не трогаем.
+      // PID must be a number: it finds OUR terminal tab; a foreign process is never touched.
       if (!Number.isInteger(data.ptyPid) || data.ptyPid <= 1) return;
       const title = typeof data.title === "string" ? data.title.slice(0, 200) : "";
       this.actOnTab(data.type, data.ptyPid, title);
     }
   }
 
-  // --- вкладки терминала для вкладки «Активные» ---
+  // --- terminal tabs for the Active view ---
 
   async replyTabs(target) {
     if (!target || typeof target.postMessage !== "function") return;
@@ -237,7 +243,7 @@ class SessionAtlasPlugin extends Plugin {
       type: "tabs",
       tabs: tabs.map(({ pid, title }) => ({ ptyPid: pid, title })),
       health,
-    }, ATLAS_ORIGIN);
+    }, this.atlasOrigin());
   }
 
   async actOnTab(type, ptyPid, title) {
@@ -255,7 +261,7 @@ class SessionAtlasPlugin extends Plugin {
   }
 }
 
-// Методы терминала и уведомлений живут в своих файлах, но вызываются как методы плагина (this.app и т.д.).
+// Methods from the other files are mixed into the plugin class and run with the plugin as `this`.
 for (const methods of [TerminalMethods, InputMethods, NotifyMethods, RestoreMethods, AgentMethods,
                        GuardMethods, ExplorerMethods, RuntimeMethods, StatusLineMethods, ReloadMethods]) {
   for (const name of Object.getOwnPropertyNames(methods.prototype)) {
@@ -265,4 +271,4 @@ for (const methods of [TerminalMethods, InputMethods, NotifyMethods, RestoreMeth
   }
 }
 
-module.exports = SessionAtlasPlugin;
+export default SessionAtlasPlugin;

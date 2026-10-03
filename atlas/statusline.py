@@ -1,14 +1,15 @@
-"""Строка состояния Claude Code: модель и лимиты подписки; лимиты — ещё и в файл для каталога.
+"""Claude Code status line: model and subscription limits; the limits also go to a file for the catalog.
 
-Claude Code передаёт скрипту JSON на stdin, в нём `rate_limits` (окна 5 часов и 7 дней:
-`used_percentage`, `resets_at`). Больше нигде локально эти цифры не лежат, поэтому скрипт
-сохраняет их, а вкладка «Активные» показывает недельный лимит.
+Claude Code passes the script JSON on stdin with `rate_limits` (5-hour and 7-day windows:
+`used_percentage`, `resets_at`). These numbers exist nowhere else locally, so the script
+saves them, and the "Active" tab shows the weekly limit.
 
-Запускается отдельным файлом, без пакета `atlas`: так его зовёт Claude Code. Подключает его
-переключатель в настройках плагина (с согласия — это правка `~/.claude/settings.json`).
+It runs as a standalone file, without the `atlas` package: that is how Claude Code calls it. A toggle
+in the plugin settings connects it (with consent, since it edits `~/.claude/settings.json`).
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import sys
@@ -27,7 +28,7 @@ def atlas_home() -> str:
 
 
 def language(home: str | None = None) -> str:
-    """Язык подписей — тот же, что у каталога (config.json в папке данных)."""
+    """Label language matches the catalog's (config.json in the data folder)."""
     try:
         with open(os.path.join(home or atlas_home(), "config.json"), encoding="utf-8") as fh:
             value = json.load(fh).get("language")
@@ -43,11 +44,11 @@ def save_limits(limits: dict, home: str | None = None) -> None:
     fd, tmp = tempfile.mkstemp(dir=home, prefix=".limits-")
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
         json.dump(data, fh)
-    os.replace(tmp, os.path.join(home, LIMITS_FILE))     # читатель не увидит полфайла
+    os.replace(tmp, os.path.join(home, LIMITS_FILE))     # a reader never sees half a file
 
 
 def _has_window(limits) -> bool:
-    """Сохраняем, только если есть настоящее окно: мусор не должен затирать хороший файл."""
+    """Save only when a real window is present: junk must not overwrite a good file."""
     return isinstance(limits, dict) and any(
         isinstance(w, dict) and isinstance(w.get("used_percentage"), (int, float))
         for w in limits.values())
@@ -85,13 +86,11 @@ def main() -> int:
     except ValueError:
         data = {}
     if isinstance(data, dict) and _has_window(data.get("rate_limits")):
-        try:
+        with contextlib.suppress(OSError):  # the status line must not fail because of the file
             save_limits(data["rate_limits"])
-        except OSError:
-            pass                       # строка состояния не должна падать из-за файла
     try:
         print(line(data, language()) if isinstance(data, dict) else "")
-    except Exception:               # строка состояния не должна ронять ничего и никогда
+    except Exception:               # the status line must never break anything
         print("")
     return 0
 

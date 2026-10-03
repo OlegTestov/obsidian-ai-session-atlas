@@ -1,10 +1,11 @@
-// «Активные»: после перезапуска Obsidian — вернуть сессии, что были открыты во вкладках.
-// Классический скрипт: общий глобальный контекст с остальными файлами страницы.
-// Список ведёт плагин: страница спрашивает его и открывает каждую через `claude --resume`.
+// Active: after an Obsidian restart, bring back the sessions that were open in tabs.
+// Classic script: shares one global scope with the other page files.
+/* exported requestRestorable, handleRestoreMessage, canMove, moveButton -- used by other page scripts */
+// The plugin keeps the list: the page asks it and opens each one through `claude --resume`.
 let restorable = [];
 let restorableReady = false;
 let restoring = false;
-const RESTORE_GAP_MS = 800;           // вкладки открываются по одной: Terminal не любит залпы
+const RESTORE_GAP_MS = 800;           // tabs open one by one: Terminal does not like bursts
 
 function requestRestorable() {
   if (hostReady && !restorableReady) tellTabHost("list-restorable", {});
@@ -60,8 +61,8 @@ async function restoreAll() {
       tellHost("resume", { session_id: x.session_id, cwd: a.resume_cwd, command: a.resume_command,
                            title: x.title || card.title || "Claude" });
       done.push(x.session_id);
-      await new Promise(r => setTimeout(r, RESTORE_GAP_MS));
-    } catch (e) {
+      await new Promise(r => window.setTimeout(r, RESTORE_GAP_MS));
+    } catch {
       failed.push(x.title || x.session_id);
     }
   }
@@ -71,16 +72,16 @@ async function restoreAll() {
   renderRestoreBanner(failed.length
     ? i18n("active.restoreFailed", { names: failed.join(", ") })
     : i18n("active.restoreDone", { n: done.length }));
-  setTimeout(loadActive, 4000);
-  setTimeout(() => { if (!restorable.length) renderRestoreBanner(); }, 8000);
+  window.setTimeout(loadActive, 4000);
+  window.setTimeout(() => { if (!restorable.length) renderRestoreBanner(); }, 8000);
 }
 
-// --- перенос сессии из iTerm/VS Code во вкладку Obsidian ---
-// Resume рядом с живым процессом дал бы два процесса над одним транскриптом: сервер сначала
-// завершает сессию там, где она идёт, и только потом она открывается здесь.
+// --- moving a session from iTerm/VS Code into an Obsidian tab ---
+// Resume next to a live process would give two processes on one transcript: the server first
+// ends the session where it runs, and only then it opens here.
 
 function canMove(s, pid) {
-  // Приложение неизвестно — может, это и есть Obsidian: не предлагаем завершать вслепую.
+  // Unknown app: it may be Obsidian itself, so ending it blindly is not offered.
   return EMBEDDED && hostReady && !pid && !!s.host_app && s.host_app !== "Obsidian";
 }
 
@@ -114,8 +115,8 @@ function confirmMove(s) {
       tellHost("resume", { session_id: s.session_id, cwd: r.cwd, command: r.command,
                            title: s.title || "Claude" });
       $("#modal").close();
-      setTimeout(loadActive, 3000);
-      setTimeout(loadActive, 8000);
+      window.setTimeout(loadActive, 3000);
+      window.setTimeout(loadActive, 8000);
     });
   $("#m-copy").classList.add("hidden");
   $("#m-close").focus();

@@ -1,7 +1,9 @@
-"""Запросы к модели: язык и домены из настроек, выдержка — данные, а не инструкции."""
+"""Model prompts: language and domains from settings; the excerpt is data, not instructions."""
 from __future__ import annotations
 
 import os
+
+import pytest
 
 from atlas import classify, db, enrich, index, prompts
 from tests.conftest import write_config
@@ -18,11 +20,8 @@ def test_no_domains_means_domain_is_left_empty():
     write_config(os.environ["ATLAS_HOME"], {"domains": []})
     assert classify._verdict({"domain": "anything", "topic": "x", "confidence": 0.9})["domain"] is None
     write_config(os.environ["ATLAS_HOME"], {})
-    try:
+    with pytest.raises(ValueError):          # a domain outside the list is rejected
         classify._verdict({"domain": "anything", "topic": "x"})
-        assert False, "домен вне списка принят"
-    except ValueError:
-        pass
 
 
 def test_handoff_sections_follow_the_language():

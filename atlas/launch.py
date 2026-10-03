@@ -1,7 +1,7 @@
-"""Новая сессия из вкладки «Активные»: в какой папке и с каким первым запросом.
+"""New session from the "Active" tab: in which folder and with which first prompt.
 
-Папка — только из списка `workdirs`: страница присылает путь, и принимать произвольный нельзя —
-команда уйдёт в шелл вкладки терминала.
+The folder must come from the `workdirs` list: the page sends a path, and an arbitrary one is not
+accepted because the command goes to the terminal tab's shell.
 """
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from .messages import msg
 
 RECENT_LIMIT = 40
 MAX_PROMPT_CHARS = 20000
-# Временные и служебные папки новой сессией не открываем.
+# Temporary and system folders are not opened as a new session.
 SKIP_PREFIXES = ("/tmp/", "/private/tmp/", "/var/tmp/", "/private/var/tmp/", "/System/")
 
 
@@ -40,8 +40,8 @@ def _usable(path: str) -> bool:
 
 
 def workdirs(conn: sqlite3.Connection) -> list[dict]:
-    """Сначала папки, где недавно работал сам (по последней активности), потом папки заметок
-    и проекты из корней настроек."""
+    """First folders you worked in recently (by last activity), then note folders
+    and projects from the configured roots."""
     out: dict[str, dict] = {}
     rows = conn.execute(
         "SELECT cwd_last AS cwd, count(*) AS n, max(last_activity_at) AS last FROM sessions "
@@ -66,7 +66,7 @@ def workdirs(conn: sqlite3.Connection) -> list[dict]:
 
 
 class LaunchError(ValueError):
-    """Объяснение уходит пользователю как есть."""
+    """The message is shown to the user as is."""
 
 
 def new_session(conn: sqlite3.Connection, cwd: str, prompt: str) -> dict:
@@ -80,7 +80,7 @@ def new_session(conn: sqlite3.Connection, cwd: str, prompt: str) -> dict:
     session_id = str(uuid.uuid4())
     parts = ["claude", "--session-id", session_id]
     if prompt:
-        # Запрос с «-» в начале claude прочёл бы как флаг.
+        # claude would read a prompt starting with "-" as a flag.
         parts.append(" " + prompt if prompt.startswith("-") else prompt)
     command = f"cd {shlex.quote(cwd)} && " + " ".join(shlex.quote(p) for p in parts)
     title = (prompt.splitlines()[0][:60] if prompt else "") or label(cwd)

@@ -1,4 +1,4 @@
-/* Стили страницы Session Atlas. Размеры раскладок — классами: CSP не пускает style. */
+/* Session Atlas page styles. Layout sizes are classes: the CSP blocks style attributes. */
 :root{
   color-scheme: light dark;
   --bg:#fbfbfa; --panel:#fff; --ink:#1a1a1a; --dim:#6b6b6b; --line:#e4e4e1;
@@ -23,8 +23,8 @@ body{margin:0;font:14px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",syste
 #app.hidden,#active.hidden,#stats.hidden{display:none}
 [hidden]{display:none!important}
 #active{height:calc(100vh - 32px);display:flex;flex-direction:column;min-height:0}
-/* Компактно — 4 в ширину и 5 в высоту: ряд — пятая часть окна за вычетом панелей
-   (41 вкладки + 40 шапка + 44 фильтры), отступов и двух заголовков секций. */
+/* Compact: 4 wide and 5 high; a row is a fifth of the window minus the bars
+   (41 tabs + 40 header + 44 filters), the gaps and two section titles. */
 #active-grid{flex:1 1 auto;min-height:0;overflow-y:auto;padding:8px 12px;
   --row:calc((100vh - 176px) / 5)}
 .asec+.asec{margin-top:6px}
@@ -34,12 +34,12 @@ body{margin:0;font:14px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",syste
 .asec .none{font-size:12.5px;color:var(--dim);margin:0 0 6px}
 .agrid{display:grid;gap:10px;grid-template-columns:repeat(4,minmax(0,1fr));
   grid-auto-rows:max(150px,var(--row))}
-/* Подробно: колонки по ширине экрана, ровно два ряда на экран — 32 вкладки + 38 фильтры + 16
-   отступы сетки + 22 заголовок секции + 10 зазор = 118 px сверх двух карточек. */
+/* Detailed: columns by screen width, exactly two rows per screen: 32 tabs + 38 filters + 16
+   grid padding + 22 section title + 10 gap = 118 px beyond two cards. */
 .agrid.full{grid-template-columns:repeat(auto-fill,minmax(520px,1fr));
   grid-auto-rows:max(300px,calc((100vh - 118px) / 2))}
-/* Раскладка «столбцы × ряды на экран» из выбора сетки. Ряд — доля высоты за вычетом полос:
-   32 вкладки + 38 фильтры + 16 отступы + 22 заголовок секции = 108 px и зазоры 10 px. */
+/* Columns × rows per screen from the grid picker. A row is a share of the height minus the bars:
+   32 tabs + 38 filters + 16 padding + 22 section title = 108 px, plus 10 px gaps. */
 .agrid.c1{grid-template-columns:repeat(1,minmax(0,1fr))}
 .agrid.c2{grid-template-columns:repeat(2,minmax(0,1fr))}
 .agrid.c3{grid-template-columns:repeat(3,minmax(0,1fr))}
@@ -95,7 +95,7 @@ body{margin:0;font:14px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",syste
 .reply.mine .txt:not(.now){background:var(--accent-soft);border-radius:8px;padding:6px 9px;
   margin-top:4px;flex:0 1 auto}
 .reply.mine .txt.now{margin-top:6px}
-/* Markdown в ответе: плотно, в масштабе карточки. */
+/* Markdown in a reply: dense, at card scale. */
 .reply .txt.md{white-space:normal}
 .md p{margin:0 0 6px}
 .md p:last-child{margin-bottom:0}
@@ -163,6 +163,8 @@ body{margin:0;font:14px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",syste
   max-height:320px;display:flex;flex-direction:column;background:var(--panel);
   border:1px solid var(--line);border-radius:9px;box-shadow:0 6px 24px rgba(0,0,0,.14);padding:6px}
 .ms-pop.hidden{display:none}
+/* placed by placePop: fixed to the viewport, top and left set from the script */
+.lay-pop.placed,.ms-pop.placed{position:fixed}
 .ms-pop input[type=search]{margin:2px 2px 6px;width:auto}
 .ms-actions{display:flex;gap:6px;padding:0 2px 6px;border-bottom:1px solid var(--line);margin-bottom:4px}
 .ms-actions button{padding:2px 8px;font-size:12px}
@@ -186,8 +188,8 @@ body{margin:0;font:14px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",syste
   display:flex;flex-direction:column;gap:1px;min-height:0;min-width:0;overflow:hidden}
 .acard>*{flex:0 0 auto;min-width:0}
 .acard>.d{flex:0 0 auto}
-/* Ответ забирает всю свободную высоту и сжимается сам, поле ответа — всегда у нижнего края.
-   Правило общего вида .acard>* иначе перебивает их по порядку в файле. */
+/* The reply takes all free height and shrinks itself; the reply field stays at the bottom edge.
+   Otherwise the generic .acard>* rule overrides them by file order. */
 .acard>.reply{flex:1 1 auto;min-height:0}
 .acard>.answer{margin-top:auto}
 .acard .t{font-weight:600;line-height:1.3;cursor:pointer;overflow:hidden;white-space:nowrap;
@@ -215,12 +217,12 @@ h1{font-size:15px;margin:0 0 12px;letter-spacing:-.01em;display:flex;align-items
 #help-btn{border-radius:50%;width:20px;height:20px;padding:0;font-size:12px;line-height:1;
   color:var(--dim);display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto}
 #help-btn:hover{color:var(--accent);border-color:var(--accent)}
-/* Справка длиннее экрана: прокручивается тело, кнопка остаётся на виду.
-   display задаём ТОЛЬКО под [open]: браузер прячет закрытый диалог правилом
-   dialog:not([open]){display:none}, а селектор по идентификатору его перебивает —
-   диалог закрывался, но продолжал висеть на экране. */
+/* Help longer than the screen: the body scrolls, the button stays visible.
+   display is set ONLY under [open]: the browser hides a closed dialog with
+   dialog:not([open]){display:none}, and an id selector overrides it, so
+   the dialog would close yet stay on screen. */
 #help{max-width:640px;max-height:82vh;padding:16px 20px}
-/* display только под [open]: см. урок выше про специфичность. */
+/* display only under [open]: see the specificity note above. */
 #rename{max-width:520px}
 #rename[open]{display:block}
 #rename h3{margin:0 0 6px;font-size:16px}
@@ -280,9 +282,9 @@ mark{background:var(--mark);color:inherit;border-radius:2px;padding:0 1px}
 .block h4{margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:.06em;
   color:var(--dim)}
 .block h4 .src{text-transform:none;letter-spacing:0;font-weight:400}
-/* pre-wrap держит списки и таблицы запроса читаемыми, anywhere ломает длинный путь.
-   Без него путь в 178 символов раздвигает колонку грида (min-width:auto у ячейки) —
-   карточка уезжает вправо вместе с горизонтальной полосой. */
+/* pre-wrap keeps prompt lists and tables readable, anywhere breaks a long path.
+   Without it a 178-character path widens the grid column (min-width:auto on the cell),
+   and the card slides right with a horizontal scrollbar. */
 .quote{font-size:13px;margin:0 0 9px;padding-left:10px;border-left:2px solid var(--line);
   white-space:pre-wrap;overflow-wrap:anywhere}
 .quote i{display:block;font-style:normal;color:var(--dim);font-size:11.5px;margin-bottom:2px}
@@ -306,8 +308,8 @@ button:disabled{opacity:.45;cursor:not-allowed}
   gap:2px;min-width:220px;box-shadow:0 6px 24px rgba(0,0,0,.18)}
 #menu button{border:none;background:none;text-align:left;padding:7px 10px;border-radius:6px}
 #menu button:hover{background:var(--accent-soft)}
-/* Специфичность: #menu (1,0,0) сильнее .hidden (0,1,0), поэтому скрытие пишем тем же весом —
-   иначе меню висит открытым, а клик по «…» переключает класс вхолостую. */
+/* Specificity: #menu (1,0,0) beats .hidden (0,1,0), so hiding uses the same weight;
+   otherwise the menu stays open and a click on "…" toggles the class for nothing. */
 #menu.hidden{display:none}
 dialog{border:1px solid var(--line);border-radius:11px;background:var(--panel);color:var(--ink);
   max-width:780px;width:92vw;padding:20px}
@@ -323,7 +325,7 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
 #active-summary .link{white-space:nowrap}
 #active-summary .keys{background:none;border:0;padding:0;font:inherit;color:var(--accent);text-decoration:underline dotted;cursor:pointer}
 #maint .auto{display:flex;gap:6px;align-items:center;margin-top:8px;font-size:12px;color:var(--dim);cursor:pointer}
-/* диалог сессии в карточке */
+/* session dialog in the card */
 .acard .dialog{border-left:3px solid var(--warn);padding:4px 0 4px 8px;margin:2px 0;display:flex;
   flex-direction:column;gap:3px;font-size:12.5px;min-width:0}
 .acard .dialog .t{font-weight:600;cursor:default}
@@ -355,7 +357,7 @@ button.stop{color:var(--warn);border-color:var(--warn)}
 #active-filters .newsess{font-weight:600}
 .acard .reply .queued{font-size:12px;color:var(--accent);margin:0 0 2px}
 .acard .reply .who.bad{color:var(--warn);font-weight:600}
-/* лента сессии — панель справа */
+/* session feed: the right-hand panel */
 #feed{position:fixed;top:72px;right:0;bottom:0;width:min(560px,100vw);background:var(--panel);
   border-left:1px solid var(--line);box-shadow:-6px 0 18px rgba(0,0,0,.08);display:flex;
   flex-direction:column;z-index:20}
@@ -374,9 +376,9 @@ button.stop{color:var(--warn);border-color:var(--warn)}
 #feed .fstep{font-size:11.5px;cursor:default}
 button.feedbtn[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent)}
 .acard .head .feedbtn.mini{flex:0 0 auto;padding:1px 8px;font-size:12px;line-height:18px}
-/* на широком экране лента не закрывает карточки — сетка сужается */
+/* on a wide screen the feed does not cover the cards: the grid narrows */
 @media (min-width:1400px){#active.with-feed #active-grid{margin-right:min(560px,40vw)}}
-/* подсказки слэш-команд над полем ответа */
+/* slash-command hints above the reply field */
 .acard .answer{position:relative}
 .acard .answer .suggest{position:absolute;left:0;right:0;bottom:100%;margin-bottom:4px;max-height:260px;
   overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:8px;
@@ -387,42 +389,42 @@ button.feedbtn[aria-pressed="true"]{background:var(--accent-soft);border-color:v
 .acard .answer .sug b{flex:0 0 auto;font-weight:600}
 .acard .answer .sug span{color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .acard .answer .sug.on{background:var(--accent-soft)}
-/* контекст сессии и лимиты подписки */
+/* session context and subscription limits */
 .acard .ctx.mid{color:var(--accent)}
 .acard .ctx.warn{color:var(--warn);font-weight:600}
 #active-summary .limits.mid{color:var(--accent)}
 #active-summary .limits.warn{color:var(--warn);font-weight:600}
 #active-summary .limits.none{color:var(--dim);cursor:help}
-/* закрепить и скрыть */
+/* pin and hide */
 .acard .head .pin{flex:0 0 auto;background:none;border:0;padding:0 2px 0 0;font-size:14px;line-height:1;
   color:var(--dim);cursor:pointer}
 .acard .head .pin.on{color:var(--accent)}
 .acard .head .hidebtn.mini{flex:0 0 auto;padding:1px 8px;font-size:12px;line-height:18px}
-/* иконки в заголовке подробной карточки */
+/* icons in the detailed card header */
 .acard .head button.hico{flex:0 0 auto;width:24px;height:22px;padding:0;display:inline-flex;
   align-items:center;justify-content:center}
 .acard .head button.hico svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2.2;
   stroke-linecap:round;stroke-linejoin:round}
 .acard .head button.stop.hico svg{fill:currentColor;stroke:none}
-/* плашка восстановления после перезапуска */
+/* restore banner after a restart */
 #restore-banner{flex:0 0 auto;display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin:6px 12px 0;
   padding:6px 10px;border:1px solid var(--accent);border-radius:8px;background:var(--accent-soft);font-size:13px}
 #restore-banner.hidden{display:none}
 #restore-banner .note{color:var(--dim);font-size:12px}
-/* сервер не отвечает — плашка поверх, раскладку не двигает */
+/* server not answering: a banner on top that does not shift the layout */
 #server-banner{position:fixed;top:76px;left:50%;transform:translateX(-50%);z-index:50;display:flex;gap:10px;
   align-items:center;padding:8px 14px;border:1px solid var(--warn);border-radius:8px;background:var(--panel);
   box-shadow:0 6px 18px rgba(0,0,0,.15);font-size:13px;max-width:calc(100vw - 32px)}
 #server-banner.hidden{display:none}
 #server-banner .note{color:var(--dim);font-size:12px}
 .acard .head button.primary.hico{color:#fff}
-/* свои подсказки: быстрее системных */
+/* own tooltips: faster than the system ones */
 .tip{position:fixed;z-index:100;max-width:380px;padding:5px 8px;border-radius:6px;background:var(--ink);
   color:var(--bg);font-size:12px;line-height:1.35;white-space:pre-line;pointer-events:none;
   box-shadow:0 4px 14px rgba(0,0,0,.18)}
 .tip.hidden{display:none}
 .acard .answer .suggest{max-height:300px;overscroll-behavior:contain}
-/* ответ быстрой команды и выбор аргумента */
+/* quick command answer and argument choice */
 .acard .cmdout{border-left:3px solid var(--accent);padding:3px 0 3px 8px;margin:2px 0;display:flex;
   flex-direction:column;gap:3px;min-width:0}
 .acard .cmdout .who{display:flex;gap:6px;align-items:center;font-size:11.5px;color:var(--dim)}
@@ -435,7 +437,7 @@ button.feedbtn[aria-pressed="true"]{background:var(--accent-soft);border-color:v
 .acard .answer .argpick .lbl{font-size:12px;color:var(--dim)}
 .acard .answer .argpick button{padding:2px 9px;font-size:12px;line-height:18px}
 #active-summary .link{white-space:nowrap}
-/* Задачи агента на карточке: полоска сделанного и текущий шаг. */
+/* Agent tasks on the card: progress bar and the current step. */
 .acard .tasks{display:flex;align-items:center;gap:8px;font-size:12.5px;min-width:0}
 .acard .tasks .tbar{flex:0 0 70px;height:5px;border-radius:3px;background:var(--line);overflow:hidden}
 .acard .tasks .tfill{display:block;height:100%;background:var(--accent)}
@@ -443,7 +445,7 @@ button.feedbtn[aria-pressed="true"]{background:var(--accent-soft);border-color:v
 .acard .tasks.done .tfill{background:var(--dim)}
 .pill.task{border-color:var(--accent);color:var(--accent)}
 .pill.task.done{border-color:var(--line);color:var(--dim)}
-/* Недавно закрытые: строки, а не карточки — к ним возвращаются, а не следят. */
+/* Recently closed: rows, not cards; people return to them rather than watch them. */
 .asec.closed h3 .fold{border:none;background:none;padding:0;font:inherit;color:inherit;
   text-transform:inherit;letter-spacing:inherit;cursor:pointer}
 .clist{display:flex;flex-direction:column;gap:4px;margin-bottom:8px}
@@ -453,7 +455,7 @@ button.feedbtn[aria-pressed="true"]{background:var(--accent-soft);border-color:v
 .crow .ct{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}
 .crow .cm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dim);font-size:12px}
 .crow button{padding:2px 10px;font-size:12px}
-/* лента: виды «Шаги» и «Файлы» */
+/* feed: the Steps and Files views */
 #feed .fviews button{font-size:12px;line-height:1.3;padding:2px 9px}
 #feed .ffilter{display:flex;flex-wrap:wrap;gap:4px;padding:4px 0 6px;position:sticky;top:-8px;
   background:var(--panel);z-index:1}
@@ -485,20 +487,20 @@ button.feedbtn[aria-pressed="true"]{background:var(--accent-soft);border-color:v
 #feed .ffile .plus{color:#2f7a4a}
 #feed .ffile .minus{color:var(--warn)}
 @media (prefers-color-scheme:dark){ #feed .ffile .plus{color:#7fc79a} }
-/* переключатель из кнопок (segButtons): «Статистика», вид ленты */
+/* button switch (segButtons): Statistics, feed view */
 .seg{display:flex;border:1px solid var(--line);border-radius:7px;overflow:hidden;flex:0 0 auto}
 .seg button{border:none;border-radius:0;background:var(--panel);padding:3px 10px;font-size:12.5px;
   color:var(--dim)}
 .seg button+button{border-left:1px solid var(--line)}
 .seg button.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
-/* диалог «план готов»: текст плана, кнопки одобрения и поле замечаний */
+/* "plan ready" dialog: plan text, approve buttons and the feedback field */
 .acard .dialog.plan .plantxt{max-height:260px;overflow:auto;border:1px solid var(--line);border-radius:6px;
   padding:4px 10px;font-size:12.5px;background:var(--bg)}
 .acard .dialog.plan .opts button.on{background:var(--accent-soft);border-color:var(--accent)}
 .acard .dialog .planfb{display:flex;gap:6px;align-items:flex-end;margin-top:4px}
 .acard .dialog .planfb textarea{flex:1 1 auto;min-width:0;resize:vertical;font:inherit;font-size:12.5px;
   padding:4px 8px;border:1px solid var(--accent);border-radius:6px;background:var(--panel);color:var(--ink)}
-/* быстрый переход ⌘K */
+/* quick jump ⌘K */
 #jump{width:min(560px,92vw);padding:10px;border:1px solid var(--line);border-radius:10px;
   background:var(--panel);color:var(--ink);margin-top:12vh}
 #jump::backdrop{background:rgba(0,0,0,.25)}
@@ -511,12 +513,15 @@ button.feedbtn[aria-pressed="true"]{background:var(--accent-soft);border-color:v
 #jump .jrow.closed .jt{color:var(--dim)}
 #jump .jhint{margin:6px 2px 0;font-size:11.5px;color:var(--dim)}
 
-/* Подробная карточка: хвост переписки — одна колонка с общим скроллом, новое внизу. */
+/* Detailed card: the conversation tail, one column with a shared scroll, newest at the bottom. */
 .amsgs{flex:1 1 auto;min-height:0;overflow-y:auto;display:flex;flex-direction:column;margin-top:4px}
 .amsgs>.reply{flex:0 0 auto;min-height:auto}
 .amsgs>.reply .txt{flex:0 0 auto;overflow:visible}
 .amsgs>.hmsg{border-top:1px dashed var(--line)}
 .amsgs>.hmsg .who{opacity:.85}
+/* Sticks to the bottom edge of the chat while the reader is scrolled up. */
+.amsgs>.tonewest{position:sticky;bottom:6px;align-self:flex-end;margin-top:-28px;flex:0 0 auto;z-index:1;
+  font-size:11px;padding:2px 10px;border-radius:12px;box-shadow:0 1px 4px rgba(0,0,0,.18)}
 #feed-body .fearlier{display:block;margin:4px auto 10px;font-size:12px}
 #menu button.danger{color:var(--warn)}
 #m-ok.danger{background:var(--warn);border-color:var(--warn);color:#fff}

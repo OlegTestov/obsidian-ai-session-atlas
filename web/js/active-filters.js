@@ -1,25 +1,26 @@
-// «Активные»: фильтры-списки с галочками и выбор сетки.
-// Классический скрипт: общий глобальный контекст с остальными файлами страницы.
+// Active: checkbox filter lists and the grid picker.
+// Classic script: shares one global scope with the other page files.
+/* exported passes, parseLayout, buildFilters -- used by other page scripts */
 function passes(s, except) {
   return AtlasLogic.passes(s, activeFilter, except);
 }
 
-// Счётчик у значения — сколько сессий оно даст при остальных выбранных фильтрах.
+// The count next to a value: how many sessions it yields with the other selected filters.
 function optionsFor(key) {
   return AtlasLogic.filterOptions(activeSessions, activeFilter, key);
 }
 
-// Коротко, чтобы полоса влезала в строку: «Домен» или «Домен · 2»; выбранное — в подсказке.
-// Полоса фильтров прокручивается вбок, а прокручиваемый блок обрезает всё, что из него торчит:
-// выпадающее окно ставится поверх страницы, под свою кнопку (CSSOM — CSP это разрешает).
+// Short so the bar fits one line: "Domain" or "Domain · 2"; the selection goes into the tooltip.
+// The filter bar scrolls sideways, and a scrolling block clips everything that sticks out of it:
+// the dropdown sits above the page, under its button (CSSOM, which the CSP allows).
 function placePop(pop, btn) {
   const r = btn.getBoundingClientRect();
-  pop.style.position = "fixed";
+  pop.classList.add("placed");
   pop.style.top = (r.bottom + 4) + "px";
   pop.style.left = Math.max(6, Math.min(window.innerWidth - pop.offsetWidth - 6, r.left)) + "px";
 }
 
-// Что выбрано — только в подсказке: на кнопке лишь метка «фильтр включён».
+// The selection is only in the tooltip: the button carries just a "filter on" mark.
 function buttonContent(f) {
   const parts = [f.label];
   if (activeFilter[f.key].size) parts.push(el("span", "fdot", "●"));
@@ -33,8 +34,8 @@ function buttonHint(f) {
   return picked.length ? `${f.label}: ${picked.join(", ")}` : i18n("active.filterAll", { label: f.label });
 }
 
-// Счётчики списка от его же галочек не зависят — сам список при их смене не перерисовываем,
-// иначе под курсором пропадает элемент и сбрасывается прокрутка.
+// A list's counts do not depend on its own checkboxes, so the list is not redrawn when they change,
+// otherwise the item under the cursor vanishes and the scroll resets.
 function onFilterChange(fromKey) {
   writeHash();
   refreshFilterButtons(fromKey);
@@ -69,7 +70,7 @@ function layoutLabel() {
   return activeMode === "full" ? i18n("active.auto") : "4×5";
 }
 
-// Выбор сетки как вставка таблицы: ведёшь мышью по клеткам — подсвечивается прямоугольник.
+// Grid picker like inserting a table: moving over the cells highlights a rectangle.
 function buildLayoutPicker() {
   const wrap = el("div", "lay");
   const btn = el("button", "lay-btn");
@@ -123,7 +124,7 @@ function buildLayoutPicker() {
     btn.setAttribute("aria-expanded", String(open));
     if (open) placePop(pop, btn);
     if (open) {
-      // Поле под предел вида: 5 × 5 у компактного, 4 × 4 у подробного.
+      // The field follows the view's limit: 5 × 5 for compact, 4 × 4 for detailed.
       const max = LAYOUT_MAX[activeMode];
       grid.classList.toggle("m5", max === 5);
       cells.forEach(b => b.classList.toggle("off", +b.dataset.c > max || +b.dataset.r > max));
@@ -193,7 +194,7 @@ function buildFilters() {
     actions.append(all, none);
     const list = el("div", "ms-list");
     pop.append(actions, list);
-    pop.addEventListener("click", e => e.stopPropagation());   // клик внутри не закрывает
+    pop.addEventListener("click", e => e.stopPropagation());   // a click inside does not close it
     btn.addEventListener("click", e => {
       e.stopPropagation();
       const open = pop.classList.contains("hidden");
@@ -216,7 +217,7 @@ function buildFilters() {
     b.dataset.mode = value;
     b.addEventListener("click", () => {
       activeMode = value; writeHash(); refreshLayoutButton(); renderActive(null, true);
-      if (value === "full") loadActive();      // подробному виду нужен хвост переписки
+      if (value === "full") loadActive();      // the detailed view needs the conversation tail
     });
     mode.appendChild(b);
   });
@@ -233,8 +234,8 @@ function buildFilters() {
   const summary = el("span");
   summary.id = "active-summary";
   bar.append(reset, summary);
-  wheelScroll(bar);                       // не влезла в узкое окно — крутится колесом вбок
-  // Окно стоит поверх страницы: полоса сдвинулась или окно сменило размер — закрыть.
+  wheelScroll(bar);                       // does not fit a narrow window: scrolls sideways with the wheel
+  // The popup sits above the page: if the bar moved or the window resized, close it.
   bar.addEventListener("scroll", () => closeFilters());
   window.addEventListener("resize", () => closeFilters());
   refreshFilterButtons();
@@ -247,7 +248,7 @@ function refreshFilterButtons(skipKey) {
     ui.btn.replaceChildren(...buttonContent(f));
     ui.btn.title = buttonHint(f);
     ui.btn.classList.toggle("on", activeFilter[f.key].size > 0);
-    // Открытый список обновляем на месте: опрос раз в 5 секунд не должен его закрывать.
+    // An open list updates in place: the 5-second poll must not close it.
     if (f.key !== skipKey && !ui.pop.classList.contains("hidden")) {
       const top = ui.list.scrollTop;
       fillList(f);

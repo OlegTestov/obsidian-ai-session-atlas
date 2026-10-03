@@ -1,12 +1,11 @@
-"""Скрипт вкладки агента: что запускается при первом открытии и после перезапуска Obsidian.
+"""Agent tab script: what launches on first open and after an Obsidian restart.
 
-Вместо claude — заглушка, которая записывает свои аргументы. Реестр, папка транскриптов и
-рабочая папка — временные.
+claude is replaced by a stub that records its arguments. The registry, transcript folder and
+working folder are temporary.
 """
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 from pathlib import Path
 
@@ -43,7 +42,7 @@ def run(tmp_path, *args):
 
 
 def _tail(argv):
-    """Аргументы после общих флагов (дополнительные из настроек, --settings …)."""
+    """Arguments after the common flags (extra ones from settings, --settings …)."""
     i = argv.index("--settings")
     return argv[i + 2:]
 
@@ -51,7 +50,7 @@ def _tail(argv):
 def test_seed_resume_then_registry_wins(tmp_path):
     first = run(tmp_path, "claude", "inst-1", "resume", OLD)[-1]
     assert _tail(first) == ["--resume", OLD]
-    # Хук записал, что во вкладке уже другая сессия — перезапуск возвращает её, не стартовую.
+    # The hook recorded a different session in the tab, so a restart resumes it, not the initial one.
     (tmp_path / "projects" / "-some-project" / f"{NEW}.jsonl").write_text("{}\n", encoding="utf-8")
     env, work = _env(tmp_path)
     subprocess.run(["zsh", "-c", f'source "{SCRIPTS}/agent-registry-lib.zsh"; '
@@ -63,7 +62,7 @@ def test_seed_resume_then_registry_wins(tmp_path):
 def test_seed_new_passes_first_prompt_once(tmp_path):
     call = run(tmp_path, "claude", "inst-2", "new", NEW, "- сделай отчёт «x» $HOME `id`")[-1]
     assert _tail(call) == ["--session-id", NEW, "- сделай отчёт «x» $HOME `id`"]
-    # Транскрипта ещё нет (сессию закрыли сразу) — после перезапуска новая, запрос не повторяется.
+    # No transcript yet (session closed right away): a restart starts a new one without repeating the prompt.
     again = run(tmp_path, "claude", "inst-2", "new", NEW, "первый запрос")[-1]
     assert _tail(again)[0] == "--session-id" and "первый запрос" not in again
 
@@ -74,13 +73,13 @@ def test_fork_seed_forks(tmp_path):
 
 
 def test_missing_seed_session_starts_fresh(tmp_path):
-    call = run(tmp_path, "claude", "inst-4", "resume", NEW)[-1]      # такого транскрипта нет
+    call = run(tmp_path, "claude", "inst-4", "resume", NEW)[-1]      # no such transcript
     assert _tail(call)[0] == "--session-id" and _tail(call)[1] != NEW
 
 
 def test_ribbon_tab_without_seed_starts_a_new_session(tmp_path):
     call = run(tmp_path, "claude", "inst-5")[-1]
-    assert call[0] == "--settings" and _tail(call)[0] == "--session-id"      # без лишних флагов
+    assert call[0] == "--settings" and _tail(call)[0] == "--session-id"      # no extra flags
 
 
 def test_extra_args_come_from_settings_file_without_expansion(tmp_path):
@@ -109,12 +108,12 @@ def test_registry_without_transcript_starts_fresh_not_the_seed(tmp_path):
     env, work = _env(tmp_path)
     subprocess.run(["zsh", "-c", f'source "{SCRIPTS}/agent-registry-lib.zsh"; '
                     f'upsert_resume_id claude inst-8 {NEW}'], cwd=work, env=env, check=True)
-    call = run(tmp_path, "claude", "inst-8", "resume", OLD)[-1]       # у NEW транскрипта нет
+    call = run(tmp_path, "claude", "inst-8", "resume", OLD)[-1]       # NEW has no transcript
     assert _tail(call)[0] == "--session-id" and OLD not in call
 
 
 def test_terminal_modes_are_reset_after_the_agent_exits(tmp_path):
-    """Агент вышел, не отдав мышь обратно, — скрипт выключает её сам, иначе выделение мёртвое."""
+    """The agent exited without releasing the mouse; the script turns it off, otherwise selection is dead."""
     env, work = _env(tmp_path)
     out = subprocess.run(["zsh", str(SCRIPT), "claude", "inst-modes", "new", NEW], cwd=work, env=env,
                          check=True, capture_output=True, timeout=20).stdout

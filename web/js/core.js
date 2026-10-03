@@ -1,12 +1,15 @@
-// Общее: API, форматирование дат, адресная строка, чипы фильтров поиска.
-// Классический скрипт: общий глобальный контекст с остальными файлами страницы.
-const TOKEN = window.ATLAS_TOKEN;          // из встроенного скрипта страницы
+// Shared code: API, date formatting, the address bar, search filter chips.
+// Classic script: shares one global scope with the other page files.
+/* exported tellHost, LOW_CONFIDENCE, facets, api, fmtDateTime, ago, segmented -- used by other page scripts */
+/* exported loadStored, store, segButtons, hitSummary, renderPlan, writeHash -- used by other page scripts */
+/* exported readHash, query, renderChips -- used by other page scripts */
+const TOKEN = window.ATLAS_TOKEN;          // from the page's inline script
 const $ = s => document.querySelector(s);
 const el = (tag, cls, text) => { const n = document.createElement(tag);
   if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
 
-// Внутри Obsidian страница живёт во фрейме: тогда действие отдаём плагину, и он открывает
-// соседнюю вкладку терминала вместо того, чтобы человек копировал команду руками.
+// Inside Obsidian the page lives in a frame: the action goes to the plugin, which opens
+// a terminal tab next to it instead of a person copying the command by hand.
 const EMBEDDED = window.parent !== window;
 
 function tellHost(type, payload) {
@@ -26,14 +29,14 @@ async function api(path, body, signal) {
     ? { method:"POST", headers:{ "Content-Type":"application/json", "X-Atlas-Token":TOKEN,
                                   "X-Atlas-Lang":I18N.lang() },
         body:JSON.stringify(body) }
-    : { headers:{ "X-Atlas-Lang":I18N.lang() } };   // ответы сервера — на языке страницы
+    : { headers:{ "X-Atlas-Lang":I18N.lang() } };   // server answers in the page language
   if (signal) opts.signal = signal;
   let r;
   try {
-    r = await fetch(path, opts);
+    r = await window.fetch(path, opts);
   } catch (e) {
     if (e.name === "AbortError") throw e;
-    serverStatus(false);                     // сеть не ответила — сервер лежит
+    serverStatus(false);                     // the network did not answer: the server is down
     throw new Error(i18n("common.serverNoAnswer"));
   }
   serverStatus(true);
@@ -42,7 +45,7 @@ async function api(path, body, signal) {
   return data;
 }
 
-// В базе время в UTC. Показывать сырую строку — врать на смещение таймзоны.
+// Times in the database are UTC. Showing the raw string would be off by the timezone offset.
 function fmtDateTime(iso) {
   if (!iso) return "—";
   return new Date(iso).toLocaleString(I18N.locale(),
@@ -61,7 +64,7 @@ function ago(iso) {
   return new Date(iso).toLocaleDateString(I18N.locale());
 }
 
-// Фрагмент приходит кусками {t, hit}: символы «» были метками и путались с кавычками в тексте.
+// The snippet arrives in pieces {t, hit}: « » markers would clash with quotes in the text.
 function segmented(tag, cls, segs) {
   const box = el(tag, cls);
   (segs || []).forEach(s =>
@@ -69,19 +72,19 @@ function segmented(tag, cls, segs) {
   return box;
 }
 
-// Удобства одного браузера (выбор вида, черновики): пропадёт — не страшно, поэтому всё в try.
+// Single-browser conveniences (chosen view, drafts): losing them is harmless, so everything is in try.
 function loadStored(key, fallback) {
   try {
-    const v = JSON.parse(localStorage.getItem(key) || "null");
+    const v = JSON.parse(window.localStorage.getItem(key) || "null");
     return v === null ? fallback : v;
-  } catch (e) { return fallback; }
+  } catch { return fallback; }
 }
 
 function store(key, value) {
-  try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* приватное окно */ }
+  try { window.localStorage.setItem(key, JSON.stringify(value)); } catch { /* private window */ }
 }
 
-// Переключатель из кнопок: один вариант выбран. Не путать с segmented — та про подсветку.
+// A button switch: one option is selected. Not segmented, which is about highlighting.
 function segButtons(options, current, onPick, cls) {
   const box = el("div", "seg " + (cls || ""));
   box.setAttribute("role", "radiogroup");
@@ -108,7 +111,7 @@ function hitSummary(fields) {
     .map(([f, n]) => `${FIELD_NAMES[f] || f} ${n}`).join(" · ");
 }
 
-// Как понят запрос: без этого непонятно, почему «моделям» нашло «модели», а «13» — не «1359».
+// How the query was understood: otherwise it is unclear why one word form finds another and "13" does not find "1359".
 function renderPlan(plan, error) {
   const box = $("#qplan");
   box.replaceChildren();
@@ -128,7 +131,7 @@ function renderPlan(plan, error) {
   });
 }
 
-// --- состояние в адресной строке --------------------------------------------
+// --- state in the address bar ------------------------------------------------
 
 function writeHash() {
   const p = new URLSearchParams();
@@ -162,7 +165,7 @@ function readHash() {
   state.automation = p.get("auto") === "1";
   state.scope = p.get("scope") === "all" ? "all" : "prompts";
   state.order = p.get("o") === "relevance" ? "relevance" : "date";
-  state.view = p.get("view") || "search";        // неизвестный раздел setView заменит поиском
+  state.view = p.get("view") || "search";        // setView replaces an unknown section with search
   ACTIVE_FILTERS.forEach(({ key, hash }) => {
     activeFilter[key] = new Set((p.get(hash) || "").split("|").filter(Boolean));
   });
@@ -190,7 +193,7 @@ function query() {
   return p.toString();
 }
 
-// --- чипы активных фильтров -------------------------------------------------
+// --- active filter chips -----------------------------------------------------
 
 function renderChips(countText) {
   const box = $("#chips");

@@ -1,4 +1,4 @@
-"""Действия над сессией: команды восстановления и реестр джоб. Ничего не запускает молча."""
+"""Session actions: resume commands and the job registry. Nothing runs silently."""
 from __future__ import annotations
 
 import json
@@ -10,7 +10,7 @@ import subprocess
 import uuid
 from datetime import datetime, timezone
 
-from . import db, prompts
+from . import prompts
 from .messages import msg
 
 UUID_RE = re.compile(r"^[0-9a-fA-F-]{36}$")
@@ -28,7 +28,7 @@ def valid_session_id(value: str) -> bool:
 
 
 def resume_cwd(conn: sqlite3.Connection, session_id: str) -> str | None:
-    """Папка, из которой сессию заводили, а не последний cwd: Claude ищет сессию по проекту."""
+    """The folder the session was started from, not the last cwd: Claude looks up a session by project."""
     row = conn.execute(
         "SELECT cwds, cwd_last, source_path FROM sessions WHERE session_id=?", (session_id,)
     ).fetchone()
@@ -38,14 +38,14 @@ def resume_cwd(conn: sqlite3.Connection, session_id: str) -> str | None:
         cwds = json.loads(row["cwds"] or "[]")
     except json.JSONDecodeError:
         cwds = []
-    for candidate in cwds:                       # первый cwd — тот, под чей слаг лёг транскрипт
+    for candidate in cwds:                       # the first cwd is the one whose slug holds the transcript
         if candidate and os.path.isdir(candidate):
             return candidate
     return row["cwd_last"] if row["cwd_last"] and os.path.isdir(row["cwd_last"]) else None
 
 
 def resume_command(cwd: str | None, session_id: str, fork: bool = False) -> str | None:
-    """Каждый аргумент через POSIX-quoting: cd '<cwd>' ломается на апострофе в пути."""
+    """Every argument is POSIX-quoted: cd '<cwd>' breaks on an apostrophe in the path."""
     if not cwd or not valid_session_id(session_id):
         return None
     parts = ["claude", "--resume", session_id] + (["--fork-session"] if fork else [])
@@ -53,7 +53,7 @@ def resume_command(cwd: str | None, session_id: str, fork: bool = False) -> str 
 
 
 def new_session_command(cwd: str | None, new_id: str, handoff_path: str) -> str | None:
-    """Команда несёт реальный первый промпт, а не обещание его в документации."""
+    """The command carries the real first prompt, not just a promise of one in the docs."""
     if not cwd or not valid_session_id(new_id):
         return None
     prompt = prompts.resume(handoff_path)
@@ -62,7 +62,7 @@ def new_session_command(cwd: str | None, new_id: str, handoff_path: str) -> str 
 
 
 def open_in_terminal(cwd: str, command: str) -> tuple[bool, str]:
-    """Требует разрешения Automation в TCC. При отказе возвращаем ошибку, а не тишину."""
+    """Requires the Automation permission in TCC. On denial, return an error instead of silence."""
     script = (
         'tell application "Terminal"\n'
         f"  do script {json.dumps(command)}\n"
@@ -80,17 +80,17 @@ def open_in_terminal(cwd: str, command: str) -> tuple[bool, str]:
     return True, msg("terminal.sent")
 
 
-# --- переименование ---
+# --- rename ---
 
 MAX_TITLE = 200
 
 
 def rename_session(conn: sqlite3.Connection, session_id: str, title: str,
                    write_to_transcript: bool = True) -> dict:
-    """Пишет заголовок в каталог и, по желанию, в сам транскрипт.
+    """Writes the title to the catalog and, optionally, to the transcript itself.
 
-    Единственное место, где мы трогаем файл транскрипта. Только append одной строки того же
-    вида, что пишет сам Claude Code (`custom-title`) — никакой перезаписи и никакого усечения.
+    The only place that touches the transcript file. Only an append of one line in the same
+    form Claude Code writes itself (`custom-title`): no rewriting and no truncation.
     """
     title = " ".join((title or "").split())[:MAX_TITLE]
     if not title:
@@ -116,8 +116,8 @@ def rename_session(conn: sqlite3.Connection, session_id: str, title: str,
             try:
                 line = json.dumps({"type": "custom-title", "customTitle": title,
                                    "sessionId": session_id}, ensure_ascii=False) + "\n"
-                # Одна запись одним вызовом в режиме дописывания: живая сессия пишет в этот же
-                # файл, и обрывать её строку нельзя.
+                # One record in one call in append mode: a live session writes to this same
+                # file, and its line must not be cut.
                 with open(row["source_path"], "a", encoding="utf-8") as fh:
                     fh.write(line)
                 written = True
@@ -126,11 +126,11 @@ def rename_session(conn: sqlite3.Connection, session_id: str, title: str,
     return {"title": title, "written_to_transcript": written, "error": error}
 
 
-# --- реестр джоб ------------------------------------------------------------
+# --- job registry -----------------------------------------------------------
 
 def claim_job(conn: sqlite3.Connection, session_id: str, action_kind: str,
               content_hash: str) -> tuple[str, bool]:
-    """Возвращает (job_id, created). Повторное нажатие отдаёт тот же job_id, а не второй запуск."""
+    """Returns (job_id, created). A repeated click returns the same job_id, not a second run."""
     row = conn.execute(
         "SELECT job_id FROM jobs WHERE session_id=? AND action_kind=? AND content_hash=? "
         "AND state IN ('queued','running')",
@@ -146,7 +146,7 @@ def claim_job(conn: sqlite3.Connection, session_id: str, action_kind: str,
             (job_id, session_id, action_kind, content_hash, _now(), _now()),
         )
         conn.commit()
-    except sqlite3.IntegrityError:               # гонка двух запросов — побеждает первый
+    except sqlite3.IntegrityError:               # race between two requests: the first one wins
         conn.rollback()
         row = conn.execute(
             "SELECT job_id FROM jobs WHERE session_id=? AND action_kind=? AND content_hash=? "
@@ -173,7 +173,7 @@ def get_job(conn: sqlite3.Connection, job_id: str) -> dict | None:
 
 
 def cancel_job(conn: sqlite3.Connection, job_id: str) -> bool:
-    """Отмена — намерение, а не убийство процесса: рабочий проверяет флаг сам."""
+    """Cancel is an intent, not a process kill: the worker checks the flag itself."""
     cur = conn.execute(
         "UPDATE jobs SET state='cancel_requested', updated_at=? "
         "WHERE job_id=? AND state IN ('queued','running')",
@@ -188,11 +188,11 @@ def is_cancelled(conn: sqlite3.Connection, job_id: str) -> bool:
     return bool(row) and row["state"] == "cancel_requested"
 
 
-# --- запуск новой сессии ----------------------------------------------------
+# --- new session launch -----------------------------------------------------
 
 def register_pending_launch(conn: sqlite3.Connection, source_session_id: str,
                             handoff_path: str) -> str:
-    """derived_from появится, только когда транскрипт новой сессии реально обнаружится."""
+    """derived_from appears only once the new session's transcript is actually found."""
     new_id = str(uuid.uuid4())
     conn.execute(
         "INSERT INTO pending_launches (new_session_id, source_session_id, handoff_path, "
@@ -204,7 +204,7 @@ def register_pending_launch(conn: sqlite3.Connection, source_session_id: str,
 
 
 def confirm_launches(conn: sqlite3.Connection) -> int:
-    """Подтверждает те запуски, чьи сессии появились в каталоге."""
+    """Confirms the launches whose sessions have appeared in the catalog."""
     rows = conn.execute(
         "SELECT new_session_id FROM pending_launches WHERE confirmed_at IS NULL"
     ).fetchall()
@@ -239,7 +239,7 @@ def lineage(conn: sqlite3.Connection, session_id: str) -> dict:
 
 
 def actions_for(conn: sqlite3.Connection, session_id: str) -> dict:
-    """Всё, что нужно карточке: готовые команды и предупреждения, ничего не выполняя."""
+    """Everything a card needs: ready commands and warnings, without running anything."""
     cwd = resume_cwd(conn, session_id)
     row = conn.execute(
         "SELECT last_activity_at, content_hash FROM sessions WHERE session_id=?", (session_id,)

@@ -13,3 +13,20 @@ atlas = "atlas.cli:main"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py38"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B", "UP", "I", "SIM", "C4", "RUF"]
+ignore = [
+    "RUF001", "RUF002", "RUF003",  # Russian UI strings, test data and quoted word forms are Cyrillic on purpose
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Mutation snippets are verbatim copies of source lines (Python, JS, zsh): their length and backslashes must match.
+"tools/mutations.py" = ["E501", "W605"]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true

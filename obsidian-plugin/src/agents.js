@@ -1,14 +1,13 @@
-// Вкладки агентов: кнопки Claude Code и Codex на ленте и запуск сессий из каталога.
-// Все вкладки агентов открываются через один скрипт (.obsidian/scripts/agent-resume-terminal.zsh):
-// у вкладки есть свой id, скрипт помнит, какая сессия в ней была, и после перезапуска Obsidian
-// возвращает её. Подмешивается в класс плагина.
-const { Notice, addIcon } = require("obsidian");
-const path = require("path");
-const fsSync = require("fs");
-const { AGENT_VIEW_TYPE } = require("./constants");
+// Agent tabs: the Claude Code and Codex ribbon buttons and sessions launched from the catalog.
+// Every agent tab opens through one script (agent-resume-terminal.zsh): the tab has its own id,
+// the script remembers which session ran in it and brings it back after an Obsidian restart.
+// Mixed into the plugin class.
+import { Notice, addIcon } from "obsidian";
+import * as path from "path";
+import * as fsSync from "fs";
+import { AGENT_VIEW_TYPE } from "./constants";
 
 const SCRIPT_NAME = "agent-resume-terminal.zsh";
-const SCRIPT_REL = ".obsidian/scripts/" + SCRIPT_NAME;
 const AGENTS = { claude: "Claude Code", codex: "Codex" };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const AND = Symbol("&&");
@@ -20,15 +19,15 @@ const CODEX_ICON =
   + '<circle cx="62" cy="50" r="4" fill="currentColor" stroke="none" />'
   + '<path d="M38 62c6 8 18 8 24 0" /></g>';
 
-/** POSIX-кавычки — те же, что shlex.quote на сервере. */
+/** POSIX quoting, the same as shlex.quote on the server. */
 function shellQuote(text) {
   const s = String(text);
   return /^[A-Za-z0-9@%+=:,./_-]+$/.test(s) ? s : "'" + s.replace(/'/g, "'\"'\"'") + "'";
 }
 
 /**
- * Слова команды в формате shlex.quote: '…', "'" внутри, безопасные символы и «&&».
- * Всё прочее (;, |, $, обратные кавычки, \) — null: такую команду не разбираем.
+ * Command words in shlex.quote format: '…', "'" inside, safe characters and "&&".
+ * Anything else (;, |, $, backticks, \) gives null: such a command is not parsed.
  */
 function shellWords(text) {
   const out = [];
@@ -66,10 +65,10 @@ function shellWords(text) {
 }
 
 /**
- * Команда каталога → старт вкладки. Каталог отдаёт ровно такие:
- *   cd '<папка>' && claude --resume <id> [--fork-session]
- *   cd '<папка>' && claude --session-id <id> ['<первый запрос>']
- * {cwd, mode: resume | resume-fork | new, sessionId, prompt} или null.
+ * Catalog command → tab start. The catalog sends exactly these:
+ *   cd '<folder>' && claude --resume <id> [--fork-session]
+ *   cd '<folder>' && claude --session-id <id> ['<first prompt>']
+ * {cwd, mode: resume | resume-fork | new, sessionId, prompt} or null.
  */
 function parseLaunch(command) {
   const w = shellWords(String(command || ""));
@@ -87,14 +86,14 @@ function parseLaunch(command) {
   return null;
 }
 
-/** Аргументы профиля терминала: скрипт, вид агента, id вкладки и старт, если есть. */
+/** Terminal arguments: script, agent kind, tab id, and the start when there is one. */
 function agentArgs(scriptPath, kind, instance, seed) {
   const parts = ["exec", shellQuote(scriptPath), kind, instance];
   if (seed) {
     parts.push(seed.mode, seed.sessionId);
     if (seed.prompt) parts.push(shellQuote(seed.prompt));
   }
-  // -l -i: нужен профиль пользователя, иначе claude не найдётся в PATH.
+  // -l -i: the user's profile is needed, otherwise claude is not on PATH.
   return ["-l", "-i", "-c", parts.join(" ")];
 }
 
@@ -112,7 +111,7 @@ class AgentMethods {
       claude: this.addRibbonIcon("bot", this.t("agent.claude"), () => this.openAgent("claude")),
       codex: this.addRibbonIcon("codex-bot", this.t("agent.codex"), () => this.openAgent("codex")),
     };
-    // Выключенный агент — без кнопки и без команды в палитре; включение — сразу, без перезапуска.
+    // A disabled agent has no button and no palette command; enabling applies at once, without a restart.
     for (const kind of Object.keys(AGENTS)) {
       this.addCommand({ id: kind === "claude" ? "open-claude-code-terminal" : "open-codex-terminal",
                         name: this.t(`agent.${kind}.command`),
@@ -132,23 +131,23 @@ class AgentMethods {
 
   refreshAgentButtons() {
     for (const [kind, el] of Object.entries(this.agentRibbons || {})) {
-      if (el && el.style) el.style.display = this.agentEnabled(kind) ? "" : "none";
+      if (el && typeof el.toggle === "function") el.toggle(this.agentEnabled(kind));
     }
   }
 
-  /** Строка дополнительных аргументов — в файл, который читает скрипт вкладки. */
-  /** Первый запуск с этими настройками: аргументы, уже лежащие в файлах, переходят в настройки,
-   *  а не затираются пустыми. Возвращает true, если что-то взяли. */
+  /** First start with these settings: arguments already in the files move into the settings
+   *  instead of being overwritten with empty ones. Returns true when something was taken. */
   adoptAgentArgs() {
     const dir = path.join(this.dataDir(), "agent-args");
     const found = {};
     for (const kind of Object.keys(AGENTS)) {
-      try { found[kind] = fsSync.readFileSync(path.join(dir, kind), "utf8").trim(); } catch (e) { found[kind] = ""; }
+      try { found[kind] = fsSync.readFileSync(path.join(dir, kind), "utf8").trim(); } catch { found[kind] = ""; }
     }
     this.settings.agentArgs = found;
     return Object.values(found).some(Boolean);
   }
 
+  /** The extra-arguments line goes to the file the tab script reads. */
   writeAgentArgs() {
     const dir = path.join(this.dataDir(), "agent-args");
     fsSync.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -158,7 +157,7 @@ class AgentMethods {
     }
   }
 
-  /** Codex по умолчанию включён, только если он установлен. */
+  /** Codex is on by default only when it is installed. */
   async detectAgents() {
     if (!this.settings.agents) this.settings.agents = {};
     if (this.settings.agents.codex !== undefined) return;
@@ -168,23 +167,23 @@ class AgentMethods {
     this.refreshAgentButtons();
   }
 
-  /** Скрипт из распакованной сборки; при установке из репозитория — копия в vault. */
+  /** The script from the extracted build; for an install from the repository, the copy in the vault. */
   agentScriptPath() {
     const bundled = path.join(this.runtimeDir(), "scripts", SCRIPT_NAME);
     if (fsSync.existsSync(bundled)) return bundled;
     const vault = this.getVaultPath();
-    return vault ? path.join(vault, SCRIPT_REL) : "";
+    return vault ? path.join(vault, this.app.vault.configDir, "scripts", SCRIPT_NAME) : "";
   }
 
   /**
-   * Вкладка агента. Без opts — кнопка на ленте: профиль «Claude Code»/«Codex», папка vault.
-   * opts: {cwd, seed, label} — сессия из каталога: вкладка рядом, подпись — её название.
+   * An agent tab. Without opts it is the ribbon button: "Claude Code"/"Codex" title, vault folder.
+   * opts: {cwd, seed, label} is a session from the catalog, labeled with its title.
    */
   async openAgent(kind, opts = {}) {
     try {
       const script = this.agentScriptPath();
       if (!script || !fsSync.existsSync(script)) {
-        new Notice(this.t("agent.noScript", { path: script || SCRIPT_REL }));
+        new Notice(this.t("agent.noScript", { path: script || SCRIPT_NAME }));
         return false;
       }
       const instance = newInstanceId(kind);
@@ -206,4 +205,4 @@ class AgentMethods {
   }
 }
 
-module.exports = { AgentMethods, parseLaunch, agentArgs, shellQuote, shellWords, AGENTS, SCRIPT_REL };
+export { AgentMethods, parseLaunch, agentArgs, shellQuote, shellWords, AGENTS, SCRIPT_NAME };

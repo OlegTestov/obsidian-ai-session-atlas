@@ -1,4 +1,4 @@
-"""Запуск сервера, LaunchAgent и вход `atlas open`. launchd не наследует интерактивный PATH."""
+"""Server start, LaunchAgent and `atlas open`. launchd does not inherit the interactive PATH."""
 from __future__ import annotations
 
 import json
@@ -62,7 +62,7 @@ def health(port: int = server.PORT, timeout: float = 1.5) -> dict | None:
 
 
 def spawn(port: int = server.PORT) -> bool:
-    """Поднимает сервер отдельным процессом, если LaunchAgent не установлен или не сработал."""
+    """Starts the server as a separate process when the LaunchAgent is not installed or did not work."""
     out, err = _log_paths()
     workdir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     with open(out, "a") as o, open(err, "a") as e:
@@ -79,10 +79,10 @@ def spawn(port: int = server.PORT) -> bool:
 
 
 def ensure_running(port: int = server.PORT) -> tuple[bool, str]:
-    """Мёртвый сервер health-эндпоинтом не лечится — поэтому здесь он и поднимается."""
+    """A dead server cannot fix itself through the health endpoint, so it is started here."""
     if health(port):
-        return True, "уже работает"
-    return (True, "поднят") if spawn(port) else (False, "не поднялся, смотри server.err")
+        return True, "already running"
+    return (True, "started") if spawn(port) else (False, "failed to start, see server.err")
 
 
 def open_browser(port: int = server.PORT) -> tuple[bool, str]:
@@ -101,7 +101,7 @@ def install(port: int = server.PORT) -> str:
         fh.write(PLIST_TEMPLATE.format(
             label=label(), python=sys.executable, workdir=workdir,
             home=os.path.expanduser("~"),
-            # ~/.local/bin первым: там лежит claude, а launchd пользовательский PATH не наследует.
+            # ~/.local/bin first: claude lives there, and launchd does not inherit the user's PATH.
             path=os.path.expanduser("~/.local/bin")
                  + ":/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin",
             log=out, err=err))

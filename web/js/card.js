@@ -1,6 +1,6 @@
-// Карточка сессии во вкладке «Поиск».
-// Классический скрипт: общий глобальный контекст с остальными файлами страницы.
-// --- карточка ---------------------------------------------------------------
+// Session card on the Search tab.
+// Classic script: shares one global scope with the other page files.
+// --- card --------------------------------------------------------------------
 
 function kv(pairs) {
   const dl = el("dl", "kv");
@@ -12,7 +12,7 @@ function kv(pairs) {
   return dl;
 }
 
-// Главный блок собирается локально: он не должен зависеть от вызова модели.
+// The main block is built locally: it must not depend on a model call.
 function stateBlock(st) {
   const b = el("div", "block lead");
   b.appendChild(el("h4", null, i18n("card.whereStopped")));
@@ -56,7 +56,7 @@ function summaryBlock(art, cardLine, confidence) {
   h.textContent = i18n("card.doneHead",
     { state: i18n(art.fresh ? "card.fresh" : "card.stale"), model: art.model });
   let data = null;
-  try { data = JSON.parse(art.payload); } catch (_) {}
+  try { data = JSON.parse(art.payload); } catch { /* not JSON: data stays null */ }
   if (data) {
     b.appendChild(kv([[i18n("card.did"), data.did], [i18n("card.result"), data.result],
                       [i18n("card.open"), data.open], [i18n("card.outcome"), data.work_outcome]]));
@@ -86,7 +86,7 @@ function classifyBlock(s) {
   const row = el("div", "fix");
   const domain = document.createElement("select");
   domain.appendChild(new Option(i18n("card.domainKeep"), ""));
-  // Домены — из настроек пользователя (сервер отдаёт их в фасетах).
+  // Domains come from the user's settings (the server sends them in the facets).
   (facets.domain_options || facets.domains || []).forEach(d => domain.appendChild(new Option(d, d)));
   const topic = document.createElement("input");
   topic.type = "text"; topic.placeholder = i18n("card.topicPlaceholder"); topic.value = s.topic || "";
@@ -114,8 +114,8 @@ function classifyBlock(s) {
   return b;
 }
 
-// Одна основная кнопка, одна вторичная, остальное в меню: решение о продолжении
-// работы не должно выглядеть как выбор из четырёх равноправных вариантов.
+// One primary button, one secondary, the rest in a menu: the decision to continue
+// the work must not look like a choice among four equal options.
 function actionBar(s) {
   const bar = el("div", null); bar.id = "bar";
   const resume = el("button", "primary", i18n("card.resume"));
@@ -176,7 +176,7 @@ async function openCard(id) {
   frag.appendChild(summaryBlock(s.summary, s.card_line, s.topic_confidence));
 
   if (s.files && s.files.length) {
-    // Свёрнуто, как запросы и метаданные: длинный список не отодвигает остальное вниз.
+    // Collapsed, like prompts and metadata: a long list does not push the rest down.
     const b = el("details", "block");
     b.appendChild(el("summary", null, i18n("card.editedFiles", { n: s.files.length })));
     const ul = el("ul", "files");
@@ -205,7 +205,7 @@ async function openCard(id) {
   });
   frag.appendChild(prompts);
 
-  // Техническое — вниз и свёрнуто: при продолжении работы оно не нужно.
+  // Technical details go down and collapsed: continuing the work does not need them.
   const tech = el("details", "block");
   tech.appendChild(el("summary", null, i18n("card.metadata")));
   tech.appendChild(kv([
@@ -223,9 +223,9 @@ async function openCard(id) {
   card.replaceChildren(body, actionBar(s));
 }
 
-// Заголовок пишется и в каталог, и в сам транскрипт — Claude Code читает ту же запись.
-// Своё окно, а не prompt(): в Obsidian страница живёт в Electron, где prompt не поддержан
-// и клик молча не делает ничего.
+// The title goes both to the catalog and to the transcript itself: Claude Code reads the same record.
+// An own dialog, not prompt(): in Obsidian the page lives in Electron, where prompt is unsupported
+// and a click silently does nothing.
 function renameSession(s) {
   const input = $("#rename-input");
   const error = $("#rename-error");

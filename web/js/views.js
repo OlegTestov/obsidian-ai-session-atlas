@@ -1,12 +1,13 @@
-// Разделы страницы: вкладка сверху и её панель. Новый раздел — свой файл с registerView,
-// кнопка в #views и панель в index.html; переключение, адресная строка и обновление при
-// возврате на страницу — здесь, общие для всех.
-// Классический скрипт: общий глобальный контекст с остальными файлами страницы.
+// Page sections: a tab on top and its panel. A new section is its own file with registerView,
+// a button in #views and a panel in index.html; switching, the address bar and refresh on
+// return to the page live here, shared by all.
+// Classic script: shares one global scope with the other page files.
+/* exported registerView, refreshView -- used by other page scripts */
 const VIEWS = {};
 
 /**
- * name — ключ в адресе (#view=name). opts: tab, panel — селекторы; show() — раздел открыт или
- * страница снова видна; hide() — ушли с раздела; refresh() — сервер снова ответил.
+ * name is the address key (#view=name). opts: tab, panel are selectors; show() runs when the section
+ * opens or the page is visible again; hide() when leaving it; refresh() when the server answers again.
  */
 function registerView(name, opts) {
   VIEWS[name] = opts;
@@ -27,7 +28,7 @@ function setView(view) {
   if (VIEWS[view].show) VIEWS[view].show();
 }
 
-// Сервер снова ответил — перечитать то, что на экране.
+// The server answered again: reload what is on screen.
 function refreshView() {
   const v = VIEWS[state.view];
   const fn = v && (v.refresh || v.show);

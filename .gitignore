@@ -6,3 +6,6 @@ LOG.md
 .gstack/
 dist/
 node_modules/
+# Build outputs (npm run build); release assets are built by CI.
+/main.js
+/styles.css

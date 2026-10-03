@@ -1,11 +1,11 @@
-// Строки страницы: ответы сервера и плагина, которые видны на странице. Ключи — с префиксом «server.»; en и ru — одинаковый набор ключей.
-// Множественное число — массивом: ru [one, few, many], en [one, other]; {n} — само число.
+// Page strings: server and plugin answers shown on the page. Keys start with "server."; en and ru have the same key set.
+// Plurals are arrays: ru [one, few, many], en [one, other]; {n} is the number.
 (function (root) {
-  const I = typeof module !== "undefined" && module.exports ? require("./i18n.js") : root.I18N;
+  const I = root.I18N;
   I.add({
     en: {
     },
     ru: {
     },
   });
-})(typeof window !== "undefined" ? window : globalThis);
+})(window);

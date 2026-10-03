@@ -1,12 +1,13 @@
-"""Файлы сессии для ленты: что агент читал, правил и создавал — с сабагентами, за всю сессию.
+"""Session files for the feed: what the agent read, edited and created, incl. subagents, whole session.
 
-Считается по вызовам Read / Edit / MultiEdit / Write / NotebookEdit. Файлы, изменённые
-командами Bash (`sed -i`, `git checkout`), сюда не попадают — это видно в подсказке ленты.
-Транскрипт дочитывается с места прошлого прохода, как в costs.py: живую сессию опрашивают
-каждые несколько секунд, а файл бывает в сотни мегабайт.
+Counted from Read / Edit / MultiEdit / Write / NotebookEdit calls. Files changed by Bash
+commands (`sed -i`, `git checkout`) are not included; the feed tooltip says so.
+The transcript is read from where the last pass stopped, as in costs.py: a live session is
+polled every few seconds, and the file can be hundreds of megabytes.
 """
 from __future__ import annotations
 
+import contextlib
 import difflib
 import glob
 import json
@@ -14,7 +15,7 @@ import os
 
 TOOL_MARK = b'"tool_use"'
 MAX_DIFF_LINES = 4000
-_cache: dict[str, tuple] = {}         # путь → (inode, прочитано байт, {файл: счётчики}, cwd)
+_cache: dict[str, tuple] = {}         # path -> (inode, bytes read, {file: counters}, cwd)
 
 
 def _lines(text) -> list[str]:
@@ -22,7 +23,7 @@ def _lines(text) -> list[str]:
 
 
 def _changed_lines(old, new) -> tuple[int, int]:
-    """(добавлено, удалено) строк правкой old → new."""
+    """(added, removed) lines for an old -> new edit."""
     a, b = _lines(old), _lines(new)
     if len(a) + len(b) > MAX_DIFF_LINES:
         return len(b), len(a)
@@ -88,13 +89,11 @@ def _scan(path: str) -> tuple[dict, str | None]:
         with open(path, "rb") as fh:
             fh.seek(begin)
             blob = fh.read()
-        end = blob.rfind(b"\n") + 1               # недописанную строку — следующему проходу
+        end = blob.rfind(b"\n") + 1               # leave a partial line to the next pass
         for raw in blob[:end].split(b"\n"):
             if cwd is None and b'"cwd"' in raw:
-                try:
+                with contextlib.suppress(ValueError):
                     cwd = json.loads(raw).get("cwd")
-                except ValueError:
-                    pass
             if TOOL_MARK not in raw:
                 continue
             try:
@@ -109,7 +108,7 @@ def _scan(path: str) -> tuple[dict, str | None]:
 
 
 def session_files(path: str | None) -> dict:
-    """{cwd, files: [...]}: изменённые — сверху, по свежести; затем только прочитанные."""
+    """{cwd, files: [...]}: changed files first, newest first; then read-only ones."""
     if not path:
         return {"cwd": None, "files": []}
     merged: dict[str, dict] = {}
@@ -125,5 +124,5 @@ def session_files(path: str | None) -> dict:
             if f["last_at"] and (m["last_at"] is None or f["last_at"] > m["last_at"]):
                 m["last_at"] = f["last_at"]
     out = sorted(merged.values(), key=lambda f: f["last_at"] or "", reverse=True)
-    out.sort(key=lambda f: f["edit"] + f["write"] == 0)        # устойчиво: свежесть сохраняется
+    out.sort(key=lambda f: f["edit"] + f["write"] == 0)        # stable sort: recency order is kept
     return {"cwd": cwd, "files": out}

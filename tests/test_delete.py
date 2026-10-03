@@ -1,4 +1,4 @@
-"""Полное удаление сессии: файлы Claude Code, история ввода, данные каталога — и ничего чужого."""
+"""Full session deletion: Claude Code files, input history, catalog data — and nothing else."""
 from __future__ import annotations
 
 import json
@@ -19,13 +19,13 @@ def _conn(atlas_env):
 
 @pytest.fixture
 def claude(atlas_env, write_session, monkeypatch, tmp_path):
-    """Два транскрипта и следы сессии во всех местах Claude Code; сессий-процессов нет."""
+    """Two transcripts and session traces in every Claude Code location; no session processes."""
     monkeypatch.setattr(active, "SESSIONS_DIR", str(tmp_path / "sessions"))
     (tmp_path / "sessions").mkdir()
     for sid in (SID, OTHER):
         write_session("-Users-u-Code-demo", [user_text(f"работа {sid[:4]}"), assistant_text("ок")],
                       session_id=sid)
-    home = tmp_path                                  # claude_home = папка над projects
+    home = tmp_path                                  # claude_home = folder above projects
     sub = atlas_env["projects"] / "-Users-u-Code-demo" / SID / "subagents"
     sub.mkdir(parents=True)
     (sub / "agent-a.jsonl").write_text("{}\n")
@@ -70,7 +70,7 @@ def test_delete_removes_this_session_and_only_it(claude):
     assert (home / "todos" / f"{OTHER}-agent-{OTHER}.json").exists()
     lines = (home / "history.jsonl").read_text().splitlines()
     assert len(lines) == 3 and "мой запрос" not in "".join(lines) and lines[-1] == "не json"
-    assert (home / "history.jsonl").read_text().count(SID) == 1      # упоминание в чужой записи осталось
+    assert (home / "history.jsonl").read_text().count(SID) == 1      # the mention in another session's record stays
     for table in ("sessions", "sources", "fts", "user_overrides", "activity"):
         assert conn.execute(f"SELECT COUNT(*) FROM {table} WHERE session_id=?", (SID,)).fetchone()[0] == 0
     assert conn.execute("SELECT COUNT(*) FROM sessions WHERE session_id=?", (OTHER,)).fetchone()[0] == 1
@@ -93,7 +93,7 @@ def test_running_session_is_refused_and_untouched(claude, monkeypatch):
 def test_live_process_is_detected_from_session_files(claude, tmp_path):
     (tmp_path / "sessions" / "4242.json").write_text(json.dumps({"pid": 4242, "sessionId": SID}))
     assert delete.is_running(SID, table={4242: (1, "start")})
-    assert not delete.is_running(SID, table={})                 # процесс умер — можно удалять
+    assert not delete.is_running(SID, table={})                 # process is dead — deletion allowed
 
 
 def test_bad_id_never_reaches_the_disk(claude):
@@ -112,6 +112,7 @@ def test_route_needs_token_and_confirmation(claude, monkeypatch):
     import threading
     import urllib.error
     from http.server import ThreadingHTTPServer
+
     from atlas import server
     from tests.test_actions_security import _post
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
@@ -140,7 +141,7 @@ def test_route_needs_token_and_confirmation(claude, monkeypatch):
 
 
 def test_symlink_out_of_claude_folder_is_refused(claude, tmp_path_factory):
-    """Папка проекта — ссылка наружу: файл по ней не удаляем, удаление целиком отменяется."""
+    """The project folder is a symlink outward: no file is deleted through it, the whole deletion is cancelled."""
     outside = tmp_path_factory.mktemp("outside")
     victim = outside / f"{SID}.jsonl"
     victim.write_text("{}\n")

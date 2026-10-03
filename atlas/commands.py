@@ -1,4 +1,4 @@
-"""Слэш-команды для подсказок в поле ответа: встроенные Claude Code и твои скиллы и команды."""
+"""Slash commands for reply-box suggestions: Claude Code built-ins plus your skills and commands."""
 from __future__ import annotations
 
 import glob
@@ -6,9 +6,9 @@ import json
 import os
 import re
 
-from . import messages
+from . import messages, paths
 
-# Встроенные — с пояснением; порядок = частота использования. Английские — в BUILTIN_EN.
+# Built-ins with a description; order = frequency of use. English texts are in BUILTIN_EN.
 BUILTIN = (
     ("goal", "поставить цель: сессия работает, пока условие не выполнено"),
     ("effort", "усилие модели: low … max, ultracode"),
@@ -75,7 +75,7 @@ _FIELD = re.compile(r"^(name|description):\s*(.+)$", re.M)
 DESC_CHARS = 140
 
 
-# Те же описания по-английски — по имени команды; язык — как у страницы (messages).
+# The same descriptions in English, keyed by command name; the language follows the page (messages).
 BUILTIN_EN = {
     "goal": "set a goal: the session keeps working until the condition holds",
     "effort": "model effort: low … max, ultracode", "model": "switch the model",
@@ -112,7 +112,7 @@ def _frontmatter(path: str) -> dict:
     fields = dict(_FIELD.findall(m.group(1))) if m else {}
     if "description" not in fields:
         body = head[m.end():] if m else head
-        first = next((l.strip("# ").strip() for l in body.splitlines() if l.strip()), "")
+        first = next((line.strip("# ").strip() for line in body.splitlines() if line.strip()), "")
         if first:
             fields["description"] = first
     return {k: v.strip().strip("'\"") for k, v in fields.items()}
@@ -124,7 +124,7 @@ def _short(text: str) -> str:
 
 
 def _folder_commands(root: str, prefix: str, kind: str, command_kind: str | None = None) -> list[dict]:
-    """skills/<имя>/SKILL.md и commands/<имя>.md папки; имя — по папке и файлу."""
+    """A folder's skills/<name>/SKILL.md and commands/<name>.md; names come from folder and file."""
     out = []
     skills = os.path.join(root, "skills")
     if os.path.isdir(skills):
@@ -132,7 +132,7 @@ def _folder_commands(root: str, prefix: str, kind: str, command_kind: str | None
             md = os.path.join(skills, name, "SKILL.md")
             if name.startswith(("_", ".")) or not os.path.isfile(md):
                 continue
-            # Вызывается по имени папки: поле name у части скиллов другое (connect-chrome).
+            # Invoked by folder name: some skills have a different name field (connect-chrome).
             out.append({"name": prefix + name, "kind": kind,
                         "description": _short(_frontmatter(md).get("description", ""))})
     commands = os.path.join(root, "commands")
@@ -145,8 +145,8 @@ def _folder_commands(root: str, prefix: str, kind: str, command_kind: str | None
 
 
 def user_commands(home: str | None = None) -> list[dict]:
-    home = home or os.path.expanduser("~")
-    return _folder_commands(os.path.join(home, ".claude"), "", "skill", "command")
+    claude = os.path.join(home, ".claude") if home else paths.claude_dir()
+    return _folder_commands(claude, "", "skill", "command")
 
 
 def _json(path: str) -> dict:
@@ -159,16 +159,16 @@ def _json(path: str) -> dict:
 
 
 def plugin_commands(home: str | None = None) -> list[dict]:
-    """Скиллы и команды плагинов — `/плагин:имя`: включённые у тебя, проектные и от организации."""
-    home = home or os.path.expanduser("~")
-    plugins = os.path.join(home, ".claude", "plugins")
-    enabled = _json(os.path.join(home, ".claude", "settings.json")).get("enabledPlugins") or {}
+    """Plugin skills and commands as `/plugin:name`: enabled by you, project and organization ones."""
+    claude = os.path.join(home, ".claude") if home else paths.claude_dir()
+    plugins = os.path.join(claude, "plugins")
+    enabled = _json(os.path.join(claude, "settings.json")).get("enabledPlugins") or {}
     roots: dict[str, str] = {}
     installed = _json(os.path.join(plugins, "installed_plugins.json")).get("plugins") or {}
     for full, entries in installed.items():
         for entry in entries if isinstance(entries, list) else []:
             path = entry.get("installPath") if isinstance(entry, dict) else None
-            # Пользовательский — если включён; проектный включается в своём проекте.
+            # A user-scope plugin counts if enabled; a project-scope one is enabled in its project.
             if path and os.path.isdir(path) and (entry.get("scope") != "user" or enabled.get(full)):
                 roots.setdefault(full.split("@")[0], path)
     for manifest in glob.glob(os.path.join(glob.escape(plugins), "synced", "*", "*",
@@ -182,7 +182,7 @@ def plugin_commands(home: str | None = None) -> list[dict]:
     return out
 
 
-# Частые — первыми, остальное по алфавиту: так их не ищешь в длинном списке.
+# Frequent ones first, the rest alphabetically, so you do not hunt for them in a long list.
 FREQUENT = ("goal", "effort", "model", "compact", "context", "loop", "rewind", "usage")
 
 

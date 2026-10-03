@@ -1,13 +1,17 @@
-// Строки плагина на двух языках. По умолчанию — язык интерфейса Obsidian (он хранит его
-// в localStorage под ключом "language"; у английского ключа нет), в настройках — вручную.
+// Plugin strings in two languages. The default follows Obsidian's interface language
+// (getLanguage()); the settings can pin one.
+import { getLanguage } from "obsidian";
+
 const STRINGS = {
   ru: {
-    "atlas.open": "Открыть Session Atlas",
+    "atlas.open": "Открыть каталог сессий",
     "agent.claude": "Открыть Claude Code",
     "agent.codex": "Открыть Codex",
     "agent.claude.command": "Открыть терминал Claude Code",
     "agent.codex.command": "Открыть терминал Codex",
-    "agent.noScript": "Нет {path} — переустанови плагин: python3.11 tools/install_plugin.py",
+    "agent.noScript": "Нет {path} — перезапусти Obsidian или переустанови плагин из последнего релиза.",
+    "dialog.planReady": "План готов",
+    "dialog.multi": "Несколько вопросов разом — ответь во вкладке",
     "terminal.needPlugin": "Включи плагин Terminal — без него вкладку с сессией не открыть.",
     "terminal.noProfile": "Нет профиля терминала «{name}» в настройках плагина Terminal.",
     "terminal.opened": "Открыто: {label}",
@@ -24,7 +28,7 @@ const STRINGS = {
     "close.keep": "Оставить",
     "close.close": "Закрыть",
     "tab.gone": "Вкладка с этой сессией уже закрыта.",
-    // Причины отказа странице: она показывает их как есть.
+    // Refusal reasons for the page, which shows them as is.
     "input.badRequest": "неверный запрос",
     "input.tabClosed": "вкладка уже закрыта",
     "input.otherSession": "в этой вкладке другая сессия",
@@ -53,8 +57,6 @@ const STRINGS = {
     "server.down": "Сервер Session Atlas не отвечает.",
     "server.hint": "Причина — в уведомлении; после исправления нажми «Повторить».",
     "server.retry": "Повторить",
-    "legacy.enabled": "Session Atlas: выключи плагин «{name}» — его функции теперь здесь, "
-      + "потом переподними Session Atlas тумблером. Пока он включён, Session Atlas их не дублирует.",
     "notify.session": "сессия",
     "notify.waiting": "Session Atlas: «{title}» закончила и ждёт тебя",
     "notify.dialog": "Session Atlas: «{title}» ждёт решения в диалоге",
@@ -106,6 +108,7 @@ const STRINGS = {
     "cfg.sensitive.desc": "На строку: «vault:Область» или имя проекта. Такие сессии не уходят в модель автоматически.",
     "cfg.tickets": "Префиксы тикетов",
     "cfg.tickets.desc": "Через запятую: ABC, OPS — тогда ABC-123 станет тикетом сессии. Пусто — тикеты не ищутся.",
+    "cfg.tickets.placeholder": "Например: ABC, OPS",
     "ai.heading": "ИИ-функции",
     "ai.enabled": "Включить ИИ-функции",
     "ai.enabled.desc": "Темы и домены, «Что сделано», хендофф. Зовут твой claude — тратят твою подписку; отправка — после предпросмотра.",
@@ -134,12 +137,14 @@ const STRINGS = {
       + "Уже открытый файл не дублируется: переход к его вкладке.",
   },
   en: {
-    "atlas.open": "Open Session Atlas",
+    "atlas.open": "Open session catalog",
     "agent.claude": "Open Claude Code",
     "agent.codex": "Open Codex",
     "agent.claude.command": "Open Claude Code terminal",
     "agent.codex.command": "Open Codex terminal",
-    "agent.noScript": "{path} is missing — reinstall the plugin: python3.11 tools/install_plugin.py",
+    "agent.noScript": "{path} is missing — restart Obsidian or reinstall the plugin from the latest release.",
+    "dialog.planReady": "Plan ready",
+    "dialog.multi": "Several questions at once — answer in the tab",
     "terminal.needPlugin": "Enable the Terminal plugin first — a session tab needs it.",
     "terminal.noProfile": "Terminal profile not found: {name}",
     "terminal.opened": "Opened: {label}",
@@ -184,8 +189,6 @@ const STRINGS = {
     "server.down": "The Session Atlas server is not responding.",
     "server.hint": "The reason is in the notice; fix it and press Retry.",
     "server.retry": "Retry",
-    "legacy.enabled": "Session Atlas: disable the \"{name}\" plugin — its features live here now, "
-      + "then toggle Session Atlas off and on. While it is enabled, Session Atlas does not duplicate them.",
     "notify.session": "session",
     "notify.waiting": "Session Atlas: \"{title}\" finished and is waiting for you",
     "notify.dialog": "Session Atlas: \"{title}\" is waiting for a decision in a dialog",
@@ -237,6 +240,7 @@ const STRINGS = {
     "cfg.sensitive.desc": "Per line: \"vault:Area\" or a project name. Such sessions are never sent to the model automatically.",
     "cfg.tickets": "Ticket prefixes",
     "cfg.tickets.desc": "Comma-separated: ABC, OPS — then ABC-123 becomes a ticket of the session. Empty — no ticket search.",
+    "cfg.tickets.placeholder": "For example: ABC, OPS",
     "ai.heading": "AI features",
     "ai.enabled": "Enable AI features",
     "ai.enabled.desc": "Topics and domains, summaries, handoffs. They call your claude and spend your subscription; sending happens after a preview.",
@@ -267,7 +271,7 @@ const STRINGS = {
 };
 const LANGUAGES = ["ru", "en"];
 
-/** Язык: выбор в настройках, иначе язык Obsidian; всё, кроме русского, — английский. */
+/** Language: the settings choice, else Obsidian's language; anything but Russian means English. */
 function resolveLanguage(setting, obsidianLanguage) {
   if (LANGUAGES.includes(setting)) return setting;
   return String(obsidianLanguage || "").toLowerCase().startsWith("ru") ? "ru" : "en";
@@ -275,17 +279,17 @@ function resolveLanguage(setting, obsidianLanguage) {
 
 function obsidianLanguage() {
   try {
-    return window.localStorage.getItem("language") || "en";
-  } catch (error) {
+    return getLanguage() || "en";
+  } catch {
     return "en";
   }
 }
 
-/** t(lang, key, {vars}) — строка с подстановкой {имя}; нет перевода — английская, нет и её — ключ. */
+/** t(lang, key, {vars}): the string with {name} filled in; no translation → English; none at all → the key. */
 function translate(lang, key, vars) {
   const table = STRINGS[lang] || STRINGS.en;
   const text = key in table ? table[key] : (key in STRINGS.en ? STRINGS.en[key] : key);
   return text.replace(/\{(\w+)\}/g, (m, name) => (vars && name in vars ? String(vars[name]) : m));
 }
 
-module.exports = { STRINGS, LANGUAGES, resolveLanguage, obsidianLanguage, translate };
+export { STRINGS, LANGUAGES, resolveLanguage, obsidianLanguage, translate };

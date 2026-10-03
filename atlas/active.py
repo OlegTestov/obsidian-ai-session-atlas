@@ -1,8 +1,8 @@
-"""Активные сессии: живые процессы Claude Code по файлам `~/.claude/sessions/<pid>.json`.
+"""Active sessions: live Claude Code processes found via `~/.claude/sessions/<pid>.json`.
 
-Сам транскрипт не говорит, открыта ли сессия (`lsof` пуст — файл дописывается и закрывается).
-А Claude Code пишет на каждый процесс файл с `sessionId`, `startedAt`, `kind` и `status`.
-Файл переживает свой процесс, поэтому живость проверяется по PID и времени его старта.
+The transcript does not show if a session is open (`lsof` is empty: each write opens and closes it).
+Claude Code writes a file per process with `sessionId`, `startedAt`, `kind` and `status`.
+The file outlives its process, so liveness is checked by PID and the process start time.
 """
 from __future__ import annotations
 
@@ -15,32 +15,32 @@ import subprocess
 import time
 from datetime import datetime, timedelta, timezone
 
-from . import costs, prompt_queue, search, tasks
+from . import costs, paths, prompt_queue, search, tasks
 from .parse import COMPACT_PREFIX
 from .resolve import HEADLESS_ENTRYPOINTS
 
-SESSIONS_DIR = os.environ.get("ATLAS_CLAUDE_SESSIONS", os.path.expanduser("~/.claude/sessions"))
-TAIL_BYTES = 256 * 1024     # последнее сообщение ищется в хвосте, а не во всём файле
+SESSIONS_DIR = os.environ.get("ATLAS_CLAUDE_SESSIONS", os.path.join(paths.claude_dir(), "sessions"))
+TAIL_BYTES = 256 * 1024     # the last message is searched in the tail, not the whole file
 MAX_ANCESTORS = 32
 
 
 def process_table() -> dict[int, tuple]:
-    """pid → (ppid, время старта, команда). `TZ=UTC`: Claude Code пишет `procStart` в UTC."""
+    """pid → (ppid, start time, command). `TZ=UTC`: Claude Code writes `procStart` in UTC."""
     out = subprocess.run(["ps", "-axo", "pid=,ppid=,lstart=,command="], capture_output=True,
                          text=True, env=dict(os.environ, TZ="UTC", LC_ALL="C"), timeout=10).stdout
     table = {}
     for line in out.splitlines():
-        parts = line.split(None, 7)          # pid, ppid, 5 полей lstart, команда
+        parts = line.split(None, 7)          # pid, ppid, 5 lstart fields, command
         if len(parts) >= 7 and parts[0].isdigit() and parts[1].isdigit():
             table[int(parts[0])] = (int(parts[1]), " ".join(parts[2:7]),
                                     parts[7] if len(parts) > 7 else "")
     return table
 
 
-# Фоновая команда Claude Code (Monitor, Bash в фоне) — дочерний шелл со снимком окружения.
-# MCP-серверы тоже дети процесса, но запускаются своей командой.
+# A Claude Code background command (Monitor, background Bash) is a child shell with an env snapshot.
+# MCP servers are child processes too, but they run their own command.
 SHELL_TASK_MARK = "/.claude/shell-snapshots/snapshot-"
-AGENT_FRESH_SECONDS = 90       # сабагент пишет транскрипт, пока работает
+AGENT_FRESH_SECONDS = 90       # a subagent writes its transcript while it works
 
 
 def shell_tasks(pid: int, table: dict) -> int:
@@ -63,16 +63,16 @@ def live_subagents(transcript: str | None, now: float | None = None) -> int:
     return count
 
 
-# Что разбудит сессию без тебя: /loop (ScheduleWakeup, CronCreate) и /goal.
+# What wakes a session without you: /loop (ScheduleWakeup, CronCreate) and /goal.
 _SCHEDULE_MARKS = (b'"ScheduleWakeup"', b'"CronCreate"', b'"CronDelete"', b'goal_status')
 SCHEDULE_TAIL = 4 * 1024 * 1024
 
 
-_schedule_cache: dict[str, tuple] = {}     # путь → (inode, размер, будильник, cron, цель)
+_schedule_cache: dict[str, tuple] = {}     # path → (inode, size, wakeup, cron, goal)
 
 
 def _marked_lines(blob: bytes):
-    """Только строки с метками — поиском по байтам, без разрезания всего хвоста на строки."""
+    """Only lines with markers, found by byte search without splitting the whole tail into lines."""
     starts = set()
     for mark in _SCHEDULE_MARKS:
         pos = blob.find(mark)
@@ -85,7 +85,7 @@ def _marked_lines(blob: bytes):
 
 
 def schedule_state(path: str | None, now: float | None = None) -> dict:
-    """Будильник /loop, живые cron-задания и активная цель /goal — по хвосту транскрипта."""
+    """The /loop wakeup, live cron jobs and the active /goal, read from the transcript tail."""
     out = {"wake_at": None, "crons": 0, "goal": None}
     if not path:
         return out
@@ -133,7 +133,7 @@ def schedule_state(path: str | None, now: float | None = None) -> dict:
 
 
 def activity(status: str | None, background: dict) -> str:
-    """busy — делает ход; background — ход закончен, но его разбудит фон; waiting — диалог."""
+    """busy: taking a turn; background: done, background work wakes it; waiting: a dialog."""
     if status in ("busy", "shell"):
         return "busy"
     if status == "waiting":
@@ -145,14 +145,14 @@ def activity(status: str | None, background: dict) -> str:
 
 
 def _alive(pid: int, proc_start: str | None, table: dict) -> bool:
-    """PID переиспользуется: совпасть должно и время старта, иначе это чужой процесс."""
+    """PIDs get reused: the start time must match too, otherwise it is another process."""
     if pid not in table:
         return False
     return proc_start is None or table[pid][1] == " ".join(proc_start.split())
 
 
 def ancestors(pid: int, table: dict) -> list[int]:
-    """Цепочка родителей: по ней страница находит вкладку терминала, в которой живёт сессия."""
+    """Parent chain: the page uses it to find the terminal tab the session lives in."""
     chain, seen = [], {pid}
     current = table.get(pid, (0, ""))[0]
     while current > 1 and current not in seen and len(chain) < MAX_ANCESTORS:
@@ -168,20 +168,20 @@ def _iso_ms(ms) -> str | None:
     return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).isoformat()
 
 
-# Не реплики разговора: их пишет не человек и не ответ Claude, а механика вокруг.
+# Not conversation messages: written by the machinery around, not by a human or Claude's reply.
 NOT_A_MESSAGE = ("Another Claude session sent a message", "<task-notification>",
                  "<teammate-message", COMPACT_PREFIX,
-                 # Обвязка вокруг команд: вывод /goal, заметка о хуке, предупреждения CLI.
+                 # Wrappers around commands: /goal output, hook notes, CLI warnings.
                  "<local-command-stdout>", "<local-command-stderr>", "<local-command-caveat>",
                  "A session-scoped Stop hook is now active", "Caveat: The messages below",
                  "[Request interrupted by user")
-# Esc во вкладке или «Стоп» в карточке: Claude Code пишет это user-записью. Не реплика, но
-# после неё твой запрос уже не «ждёт ответа» — он прерван.
+# Esc in the tab or "Stop" on the card: Claude Code writes this as a user record. Not a message, but
+# after it your request no longer "awaits a reply": it is interrupted.
 INTERRUPTED = "[Request interrupted by user"
 _COMMAND_RE = re.compile(r"<command-name>\s*(/?[^<\s]+)\s*</command-name>")
 _ARGS_RE = re.compile(r"<command-args>(.*?)</command-args>", re.S)
 _PASTED_RE = re.compile(r"</?pasted_content[^>]*>")
-TAIL_MAX = 8 * 1024 * 1024     # дальше не ищем: у живой сессии реплика найдётся раньше
+TAIL_MAX = 8 * 1024 * 1024     # search stops here: a live session has a message closer to the end
 
 
 def _text_of(content) -> str:
@@ -194,8 +194,8 @@ def _text_of(content) -> str:
 
 
 def prompt_text(content) -> str:
-    """Твоя реплика для карточки: слэш-команда — как ты её набрал, без служебных тегов."""
-    # Вставленный текст Claude Code оборачивает тегами — показываем сам текст.
+    """Your message for the card: a slash command as you typed it, without service tags."""
+    # Claude Code wraps pasted text in tags; show the text itself.
     text = _PASTED_RE.sub("", _text_of(content)).strip()
     m = _COMMAND_RE.search(text)
     if m:
@@ -212,10 +212,10 @@ def _images_in(content) -> int:
 
 
 def is_message(rec: dict) -> bool:
-    """Реплика разговора: твой запрос или текстовый ответ Claude.
+    """A conversation message: your request or a text reply from Claude.
 
-    Результаты тулов, уведомления сабагентов и сводки компактации дописываются без тебя —
-    по ним «последнее сообщение» показывало «только что» у сессии, где никто не писал.
+    Tool results, subagent notifications and compaction summaries are appended without you;
+    counting them would make "last message" show "just now" for a session where nobody wrote.
     """
     kind = rec.get("type")
     if kind not in ("user", "assistant") or not isinstance(rec.get("timestamp"), str):
@@ -228,7 +228,7 @@ def is_message(rec: dict) -> bool:
     return kind == "assistant" or not text.startswith(NOT_A_MESSAGE)
 
 
-PREVIEW_CHARS = 1000         # сколько из последнего ответа Claude показывать в карточке
+PREVIEW_CHARS = 1000         # how much of Claude's last reply the card shows
 
 
 def _progress_of(rec: dict) -> str | None:
@@ -244,9 +244,9 @@ def _progress_of(rec: dict) -> str | None:
 
 
 def last_messages(path: str | None) -> dict:
-    """Время последней реплики и последний текстовый ответ Claude — по хвосту транскрипта.
+    """Time of the last message and Claude's last text reply, read from the transcript tail.
 
-    Индекс догоняет с задержкой, поэтому читаем сам файл. Реплика — см. `is_message`.
+    The index lags behind, so the file itself is read. Message: see `is_message`.
     """
     out = {"last_at": None, "reply": None, "reply_at": None, "progress": None,
            "progress_at": None, "prompt": None, "prompt_at": None, "prompt_images": 0,
@@ -264,11 +264,11 @@ def last_messages(path: str | None) -> dict:
                     try:
                         rec = json.loads(raw)
                     except ValueError:
-                        continue      # первая строка окна обрезана, последняя может дописываться
+                        continue      # first line of the window is cut; the last may be mid-write
                     if not isinstance(rec, dict):
                         continue
-                    # Opus 5.5 пишет заметки между вызовами тулов блоками thinking с текстом:
-                    # у работающей сессии это «что делает сейчас».
+                    # Opus 5.5 writes notes between tool calls as thinking blocks with text:
+                    # for a working session this is "what it is doing now".
                     if out["progress"] is None:
                         note = _progress_of(rec)
                         if note:
@@ -281,7 +281,7 @@ def last_messages(path: str | None) -> dict:
                         continue
                     if out["last_at"] is None:
                         out["last_at"] = rec["timestamp"]
-                    # Твоё сообщение после последнего ответа Claude: он ещё не ответил на него.
+                    # Your message after Claude's last reply: Claude has not answered it yet.
                     if rec["type"] == "user" and out["prompt"] is None:
                         content = (rec.get("message") or {}).get("content")
                         out["prompt"] = prompt_text(content)
@@ -293,7 +293,7 @@ def last_messages(path: str | None) -> dict:
                         return out
                 if window >= size or window >= TAIL_MAX:
                     return out
-                window *= 4           # хвост из одних вызовов тулов — смотрим глубже
+                window *= 4           # a tail made only of tool calls: look deeper
     except OSError:
         return out
 
@@ -306,10 +306,10 @@ FENCE = "```"
 
 
 def markdown_tail(text: str, limit: int = PREVIEW_CHARS) -> str:
-    """Хвост ответа для карточки — так, чтобы Markdown в нём не разъехался.
+    """The reply tail for the card, cut so that its Markdown does not break.
 
-    Режем по началу строки, а не посреди слова или `**жирного**`; если обрез пришёлся внутрь
-    блока кода, открываем его заново — иначе остаток ответа отрисовался бы кодом.
+    Cuts at a line start, not mid-word or inside `**bold**`; if the cut lands inside a
+    code block, the block is reopened, otherwise the rest of the reply would render as code.
     """
     if len(text) <= limit:
         return text
@@ -324,7 +324,7 @@ def markdown_tail(text: str, limit: int = PREVIEW_CHARS) -> str:
 
 
 def last_reply(conn: sqlite3.Connection, session_id: str) -> dict | None:
-    """Последний ответ Claude целиком — для «показать целиком» в карточке."""
+    """Claude's full last reply, for "show in full" on the card."""
     from .index import PROJECTS_ROOT
     path = _transcript(conn, session_id, PROJECTS_ROOT)
     if not path:
@@ -356,15 +356,15 @@ def _read_files(sessions_dir: str) -> list[dict]:
 
 
 def is_interactive(data: dict) -> bool:
-    """Фоновые прогоны (`claude -p`, SDK, ревьюеры, хуки) — не вкладки человека."""
+    """Background runs (`claude -p`, SDK, reviewers, hooks) are not human tabs."""
     return data.get("kind") == "interactive" and data.get("entrypoint") not in HEADLESS_ENTRYPOINTS
 
 
 def list_active(conn: sqlite3.Connection, sessions_dir: str | None = None,
                 projects_root: str | None = None, table: dict | None = None) -> list[dict]:
-    """Живые интерактивные сессии, сверху — с самым свежим сообщением."""
+    """Live interactive sessions, the one with the most recent message first."""
     from .index import PROJECTS_ROOT
-    from .relocate import host_app            # relocate сам опирается на этот модуль
+    from .relocate import host_app  # relocate itself depends on this module
     sessions_dir = sessions_dir or SESSIONS_DIR
     projects_root = projects_root or PROJECTS_ROOT
     table = process_table() if table is None else table
@@ -383,7 +383,7 @@ def list_active(conn: sqlite3.Connection, sessions_dir: str | None = None,
         plan = schedule_state(path)
         background = {"shells": shell_tasks(pid, table), "agents": live_subagents(path),
                       "wake_at": plan["wake_at"], "crons": plan["crons"], "goal": plan["goal"]}
-        # Индекс не подмешиваем: его last_activity_at считает и служебные записи.
+        # The index is not mixed in: its last_activity_at also counts service records.
         last = tail
         out.append({
             "session_id": sid,
@@ -393,7 +393,7 @@ def list_active(conn: sqlite3.Connection, sessions_dir: str | None = None,
             "status": data.get("status"),
             "activity": activity(data.get("status"), background),
             "background": background,
-            # waiting — открыт диалог (вопрос с вариантами, разрешение на команду).
+            # waiting: a dialog is open (a multiple-choice question, a command permission).
             "waiting_for": data.get("waitingFor") if data.get("status") == "waiting" else None,
             "cwd": data.get("cwd"),
             "indexed": bool(meta),
@@ -406,7 +406,7 @@ def list_active(conn: sqlite3.Connection, sessions_dir: str | None = None,
             "tickets": meta.get("tickets", []),
             "sensitivity": meta.get("sensitivity"),
             "human_turns": meta.get("human_turns"),
-            # Записано Claude Code при выходе (на дату) и оценка сейчас — досчёт по токенам.
+            # Recorded by Claude Code on exit (as of a date) and the current estimate from tokens.
             "cost_usd": cost["recorded"] if cost["recorded"] is not None else meta.get("cost_usd"),
             "cost_recorded_at": cost["recorded_at"],
             "cost_now": cost["now"],
@@ -417,7 +417,7 @@ def list_active(conn: sqlite3.Connection, sessions_dir: str | None = None,
             "started_at": meta.get("started_at") or _iso_ms(data.get("startedAt")),
             "process_started_at": _iso_ms(data.get("startedAt")),
             "last_message_at": last,
-            # Хвост ответа: вопрос к тебе обычно в конце, а начало — отчёт о сделанном.
+            # Reply tail: a question to you is usually at the end; the start reports work done.
             "reply_tail": markdown_tail(reply),
             "reply_len": len(reply),
             "reply_at": found["reply_at"],
@@ -440,10 +440,10 @@ RECENT_LIMIT = 8
 
 def recently_closed(conn: sqlite3.Connection, live_ids: set[str], now: datetime | None = None,
                     hours: int = RECENT_HOURS, limit: int = RECENT_LIMIT) -> list[dict]:
-    """Интерактивные сессии с работой за последние часы, чей процесс уже завершён.
+    """Interactive sessions with work in the last few hours whose process has already exited.
 
-    Карточка «Активных» пропадает вместе с процессом; отсюда к сессии возвращаются одной
-    кнопкой, не ища её в поиске.
+    The "Active" card disappears with the process; from here one button returns to the session
+    without searching for it.
     """
     now = now or datetime.now(timezone.utc)
     cutoff = (now - timedelta(hours=hours)).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")

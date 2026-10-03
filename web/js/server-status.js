@@ -1,22 +1,22 @@
-// Сервер Session Atlas упал: плашка сверху вместо пустых карточек, внутри Obsidian — «Поднять».
-// Классический скрипт: общий глобальный контекст с остальными файлами страницы.
+// The Session Atlas server is down: a banner on top instead of empty cards, with Start inside Obsidian.
+// Classic script: shares one global scope with the other page files.
 let serverDown = false;
 let serverRaising = false;
 
-// Зовёт api(): false — сеть не ответила (сервер лежит), true — ответ пришёл, пусть и с ошибкой.
+// Called by api(): false when the network did not answer (server down), true when an answer came, even an error.
 const SERVER_RETRY_MS = 5000;
 let serverRetry = null;
 
-// Пока сервер лежит — сами спрашиваем /health: на вкладке «Поиск» своего опроса нет, и без
-// этого страница, открытая в момент перезапуска сервера, так и оставалась бы пустой.
+// While the server is down, poll /health ourselves: the Search tab has no poll of its own, and without
+// this a page open during a server restart would stay empty.
 function watchServer() {
-  clearTimeout(serverRetry);
+  window.clearTimeout(serverRetry);
   if (!serverDown) return;
-  serverRetry = setTimeout(async () => {
+  serverRetry = window.setTimeout(async () => {
     try {
-      const r = await fetch("/health");
+      const r = await window.fetch("/health");
       if (r.ok) { serverStatus(true); return; }
-    } catch (e) { /* ещё лежит */ }
+    } catch { /* still down */ }
     watchServer();
   }, SERVER_RETRY_MS);
 }
@@ -26,9 +26,9 @@ function serverStatus(up) {
   serverDown = !up;
   renderServerBanner();
   watchServer();
-  if (up) {                                  // вернулся — обновить то, что на экране
+  if (up) {                                  // back: refresh what is on screen
     refreshView();
-    api("/api/facets").then(bindFilters).catch(() => {});   // и фильтры, если не успели
+    api("/api/facets").then(bindFilters).catch(() => {});   // and the filters, if they did not load
   }
 }
 
@@ -46,7 +46,7 @@ function renderServerBanner(note) {
       serverRaising = true;
       renderServerBanner();
       tellHost("ensure-server", {});
-      setTimeout(() => {                       // плагин не ответил — дать нажать ещё раз
+      window.setTimeout(() => {                       // the plugin did not answer: allow another press
         if (!serverRaising) return;
         serverRaising = false;
         renderServerBanner(i18n("common.obsidianNoAnswer"));

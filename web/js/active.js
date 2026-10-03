@@ -1,5 +1,6 @@
-// «Активные»: секции и отрисовка.
-// Классический скрипт: общий глобальный контекст с остальными файлами страницы.
+// Active: sections and rendering.
+// Classic script: shares one global scope with the other page files.
+/* exported renderActive -- used by other page scripts */
 function section(title, list) {
   const box = el("section", "asec");
   const h = el("h3", null, title);
@@ -14,18 +15,18 @@ function section(title, list) {
   return box;
 }
 
-const RERENDER_EVERY_MS = 60000;     // «N мин назад» стареет — раз в минуту перерисуем и так
+const RERENDER_EVERY_MS = 60000;     // "N min ago" ages, so redraw once a minute anyway
 
 function renderActive(skipKey, force) {
   const summary = $("#active-summary");
   const grid = $("#active-grid");
-  arrangeActive(activeSessions);              // вернуть скрытые, у которых есть новое сообщение
+  arrangeActive(activeSessions);              // bring back hidden cards that have a new message
   const arranged = arrangeActive(activeSessions.filter(s => passes(s)));
   const shown = arranged.visible;
   const any = ACTIVE_FILTERS.some(({ key }) => activeFilter[key].size);
-  // Коротко, в одну строку: «11 · 09:08 · 5ч 35% · нед 73% · терминал ● · ?»; полное — в подсказках.
+  // Short, on one line: "11 · 09:08 · 5h 35% · wk 73% · terminal ● · ?"; the full text is in tooltips.
   const sep = () => document.createTextNode(" · ");
-  // Сколько всего — уже на вкладке «Активные N»; здесь только отобранное фильтрами.
+  // The total is already on the "Active N" tab; here only what the filters keep.
   const parts = [];
   if (any) {
     const count = el("b", null, i18n("active.shown", { n: shown.length }));
@@ -46,7 +47,7 @@ function renderActive(skipKey, force) {
     summary.append(el("span", null, i18n("active.updated",
       { time: activeUpdated.toLocaleTimeString(I18N.locale(), { hour: "2-digit", minute: "2-digit" }) })));
   }
-  // Сброс в пределах суток — время, дальше — дата.
+  // A reset within a day shows the time, later ones the date.
   const when = iso => {
     const d = new Date(iso);
     return d - Date.now() < 864e5
@@ -59,7 +60,7 @@ function renderActive(skipKey, force) {
     ? activeLimits.windows.map(w => `${short[w.key] || w.label} ${Math.round(w.used_percentage)}%`).join(" · ")
       + (lim.stale ? i18n("active.limitsStale") : "")
     : i18n("active.limitsNone"));
-  // Подпись «лимиты: » из logic.js срезаем: в подсказке своя, полная.
+  // Cut the "limits: " prefix from logic.js: the tooltip has its own full one.
   limSpan.title = lim ? i18n("active.limitsHint", { limits: lim.text.replace(/^[^:]*: /, "") })
     : i18n("active.limitsSetup", { snippet: "\"statusLine\": {\"type\": \"command\", \"command\": "
       + "\"python3.11 ~/Code/session-atlas/tools/statusline.py\"}" });
@@ -92,12 +93,12 @@ function renderActive(skipKey, force) {
       : i18n("active.noMatches")), ...closed());
     return;
   }
-  // Пока идёт набор через IME, не трогаем DOM — иначе слово оборвётся. Открытые подсказки
-  // команд тоже: перерисовка раз в 5 с пересоздавала поле, и список пропадал.
+  // During IME composition the DOM is left alone, otherwise the word breaks. Open command
+  // hints too: a redraw every 5 s would recreate the field and drop the list.
   if (composing || document.querySelector("#active-grid .suggest:not(.hidden)")) return;
-  // Пишут замечания к плану — поле не пересоздаём, иначе пропадут фокус и курсор.
+  // Plan feedback is being typed: the field is not recreated, otherwise focus and caret are lost.
   if (document.activeElement && document.activeElement.matches("#active-grid .planfb textarea")) return;
-  // Ничего не поменялось — не трогаем DOM вовсе: так не сбрасывается прокрутка текста.
+  // Nothing changed: leave the DOM alone entirely, so the text scroll does not reset.
   const signature = JSON.stringify([shown, activeMode, layout, hostReady, [...hostTabs.keys()],
     [...justSent].map(([sid, sent]) => [sid, AtlasLogic.deliveryState(
       activeSessions.find(x => x.session_id === sid) || {}, sent, Date.now())]), [...dialogs], [...dialogNotes], [...dialogAnswers.values()], [...stopNotes], [...commandOutputs], feedSid, pinnedCards, hiddenCards,
@@ -107,33 +108,27 @@ function renderActive(skipKey, force) {
   if (!force && signature === lastSignature && Date.now() - lastRenderAt < RERENDER_EVERY_MS) return;
   lastSignature = signature;
   lastRenderAt = Date.now();
-  // Сверху — кто ждёт тебя (сначала те, где открыт диалог), снизу — кто работает.
-  // «В фоне» — к работающим: ход закончен, но разбудит монитор, агент или /loop, а не ты.
+  // On top, who waits for you (open dialogs first); below, who is working.
+  // Background goes with working: the turn ended, but a monitor, agent or /loop wakes it, not you.
   const act = s => s.activity || s.status;
   const isWorking = s => act(s) === "busy" || act(s) === "background";
-  // Порядок — из arrangeSessions: закреплённые, затем по запуску; по свежести не прыгает.
+  // Order comes from arrangeSessions: pinned, then by start; freshness does not reorder.
   const waitingYou = shown.filter(s => !isWorking(s));
   const working = shown.filter(isWorking);
-  // Прокрутка внутри ответа — по карточке: иначе раз в 5 секунд текст уезжал наверх.
+  // Scroll inside a reply is kept per card: otherwise the text jumps to the top every 5 seconds.
   const inner = new Map([...grid.querySelectorAll(".acard")].map(c => {
     const txt = c.querySelector(".reply .txt:not(.now)");
     return [c.dataset.id, txt ? txt.scrollTop : 0];
   }));
-  // Фокус и курсор в поле ответа переживают перерисовку: иначе после отправки карточка
-  // не обновлялась, пока не кликнешь мимо поля.
+  // Focus and caret in the reply field survive a redraw: otherwise after sending the card
+  // does not update until you click outside the field.
   const focused = document.activeElement && document.activeElement.tagName === "TEXTAREA"
     && grid.contains(document.activeElement) ? document.activeElement : null;
   const caret = focused && { id: focused.dataset.id, start: focused.selectionStart,
                              end: focused.selectionEnd, top: focused.scrollTop };
   const scroll = grid.scrollTop;
-  // Хвост переписки в карточках: был внизу — остаётся внизу (видно новое), читал выше — там же.
-  const scrolls = new Map([...grid.querySelectorAll(".amsgs[data-sid]")].map(b =>
-    [b.dataset.sid, { top: b.scrollTop, bottom: b.scrollHeight - b.scrollTop - b.clientHeight < 24 }]));
   grid.replaceChildren(section(i18n("active.sectionWaiting"), waitingYou), section(i18n("active.sectionWorking"), working), ...closed());
-  grid.querySelectorAll(".amsgs[data-sid]").forEach(b => {
-    const was = scrolls.get(b.dataset.sid);
-    b.scrollTop = !was || was.bottom ? b.scrollHeight : was.top;
-  });
+  stickChats(grid);
   grid.scrollTop = scroll;
   if (caret) {
     const area = grid.querySelector(`.answer textarea[data-id="${CSS.escape(caret.id)}"]`);
@@ -147,5 +142,5 @@ function renderActive(skipKey, force) {
     const txt = c.querySelector(".reply .txt:not(.now)");
     if (txt && inner.get(c.dataset.id)) txt.scrollTop = inner.get(c.dataset.id);
   });
-  applySelection();                  // выбор с клавиатуры переживает перерисовку
+  applySelection();                  // keyboard selection survives a redraw
 }

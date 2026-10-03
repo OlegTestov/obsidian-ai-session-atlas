@@ -1,19 +1,19 @@
-// Вкладка «Статистика»: итоги за период, график по дням или часам, разбивки и ритм недели.
-// Классический скрипт: общий глобальный контекст с остальными файлами страницы.
-// Числа считает сервер (atlas/stats.py), здесь — только вид. Выбор периода и меры помнит
-// браузер: это удобство одного окна, пропадёт — не страшно.
+// Statistics tab: period totals, a chart by day or hour, breakdowns and the weekly rhythm.
+// Classic script: shares one global scope with the other page files.
+// The server computes the numbers (atlas/stats.py), this file only draws. The browser remembers the
+// period and measure: a single-window convenience, losing it is harmless.
 const S = window.StatsLogic;
 const STATS_KEY = "atlas.stats";
 const WEEKDAYS = i18n("stats.weekdays").split(" ");
 const LIST_ROWS = 8;
 
 let statsPrefs = Object.assign({ period: "7d", metric: "cost", auto: false },
-  (() => { try { return JSON.parse(localStorage.getItem(STATS_KEY) || "{}"); } catch (e) { return {}; } })());
+  (() => { try { return JSON.parse(window.localStorage.getItem(STATS_KEY) || "{}"); } catch { return {}; } })());
 let statsData = null;
 let statsSeq = 0;
 
 function saveStatsPrefs() {
-  try { localStorage.setItem(STATS_KEY, JSON.stringify(statsPrefs)); } catch (e) { /* приватное окно */ }
+  try { window.localStorage.setItem(STATS_KEY, JSON.stringify(statsPrefs)); } catch { /* private window */ }
 }
 
 function renderStatsBar() {
@@ -39,7 +39,7 @@ async function loadStats() {
   if (!statsData) $("#stats-body").replaceChildren(el("p", "empty", i18n("stats.loading")));
   try {
     const data = await api(`/api/stats?period=${encodeURIComponent(statsPrefs.period)}&auto=${statsPrefs.auto ? 1 : 0}`);
-    if (seq !== statsSeq) return;                 // пока ждали, выбрали другой период
+    if (seq !== statsSeq) return;                 // another period was picked while waiting
     statsData = data;
   } catch (e) {
     if (seq === statsSeq && !statsData) $("#stats-body").replaceChildren(el("p", "empty", i18n("stats.error", { msg: e.message })));
@@ -49,7 +49,7 @@ async function loadStats() {
   renderStats();
 }
 
-// --- плитки итогов ---------------------------------------------------------------
+// --- total tiles -----------------------------------------------------------------
 
 function tile(title, value, sub, dlt, hint) {
   const t = el("div", "tile");
@@ -107,7 +107,7 @@ function renderTiles(d) {
   return box;
 }
 
-// --- график -------------------------------------------------------------------------
+// --- chart -------------------------------------------------------------------------
 
 function renderChart(d) {
   const metric = statsPrefs.metric;
@@ -135,7 +135,7 @@ function renderChart(d) {
   return panel;
 }
 
-// --- разбивки -------------------------------------------------------------------------
+// --- breakdowns ---------------------------------------------------------------------
 
 function breakdown(title, items, opts) {
   const metric = statsPrefs.metric;

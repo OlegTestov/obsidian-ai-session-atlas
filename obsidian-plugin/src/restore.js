@@ -1,26 +1,26 @@
-// Восстановление после перезапуска Obsidian: он завершает все процессы во вкладках терминала.
-// Плагин помнит, какие сессии были открыты в его вкладках, и после запуска предлагает
-// вернуть те, что не живы. Сессия, закрытая, пока Obsidian работал, из списка выпадает сама.
-const { ATLAS_ORIGIN, HOST_SOURCE } = require("./constants");
+// Restore after an Obsidian restart, which ends every process in terminal tabs. The plugin remembers
+// which sessions were open in its tabs and, after start, offers to bring back those that are not
+// alive. A session closed while Obsidian was running drops off the list by itself.
+import { HOST_SOURCE } from "./constants";
 
 const RESTORE_MAX_AGE_MS = 3 * 24 * 3600 * 1000;
-// Вкладки агентов после запуска Obsidian поднимают свои сессии сами, за несколько секунд.
-// Раньше этого срока список не отдаём: иначе предложили бы вернуть ту, что уже поднимается,
-// и над одним транскриптом оказались бы два процесса.
+// After Obsidian starts, agent tabs bring their sessions back themselves within a few seconds.
+// The list is not served before this delay: it would offer a session that is already coming back,
+// and two processes would end up on one transcript.
 const RESTORE_GRACE_MS = 20000;
 
 const sameIds = (a, b) => a.length === b.length
   && a.every((x, i) => x.session_id === b[i].session_id);
 
 class RestoreMethods {
-  /** До первого опроса: что было открыто в прошлый раз — кандидаты, пока не видно, кто жив. */
+  /** Before the first poll: what was open last time are candidates until it is clear which are alive. */
   initRestore() {
     this.restorable = Array.isArray(this.settings && this.settings.openSessions)
       ? this.settings.openSessions.slice() : [];
     this.restoreChecked = false;
   }
 
-  /** Каждый опрос: живые из кандидатов убираем, открытые во вкладках — запоминаем. */
+  /** Every poll: live candidates are dropped, sessions open in tabs are remembered. */
   async trackOpenSessions(sessions, now = Date.now()) {
     const alive = new Set(sessions.map((s) => s.session_id));
     const fresh = (x) => !this.restoreChecked ? now - (x.at || 0) < RESTORE_MAX_AGE_MS : true;
@@ -46,14 +46,14 @@ class RestoreMethods {
       type: "restorable",
       ready: !!this.restoreChecked && Date.now() - (this.loadedAt || 0) >= RESTORE_GRACE_MS,
       sessions: (this.restorable || []).map(({ session_id, title, at }) => ({ session_id, title, at })),
-    }, ATLAS_ORIGIN);
+    }, this.atlasOrigin());
   }
 
-  /** Восстановили или отказались: забыть этих (или всех, если список не передан). */
+  /** Restored or declined: forget these (or all, when no list is passed). */
   forgetRestorable(ids) {
     const drop = Array.isArray(ids) ? new Set(ids.filter((x) => typeof x === "string")) : null;
     this.restorable = drop ? (this.restorable || []).filter((x) => !drop.has(x.session_id)) : [];
   }
 }
 
-module.exports = { RestoreMethods, RESTORE_MAX_AGE_MS, RESTORE_GRACE_MS };
+export { RestoreMethods, RESTORE_MAX_AGE_MS, RESTORE_GRACE_MS };

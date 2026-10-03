@@ -1,4 +1,4 @@
-"""Правила проектов, путей, вида сессии и чувствительности."""
+"""Rules for projects, paths, session kind and sensitivity."""
 from __future__ import annotations
 
 import os
@@ -61,20 +61,20 @@ def test_personal_and_accounting_are_sensitive():
 
 
 def test_sensitivity_checks_the_whole_cwd_history():
-    """Сессия начиналась в безобидной папке, но потом трогала Personal — она чувствительная."""
+    """The session started in a harmless folder but later touched Personal, so it is sensitive."""
     cwds = ["/Users/u/Code/demo", os.path.join(VAULT, "Personal/Health")]
     assert resolve.resolve_sensitivity(cwds, []) == "sensitive"
 
 
 def test_headless_run_without_human_prompts_is_automation():
     assert resolve.session_kind("sdk-cli", 0) == "automation"
-    assert resolve.session_kind("sdk-cli", 5) == "automation"   # у писателя есть «промпт», но он машинный
+    assert resolve.session_kind("sdk-cli", 5) == "automation"   # the writer has a "prompt", but it is machine-made
     assert resolve.session_kind("cli", 0) == "automation"
     assert resolve.session_kind("cli", 3) == "interactive"
 
 
 def test_desktop_and_ide_sessions_are_interactive():
-    """За Claude Desktop сидит человек — это не фоновый прогон."""
+    """A human sits behind Claude Desktop, so it is not a background run."""
     assert resolve.session_kind("claude-desktop", 4) == "interactive"
     assert resolve.session_kind("ide", 2) == "interactive"
 
@@ -87,7 +87,7 @@ def test_title_falls_back_in_order():
 
 
 def test_file_at_the_workspace_root_is_not_a_project():
-    """В транскриптах встречается ~/Code/chat-with-alert-RESTORE.md — это файл, не проект."""
+    """Transcripts contain ~/Code/chat-with-alert-RESTORE.md, which is a file, not a project."""
     assert resolve.classify_path(os.path.join(HOME, "Code/notes.md")).project_id is None
     assert resolve.classify_path(os.path.join(HOME, "Code/.DS_Store")).project_id is None
     assert resolve.classify_path(os.path.join(HOME, "Code/demo/notes.md")).project_id == "demo"
@@ -108,8 +108,9 @@ def test_compaction_summary_never_becomes_the_title():
 
 
 def test_settings_decide_projects_domains_and_sensitivity(monkeypatch, tmp_path):
-    """Всё личное — в настройках: другой человек, другой vault и другие правила."""
+    """Everything personal lives in settings: another person, another vault, other rules."""
     import os as _os
+
     from tests.conftest import write_config
     write_config(_os.environ["ATLAS_HOME"], {
         "vaults": [{"path": "~/Brain", "id": "brain"}], "workspace_roots": ["~/dev"],
@@ -124,14 +125,15 @@ def test_settings_decide_projects_domains_and_sensitivity(monkeypatch, tmp_path)
 
 def test_without_settings_nothing_personal_is_assumed(tmp_path):
     import os as _os
+
     from atlas import config
     _os.remove(_os.path.join(_os.environ["ATLAS_HOME"], "config.json"))
     config.reset()
     assert config.vaults() == [] and config.ticket_re() is None and config.get("llm_enabled") is False
-    assert resolve.classify_path(os.path.join(HOME, "Code/app")).project_id == "app"   # корни по умолчанию
+    assert resolve.classify_path(os.path.join(HOME, "Code/app")).project_id == "app"   # default roots
     assert resolve.resolve_sensitivity([os.path.join(HOME, "Notes/Personal")], []) == resolve.UNCLASSIFIED
 
 
 def test_project_domain_rules_keep_their_own_keys():
-    """Словарь «проект → домен» пуст по умолчанию — ключи пользователя не должны теряться."""
+    """The "project → domain" map is empty by default; user keys must not get lost."""
     assert resolve.resolve_domains([], [os.path.join(HOME, ".claude/skills/x/SKILL.md")]) == ["tools"]

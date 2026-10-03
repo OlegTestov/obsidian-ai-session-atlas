@@ -1,16 +1,16 @@
-// Лимиты подписки: Claude Code отдаёт их только скрипту строки состояния, поэтому подключаем
-// свой скрипт в ~/.claude/settings.json — только по переключателю и никогда поверх чужого.
-const fsSync = require("fs");
-const os = require("os");
-const path = require("path");
+// Subscription limits: Claude Code hands them only to the status line script, so our script goes
+// into ~/.claude/settings.json, only via the toggle and never over someone else's.
+import * as fsSync from "fs";
+import * as os from "os";
+import * as path from "path";
 
-// Команду Claude Code исполняет через sh; одинарные кавычки держат пробел в «Application Support».
+// Claude Code runs the command through sh; single quotes keep the space in "Application Support".
 const quote = (text) => "'" + String(text).replace(/'/g, "'\"'\"'") + "'";
 
 const SCRIPT_REL = path.join("atlas", "statusline.py");
 const BACKUP_SUFFIX = ".session-atlas.bak";
 
-/** Команда наша, если зовёт statusline.py этого плагина — из сборки или из репозитория. */
+/** The command is ours when it calls this plugin's statusline.py, from the build or from the repository. */
 function isOurStatusLine(command) {
   return /session-atlas/.test(String(command || "")) && /statusline\.py/.test(String(command || ""));
 }
@@ -39,14 +39,14 @@ class StatusLineMethods {
     return { state: isOurStatusLine(command) ? "ours" : "foreign", command };
   }
 
-  /** Включить или выключить свою строку. Чужую и нечитаемый файл не трогаем: {ok, reason}. */
+  /** Turns our line on or off. A foreign line and an unreadable file are left alone: {ok, reason}. */
   async setStatusLine(on) {
     const { state } = this.statusLineState();
     if (state === "broken" || state === "foreign") return { ok: false, reason: state };
     if (!on && state === "off") return { ok: true };
     const file = this.claudeSettingsPath();
     let data = {};
-    try { data = JSON.parse(fsSync.readFileSync(file, "utf8")); } catch (error) { /* файла нет */ }
+    try { data = JSON.parse(fsSync.readFileSync(file, "utf8")); } catch { /* no file */ }
     if (on) {
       const python = await this.findPython();
       if (!python) return { ok: false, reason: "python" };
@@ -58,7 +58,7 @@ class StatusLineMethods {
     }
     fsSync.mkdirSync(path.dirname(file), { recursive: true });
     if (fsSync.existsSync(file) && !fsSync.existsSync(file + BACKUP_SUFFIX)) {
-      fsSync.copyFileSync(file, file + BACKUP_SUFFIX);        // первая правка — с копией рядом
+      fsSync.copyFileSync(file, file + BACKUP_SUFFIX);        // the first edit keeps a copy alongside
     }
     const tmp = `${file}.tmp-${process.pid}`;
     fsSync.writeFileSync(tmp, JSON.stringify(data, null, 2) + "\n");
@@ -67,4 +67,4 @@ class StatusLineMethods {
   }
 }
 
-module.exports = { StatusLineMethods, isOurStatusLine, statusLineCommand, BACKUP_SUFFIX };
+export { StatusLineMethods, isOurStatusLine, statusLineCommand, BACKUP_SUFFIX };

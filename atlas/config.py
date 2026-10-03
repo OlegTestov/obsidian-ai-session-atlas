@@ -1,10 +1,10 @@
-"""Настройки пользователя: `config.json` в папке данных. Его пишет плагин; править руками тоже можно.
+"""User settings: `config.json` in the data folder. The plugin writes it; editing by hand also works.
 
-Здесь всё, что у разных людей разное: где заметки и проекты, какие домены работы, как выглядят
-тикеты, что чувствительно, какие модели звать. Без файла — нейтральные значения по умолчанию:
-каталог работает, но не знает ни доменов, ни тикетов, и ИИ-функции выключены.
+Everything that differs between people lives here: where notes and projects are, which work
+domains exist, what tickets look like, what is sensitive, which models to call. Without the file,
+neutral defaults apply: the catalog works but knows no domains or tickets, and AI features are off.
 
-Файл читается заново, когда меняется его mtime: сервер живёт долго, а настройки правят на ходу.
+The file is re-read when its mtime changes: the server is long-lived and settings change on the fly.
 """
 from __future__ import annotations
 
@@ -17,46 +17,46 @@ import threading
 import time
 
 DEFAULTS = {
-    "language": "en",                 # язык тем, описаний и хендоффов: en | ru
-    # Папки заметок (Obsidian vault): сама папка — проект, первый уровень внутри — область.
+    "language": "en",                 # language of topics, descriptions and handoffs: en | ru
+    # Note folders (Obsidian vault): the folder itself is a project, its first level is an area.
     "vaults": [],                     # [{"path": "~/…", "id": "vault"}]
-    # Корни, под которыми первый уровень — самостоятельный проект; контейнеры — проект глубже.
+    # Roots whose first level is a standalone project; in containers the project is one level deeper.
     "workspace_roots": ["~/Code", "~/Projects", "~/Developer", "~/src"],
     "workspace_containers": [],       # ["~/Code/MCPs"]
-    # Домены работы для фильтров и классификатора. Пусто — домены не ставятся.
+    # Work domains for filters and the classifier. Empty: no domains are assigned.
     "domains": [
         {"id": "work", "description": "work for an employer or clients"},
         {"id": "projects", "description": "own products, tools and experiments"},
         {"id": "personal", "description": "personal life: health, family, money, documents"},
     ],
-    "vault_domain_rules": [],         # [["Work", "work"], …]: область vault → домен
-    "project_domains": {},            # {"claude-config": "tools"}: проект → домен
-    "sensitive": {"vault_areas": [], "projects": []},   # никогда не уходят в модель
-    "ticket_prefixes": [],            # ["ABC", "OPS"] → тикеты ABC-123; пусто — не ищем
-    "llm_enabled": False,             # ИИ-функции тратят подписку — только по явному согласию
+    "vault_domain_rules": [],         # [["Work", "work"], …]: vault area → domain
+    "project_domains": {},            # {"claude-config": "tools"}: project → domain
+    "sensitive": {"vault_areas": [], "projects": []},   # never sent to the model
+    "ticket_prefixes": [],            # ["ABC", "OPS"] → tickets ABC-123; empty: no ticket search
+    "llm_enabled": False,             # AI features spend the subscription: explicit consent only
     "models": {
         "classification": ["sonnet", "low"],
         "catalog_summary": ["sonnet", "low"],
         "handoff": ["sonnet", "medium"],
     },
-    "force_1m": False,                # суффикс [1m] моделям без родного окна 1M (не на всех тарифах)
-    "claude_bin": None,               # путь к claude; плагин находит его через оболочку входа
+    "force_1m": False,                # [1m] suffix for models without a native 1M window (not on every plan)
+    "claude_bin": None,               # path to claude; the plugin finds it via the login shell
     "service_label": "io.github.session-atlas",
 }
 
 _lock = threading.Lock()
 _cache = {"path": None, "mtime": None, "data": None, "checked": 0.0}
-RECHECK_SECONDS = 1.0                 # разбор путей зовёт настройки тысячи раз за проход
+RECHECK_SECONDS = 1.0                 # path resolution reads settings thousands of times per pass
 
 
 def path() -> str:
-    from .db import atlas_home                      # db не зависит от config: без цикла
+    from .db import atlas_home  # db does not depend on config: no import cycle
     return os.path.join(atlas_home(), "config.json")
 
 
 def _merge(base: dict, extra: dict) -> dict:
-    """Неизвестные ключи верхнего уровня отбрасываются; вложенный словарь дополняется целиком —
-    в нём бывают свои ключи (project_domains: {"claude-config": …})."""
+    """Unknown top-level keys are dropped; a nested dict is merged with all its keys,
+    since it can hold keys of its own (project_domains: {"claude-config": …})."""
     out = dict(base)
     for key, value in (extra or {}).items():
         if key in base and isinstance(base[key], dict) and isinstance(value, dict):
@@ -88,13 +88,13 @@ def load() -> dict:
                 if isinstance(user, dict):
                     data = _merge(DEFAULTS, user)
             except (OSError, ValueError):
-                pass                                # битый файл — значения по умолчанию
+                pass                                # broken file: use defaults
         _cache.update(path=p, mtime=mtime, data=data, checked=now)
         return data
 
 
 def reset() -> None:
-    """Для тестов: следующий load() перечитает файл сразу."""
+    """For tests: the next load() re-reads the file right away."""
     with _lock:
         _cache.update(path=None, mtime=None, data=None, checked=0.0)
 
@@ -108,7 +108,7 @@ def expand(p: str) -> str:
 
 
 def vaults() -> list[tuple[str, str]]:
-    """[(путь, id проекта)]."""
+    """[(path, project id)]."""
     out = []
     for v in get("vaults") or []:
         if isinstance(v, str):
@@ -132,7 +132,7 @@ def domain_ids() -> tuple[str, ...]:
 
 
 def ticket_re():
-    """Регулярка тикетов по префиксам. None — тикеты не ищем."""
+    """Ticket regex built from the prefixes. None means no ticket search."""
     return _ticket_re(tuple(get("ticket_prefixes") or ()))
 
 
@@ -141,13 +141,13 @@ def _ticket_re(prefixes: tuple):
     valid = [re.escape(p) for p in prefixes if isinstance(p, str) and re.fullmatch(r"[A-Za-z][A-Za-z0-9]*", p)]
     if not valid:
         return None
-    # Альтернатива, а не литеральные вертикальные черты. Минимум две цифры: «ABC-1» в тексте
-    # про префиксы — не тикет, а обрывок.
+    # Alternation, not literal vertical bars. At least two digits: "ABC-1" in text
+    # about prefixes is a fragment, not a ticket.
     return re.compile(r"\b(?:" + "|".join(valid) + r")-\d{2,}\b")
 
 
 def index_fingerprint() -> str:
-    """То, от чего зависит производный индекс: поменялось — индекс пересобирается."""
+    """What the derived index depends on: when it changes, the index is rebuilt."""
     keys = ("vaults", "workspace_roots", "workspace_containers", "vault_domain_rules",
             "project_domains", "sensitive", "ticket_prefixes")
     blob = json.dumps({k: get(k) for k in keys}, sort_keys=True, ensure_ascii=False)

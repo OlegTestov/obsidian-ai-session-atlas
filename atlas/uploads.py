@@ -1,7 +1,7 @@
-"""Картинки для быстрого ответа: страница кладёт их сюда, плагин вставляет путь в терминал.
+"""Images for a quick reply: the page stores them here, the plugin pastes the path into the terminal.
 
-Claude Code сам превращает вставленный путь к картинке во вложение `[Image #N]` — проверено
-на живом TUI. Поэтому картинка передаётся файлом, а не байтами через терминал.
+Claude Code turns a pasted image path into an `[Image #N]` attachment itself (verified on a
+live TUI). So the image is passed as a file, not as bytes through the terminal.
 """
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from .messages import msg
 
 MAX_BYTES = 10 * 1024 * 1024
 KEEP_SECONDS = 7 * 24 * 3600
-# Тип — по первым байтам, а не по имени: расширение присылает страница.
+# Type is detected from the first bytes, not the name: the page sends the extension.
 SIGNATURES = (
     (b"\x89PNG\r\n\x1a\n", "png"),
     (b"\xff\xd8\xff", "jpg"),
@@ -26,7 +26,7 @@ SIGNATURES = (
 
 
 class UploadError(ValueError):
-    """Объяснение уходит пользователю как есть."""
+    """The message is shown to the user as is."""
 
 
 def uploads_dir() -> str:
@@ -45,7 +45,7 @@ def _kind(data: bytes) -> str | None:
 
 
 def cleanup(now: float | None = None) -> int:
-    """Старые загрузки не копятся: неделя — с запасом на «ответить завтра»."""
+    """Old uploads do not pile up: a week leaves room for "reply tomorrow"."""
     now = now or time.time()
     removed = 0
     for name in os.listdir(uploads_dir()):

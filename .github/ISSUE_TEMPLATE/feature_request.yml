@@ -1,0 +1,29 @@
+name: Feature request
+description: Suggest an improvement or a new feature.
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what gets in the way?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How should it work from the user's point of view?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: Other ways to solve it, including what you do today.
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - label: The feature works without sending data off the computer, or only through the optional AI features after a preview.

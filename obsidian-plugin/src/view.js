@@ -1,11 +1,10 @@
-// Вкладка каталога: iframe на локальный сервер.
-const { ItemView } = require("obsidian");
-const { atlasTitle } = require("./notify");
-const {
+// Catalog tab: an iframe on the local server.
+import { ItemView } from "obsidian";
+import { atlasTitle } from "./notify";
+import {
   VIEW_TYPE,
-  ATLAS_ORIGIN,
   HOST_SOURCE,
-} = require("./constants");
+} from "./constants";
 
 const DEFAULT_CARD_MESSAGES = 10;
 
@@ -17,15 +16,15 @@ class AtlasView extends ItemView {
   }
 
   getViewType() { return VIEW_TYPE; }
-  // Счётчик «ждут тебя» виден в заголовке вкладки, даже когда она в фоне.
+  // The "waiting for you" counter shows in the tab title even when the tab is in the background.
   getDisplayText() { return atlasTitle(this.plugin.waitingCount || 0); }
   getIcon() { return "library"; }
 
-  /** Вкладка восстанавливается вместе с выбранной сессией: состояние живёт в hash. */
+  /** The tab is restored with the selected session: the state lives in the hash. */
   async setState(state, result) {
     if (state && typeof state.hash === "string") this.hash = state.hash;
     await super.setState(state, result);
-    this.render();          // единственная точка отрисовки; onOpen её не дублирует
+    this.render();          // the single render point; onOpen does not duplicate it
   }
 
   getState() {
@@ -38,16 +37,16 @@ class AtlasView extends ItemView {
   readHash() {
     try {
       return this.frame.contentWindow.location.hash || "";
-    } catch (error) {
-      return this.hash;   // чужой origin читать нельзя — держим последнее известное
+    } catch {
+      return this.hash;   // a foreign origin cannot be read: keep the last known value
     }
   }
 
   async onOpen() {
-    // Отрисовку запускает setState. Если состояния нет (открыли пустую вкладку) — рисуем сами.
+    // setState starts rendering. Without a state (an empty tab was opened), render here.
     if (!this.frame) this.render();
-    // Скрытая вкладка Obsidian — нулевой ширины. Снова на экране — странице можно переставить
-    // карточки: пока ты на вкладке, она их не двигает.
+    // A hidden Obsidian tab has zero width. Back on screen, the page may rearrange its cards:
+    // while you are on the tab, it keeps them in place.
     this.onScreen = this.contentEl.clientWidth > 0;
     this.visibility = new ResizeObserver(() => this.visibilityChanged(this.contentEl.clientWidth > 0));
     this.visibility.observe(this.contentEl);
@@ -55,7 +54,7 @@ class AtlasView extends ItemView {
 
   visibilityChanged(visible) {
     if (visible && !this.onScreen && this.frame && this.frame.contentWindow) {
-      this.frame.contentWindow.postMessage({ source: HOST_SOURCE, type: "shown" }, ATLAS_ORIGIN);
+      this.frame.contentWindow.postMessage({ source: HOST_SOURCE, type: "shown" }, this.plugin.atlasOrigin());
     }
     this.onScreen = visible;
   }
@@ -65,7 +64,7 @@ class AtlasView extends ItemView {
   }
 
   async render() {
-    if (this.rendering) return;   // два асинхронных прохода рисовали по блоку ошибки каждый
+    if (this.rendering) return;   // overlapping async passes would each draw an error block
     this.rendering = true;
     try {
       await this.renderOnce();
@@ -77,14 +76,12 @@ class AtlasView extends ItemView {
   async renderOnce() {
     const container = this.contentEl;
     container.empty();
-    container.style.padding = "0";
-    // У каталога свой скролл внутри: внешняя полоса только мешала.
-    container.style.overflow = "hidden";
+    // The catalog scrolls inside the page; an outer scrollbar would only get in the way.
+    container.addClass("session-atlas-view");
 
     const up = await this.plugin.ensureServer();
     if (!up) {
-      const box = container.createDiv();
-      box.style.padding = "24px";
+      const box = container.createDiv({ cls: "session-atlas-down" });
       box.createEl("p", { text: this.plugin.t("server.down") });
       box.createEl("p", { text: this.plugin.t("server.hint"), cls: "mod-warning" });
       const retry = box.createEl("button", { text: this.plugin.t("server.retry") });
@@ -92,17 +89,11 @@ class AtlasView extends ItemView {
       return;
     }
 
-    this.frame = container.createEl("iframe");
-    // Язык страницы — как у плагина: язык Obsidian или выбранный в настройках.
+    this.frame = container.createEl("iframe", { cls: "session-atlas-frame" });
+    // The page language matches the plugin: Obsidian's language or the one chosen in settings.
     const messages = Number(this.plugin.settings && this.plugin.settings.cardMessages) || DEFAULT_CARD_MESSAGES;
-    this.frame.src = ATLAS_ORIGIN + "/?lang=" + this.plugin.lang() + "&msgs=" + messages + (this.hash || "");
-    this.frame.style.width = "100%";
-    this.frame.style.height = "100%";
-    this.frame.style.border = "none";
-    // Строчный iframe оставляет под собой зазор под выносные элементы букв (~4 px),
-    // и контейнер начинал прокручиваться на эти пиксели.
-    this.frame.style.display = "block";
+    this.frame.src = this.plugin.atlasOrigin() + "/?lang=" + this.plugin.lang() + "&msgs=" + messages + (this.hash || "");
   }
 }
 
-module.exports = { AtlasView };
+export { AtlasView };

@@ -1,104 +1,62 @@
-"""Установка плагина Obsidian из репозитория в vault.
+"""Installs the Obsidian plugin from the repository into a vault, for development.
 
-Исходник живёт здесь, в vault попадает копия: код в vault не хранится.
-Obsidian грузит плагин одним файлом `main.js` и относительные `require` не разрешает, поэтому
-модули из `obsidian-plugin/src/` склеиваются в один файл с маленьким загрузчиком.
+The source lives here and the vault gets a copy: code is not stored in the vault. The release
+files come from `npm run build` (esbuild); this script runs the same build into a temporary folder.
 
-    python3.11 tools/install_plugin.py [--vault PATH] [--no-enable]
+    python3.11 tools/install_plugin.py --vault PATH [--dev] [--no-enable]
+
+Without --dev the build is only staged: a running Obsidian keeps the loaded code until you reload
+the plugin yourself. --dev is for a separate test vault: the plugin there reloads itself on every
+build and runs its own server (port 8788, data in session-atlas-dev), apart from the working one.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import os
-import re
 import shutil
+import subprocess
 import sys
+import tempfile
 from datetime import datetime
 
-# Для разработки: vault, куда ставить сборку, — аргументом или переменной ATLAS_DEV_VAULT.
+# For development: the target vault comes from an argument or the ATLAS_DEV_VAULT variable.
 DEFAULT_VAULT = os.environ.get("ATLAS_DEV_VAULT", "")
 PLUGIN_ID = "session-atlas"
 FILES = ("main.js", "manifest.json", "styles.css")
-PLUGIN_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                          "obsidian-plugin")
-ENTRY = "main"
-LOCAL_REQUIRE = re.compile(r'require\("\./([a-z][a-z-]*)"\)')
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PLUGIN_DIR = os.path.join(ROOT, "obsidian-plugin")
+# Development install markers: reload on every build; own port and data folder.
+HOT_RELOAD_MARKER = ".hotreload"
+DEV_MARKER = ".dev"
 
 
-def build_bundle(src_dir: str | None = None) -> str:
-    """Модули src/*.js → один CommonJS-файл. Чужие require уходят в require самого Obsidian."""
-    src_dir = src_dir or os.path.join(PLUGIN_DIR, "src")
-    names = sorted(f[:-3] for f in os.listdir(src_dir) if f.endswith(".js"))
-    vendor_dir = os.path.join(PLUGIN_DIR, "vendor")
-    vendor = sorted(f[:-3] for f in os.listdir(vendor_dir) if f.endswith(".js"))
-    if ENTRY not in names:
-        raise SystemExit(f"нет {ENTRY}.js в {src_dir}")
-    parts = ["// Собрано tools/install_plugin.py из obsidian-plugin/src/ — правь исходники там.",
-             "const __modules = {};", "const __cache = {};",
-             "function __require(name) {",
-             "  const local = name.startsWith(\"./\") ? name.slice(2) : null;",
-             "  if (local === null || !(local in __modules)) return require(name);",
-             "  if (!(local in __cache)) {",
-             "    const module = { exports: {} };",
-             "    __cache[local] = module;",
-             "    __modules[local](module, module.exports, __require);",
-             "  }",
-             "  return __cache[local].exports;",
-             "}"]
-    for name in names:
-        body = open(os.path.join(src_dir, name + ".js"), encoding="utf-8").read()
-        for dep in LOCAL_REQUIRE.findall(body):
-            if dep not in names and dep not in vendor and dep != "payload":   # payload — здесь же
-                raise SystemExit(f"{name}.js: нет модуля ./{dep}")
-        parts.append(f"__modules[{json.dumps(name)}] = function (module, exports, require) {{\n"
-                     f"{body.rstrip()}\n}};")
-    for name in vendor:                      # xterm.js и дополнения — как есть, со своей лицензией
-        body = open(os.path.join(vendor_dir, name + ".js"), encoding="utf-8").read()
-        parts.append(f"__modules[{json.dumps(name)}] = function (module, exports, require) {{\n"
-                     f"{body.rstrip()}\n}};")
-    parts.append(f"__modules[\"payload\"] = function (module) {{ module.exports = {json.dumps(payload(), ensure_ascii=False)}; }};")
-    parts.append(f"module.exports = __require(\"./{ENTRY}\");")
-    return "\n".join(parts) + "\n"
+def build(out: str) -> None:
+    """`node esbuild.config.mjs --outdir OUT`; needs `npm ci` once."""
+    node = shutil.which("node")
+    if not node:
+        raise SystemExit("node is required to build the plugin (https://nodejs.org)")
+    if not os.path.isdir(os.path.join(ROOT, "node_modules", "esbuild")):
+        raise SystemExit("run `npm ci` in the repository first")
+    subprocess.run([node, os.path.join(ROOT, "esbuild.config.mjs"), "--outdir", out], check=True,
+                   cwd=ROOT, stdout=subprocess.DEVNULL)
 
 
-def build_styles() -> str:
-    """styles.css плагина: стили xterm, затем свои."""
-    xterm = open(os.path.join(PLUGIN_DIR, "vendor", "xterm.css"), encoding="utf-8").read()
-    own = open(os.path.join(PLUGIN_DIR, "styles.css"), encoding="utf-8").read()
-    return xterm.rstrip() + "\n\n" + own
-
-
-# Что плагин распаковывает при запуске: сервер, страница, скрипты вкладок. Только текст.
-PAYLOAD_GLOBS = (("atlas", ("*.py", "*.md")), ("web", ("index.html",)), ("web/js", ("*.js", "*.css")),
-                 ("obsidian-plugin/scripts", ("*.zsh",)))
-
-
-def payload() -> dict:
-    import glob
-    import hashlib
-    root = os.path.dirname(PLUGIN_DIR)
-    files = {}
-    for folder, patterns in PAYLOAD_GLOBS:
-        for pattern in patterns:
-            for full in sorted(glob.glob(os.path.join(root, folder, pattern))):
-                rel = os.path.relpath(full, root)
-                # Скрипты вкладок ложатся в runtime/scripts, а не в runtime/obsidian-plugin/scripts.
-                rel = rel.replace("obsidian-plugin/scripts/", "scripts/")
-                files[rel] = open(full, encoding="utf-8").read()
-    digest = hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest()[:16]
-    return {"version": digest, "files": files}
-
-
-def install(vault: str, enable: bool = True) -> dict:
+def install(vault: str, enable: bool = True, dev: bool = False) -> dict:
     target = os.path.join(vault, ".obsidian", "plugins", PLUGIN_ID)
     os.makedirs(target, exist_ok=True)
-    with open(os.path.join(target, "main.js"), "w", encoding="utf-8") as fh:
-        fh.write(build_bundle())
-    shutil.copy(os.path.join(PLUGIN_DIR, "manifest.json"), os.path.join(target, "manifest.json"))
-    with open(os.path.join(target, "styles.css"), "w", encoding="utf-8") as fh:
-        fh.write(build_styles())
-    # Скрипты вкладок агентов — туда же, где их ждут сохранённые вкладки и хук Claude Code.
+    with tempfile.TemporaryDirectory() as out:
+        build(out)
+        # main.js last: the running plugin watches it and reloads once it changes.
+        for name in ("manifest.json", "styles.css", "main.js"):
+            shutil.copy(os.path.join(out, name), os.path.join(target, name))
+    for marker in (HOT_RELOAD_MARKER, DEV_MARKER):
+        path = os.path.join(target, marker)
+        if dev:
+            open(path, "w").close()
+        elif os.path.exists(path):
+            os.remove(path)
+    # Agent tab scripts go where saved tabs and the Claude Code hook expect them.
     scripts = os.path.join(vault, ".obsidian", "scripts")
     os.makedirs(scripts, exist_ok=True)
     for name in sorted(os.listdir(os.path.join(PLUGIN_DIR, "scripts"))):
@@ -109,9 +67,12 @@ def install(vault: str, enable: bool = True) -> dict:
     enabled = None
     if enable:
         listing = os.path.join(vault, ".obsidian", "community-plugins.json")
-        data = json.load(open(listing, encoding="utf-8")) if os.path.exists(listing) else []
+        data = []
+        if os.path.exists(listing):
+            with open(listing, encoding="utf-8") as fh:
+                data = json.load(fh)
         if PLUGIN_ID not in data:
-            # Конфиг Obsidian чужой — перед правкой кладём копию рядом.
+            # The Obsidian config is not ours, so a backup copy goes next to it before editing.
             if os.path.exists(listing):
                 stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
                 shutil.copy(listing, f"{listing}.bak-{stamp}")
@@ -119,27 +80,31 @@ def install(vault: str, enable: bool = True) -> dict:
             with open(listing, "w", encoding="utf-8") as fh:
                 fh.write(json.dumps(data, indent=2) + "\n")
         enabled = PLUGIN_ID in data
-    return {"target": target, "files": list(FILES), "enabled": enabled}
+    return {"target": target, "files": list(FILES), "enabled": enabled, "dev": dev}
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Поставить плагин Session Atlas в Obsidian")
+    parser = argparse.ArgumentParser(description="Install the Session Atlas plugin into Obsidian")
     parser.add_argument("--vault", default=DEFAULT_VAULT)
     parser.add_argument("--no-enable", action="store_true")
-    parser.add_argument("--bundle-to", help="только собрать main.js в этот файл (для тестов)")
+    parser.add_argument("--dev", action="store_true",
+                        help="test vault: reload on every build, own port 8788 and data folder")
+    parser.add_argument("--bundle-to", help="only build main.js into this file (for tests)")
     args = parser.parse_args(argv)
     if args.bundle_to:
-        with open(args.bundle_to, "w", encoding="utf-8") as fh:
-            fh.write(build_bundle())
+        with tempfile.TemporaryDirectory() as out:
+            build(out)
+            shutil.copy(os.path.join(out, "main.js"), args.bundle_to)
         return 0
     if not args.vault or not os.path.isdir(os.path.join(args.vault, ".obsidian")):
-        parser.error("укажи vault: --vault PATH или переменная ATLAS_DEV_VAULT (папка с .obsidian)")
-    result = install(args.vault, enable=not args.no_enable)
+        parser.error("specify a vault: --vault PATH or the ATLAS_DEV_VAULT variable (a folder with .obsidian)")
+    result = install(args.vault, enable=not args.no_enable, dev=args.dev)
     print(json.dumps(result, ensure_ascii=False, indent=2))
-    # Плагин сам замечает новый main.js и перезагружается, не закрывая вкладок. Тумблер в
-    # настройках закрыл бы вкладки, ⌘R — убил бы процессы в терминалах.
-    print("\nОткрытый Obsidian подхватит сборку сам за пару секунд; вкладки и сессии остаются. "
-          "Иначе — команда «Session Atlas: Перезагрузить плагин».", file=sys.stderr)
+    if args.dev:
+        print("\nThe test vault's plugin picks up the build by itself within a couple of seconds.", file=sys.stderr)
+    else:
+        print("\nStaged. A running Obsidian keeps the loaded version until you run "
+              "«Session Atlas: Reload the plugin» or restart Obsidian.", file=sys.stderr)
     return 0
 
 

@@ -1,19 +1,19 @@
-// Настройки сервера каталога (config.json) и проверки окружения — секции вкладки настроек.
-// Всё, что у разных людей разное, правится здесь, а не в коде: папки, домены, тикеты, модели.
-const { Notice, Setting } = require("obsidian");
-const childProcess = require("child_process");
-const F = require("./config-form");
+// Catalog server settings (config.json) and environment checks: sections of the settings tab.
+// Everything that differs between people is edited here, not in code: folders, domains, tickets, models.
+import { Notice, Setting } from "obsidian";
+import * as childProcess from "child_process";
+import * as F from "./config-form";
 
 const DEFAULT_MODELS = { classification: ["sonnet", "low"], catalog_summary: ["sonnet", "low"],
                          handoff: ["sonnet", "medium"] };
 
 const MIN_MACOS = 12;
 
-/** Проверки окружения: что есть, чего нет, и кнопка там, где можно исправить. */
+/** Environment checks: what is present, what is missing, and a button where it can be fixed. */
 async function renderStatus(tab) {
   const { plugin, containerEl } = tab;
   const t = (k, v) => plugin.t(k, v);
-  containerEl.createEl("h3", { text: t("setup.heading") });
+  new Setting(containerEl).setName(t("setup.heading")).setHeading();
   const box = containerEl.createDiv({ cls: "session-atlas-status" });
   box.createEl("p", { text: t("setup.checking") });
   const [macos, python, clt, shell, health] = await Promise.all([
@@ -67,7 +67,7 @@ async function renderIndex(tab, box, row) {
   } });
 }
 
-/** Лимиты подписки: правка чужого файла (~/.claude/settings.json) — только по явному включению. */
+/** Subscription limits: a file the plugin does not own (~/.claude/settings.json) is edited only on explicit opt-in. */
 function renderLimits(tab, box) {
   const { plugin } = tab;
   const t = (k, v) => plugin.t(k, v);
@@ -87,22 +87,22 @@ function renderLimits(tab, box) {
 
 function area(tab, name, desc, value, onSave, rows = 4) {
   const setting = new Setting(tab.containerEl).setName(tab.plugin.t(name)).setDesc(tab.plugin.t(desc));
-  setting.settingEl.addClass("session-atlas-area");      // поле под описанием, на всю ширину
+  setting.settingEl.addClass("session-atlas-area");      // field below the description, full width
   setting.addTextArea((ta) => {
       ta.inputEl.rows = Math.max(rows, String(value || "").split("\n").length + 1);
       ta.inputEl.spellcheck = false;
       ta.setValue(value);
-      // Сохраняем по уходу из поля: иначе на каждую букву перечитывался бы индекс.
+      // Saved on blur: otherwise every keystroke would make the server re-read the index.
       ta.inputEl.addEventListener("blur", () => onSave(ta.getValue()));
     });
 }
 
-/** Каталог: папки заметок и проектов, домены, чувствительное, тикеты. */
+/** Catalog: note and project folders, domains, sensitive areas, tickets. */
 function renderCatalog(tab) {
   const { plugin, containerEl } = tab;
   const cfg = plugin.readServerConfig() || {};
   const save = (changes) => plugin.writeServerConfig(changes);
-  containerEl.createEl("h3", { text: plugin.t("cfg.heading") });
+  new Setting(containerEl).setName(plugin.t("cfg.heading")).setHeading();
   area(tab, "cfg.vaults", "cfg.vaults.desc", F.vaultsToText(cfg.vaults),
        (v) => save({ vaults: F.textToVaults(v, cfg.vaults) }), 2);
   area(tab, "cfg.roots", "cfg.roots.desc", F.listToText(cfg.workspace_roots || ["~/Code", "~/Projects", "~/Developer", "~/src"]),
@@ -121,18 +121,18 @@ function renderCatalog(tab) {
        }, 3);
   new Setting(containerEl).setName(plugin.t("cfg.tickets")).setDesc(plugin.t("cfg.tickets.desc"))
     .addText((text) => {
-      text.setPlaceholder("ABC, OPS").setValue(F.prefixesToText(cfg.ticket_prefixes));
+      text.setPlaceholder(plugin.t("cfg.tickets.placeholder")).setValue(F.prefixesToText(cfg.ticket_prefixes));
       text.inputEl.addEventListener("blur", () => save({ ticket_prefixes: F.textToPrefixes(text.getValue()) }));
     });
 }
 
-/** ИИ-функции: выключены, пока человек сам не включит; модели — алиасы или полные имена. */
+/** AI features: off until the person turns them on; models are aliases or full names. */
 function renderAi(tab) {
   const { plugin, containerEl } = tab;
   const cfg = plugin.readServerConfig() || {};
   const models = Object.assign({}, DEFAULT_MODELS, cfg.models || {});
   const save = (changes) => plugin.writeServerConfig(changes);
-  containerEl.createEl("h3", { text: plugin.t("ai.heading") });
+  new Setting(containerEl).setName(plugin.t("ai.heading")).setHeading();
   new Setting(containerEl).setName(plugin.t("ai.enabled")).setDesc(plugin.t("ai.enabled.desc"))
     .addToggle((toggle) => toggle.setValue(!!cfg.llm_enabled).onChange((v) => save({ llm_enabled: v })));
   new Setting(containerEl).setName(plugin.t("ai.language")).setDesc(plugin.t("ai.language.desc"))
@@ -153,10 +153,10 @@ function renderAi(tab) {
     .addToggle((toggle) => toggle.setValue(!!cfg.force_1m).onChange((v) => save({ force_1m: v })));
 }
 
-/** Дополнительно: свой python3 и своя оболочка — для нестандартных установок. */
+/** Advanced: a custom python3 and shell for non-standard setups. */
 function renderAdvanced(tab) {
   const { plugin, containerEl } = tab;
-  containerEl.createEl("h3", { text: plugin.t("adv.heading") });
+  new Setting(containerEl).setName(plugin.t("adv.heading")).setHeading();
   for (const [key, name] of [["pythonPath", "adv.python"], ["shellPath", "adv.shell"]]) {
     new Setting(containerEl).setName(plugin.t(name)).setDesc(plugin.t(`${name}.desc`))
       .addText((text) => text.setValue(plugin.settings[key] || "").onChange(async (v) => {
@@ -166,4 +166,4 @@ function renderAdvanced(tab) {
   }
 }
 
-module.exports = { renderStatus, renderCatalog, renderAi, renderAdvanced, DEFAULT_MODELS };
+export { renderStatus, renderCatalog, renderAi, renderAdvanced, DEFAULT_MODELS };

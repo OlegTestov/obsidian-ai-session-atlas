@@ -1,4 +1,4 @@
-"""Два контракта LLM-слоя: короткое описание для каталога и подробный хендофф."""
+"""Two LLM-layer contracts: a short catalog description and a detailed handoff."""
 from __future__ import annotations
 
 import json
@@ -14,7 +14,7 @@ PROMPT_VERSION = 1
 
 WORK_OUTCOMES = ("done", "blocked", "in_progress", "unknown")
 
-# Тексты запросов и обязательные разделы хендоффа — в prompts.py, на языке из настроек.
+# Prompt texts and required handoff sections live in prompts.py, in the language from settings.
 
 
 
@@ -23,7 +23,7 @@ def _now() -> str:
 
 
 def handoff_dir() -> str:
-    """По умолчанию app-data, а не папка проекта: untracked-файл слишком легко уезжает в коммит."""
+    """Defaults to app-data, not the project folder: an untracked file slips into a commit too easily."""
     path = os.path.join(db.atlas_home(), "handoffs")
     os.makedirs(path, mode=0o700, exist_ok=True)
     return path
@@ -48,7 +48,7 @@ def cached(conn: sqlite3.Connection, session_id: str, artifact_kind: str) -> dic
 
 
 def _parse_summary(text: str) -> dict:
-    """Битый вывод модели не чиним эвристиками — помечаем ошибкой."""
+    """Broken model output is not patched with heuristics; it is marked as an error."""
     match = re.search(r"\{.*\}", text, re.S)
     if not match:
         raise ValueError(msg("enrich.no_json"))
@@ -70,7 +70,7 @@ def _validate_handoff(text: str) -> str:
 
 def preview(conn: sqlite3.Connection, session_id: str, artifact_kind: str,
             backend: str = runner.EXTERNAL_BACKEND, model: str | None = None) -> dict:
-    """Первая стадия подтверждения: показать, что именно уйдёт и куда, до всякого вызова."""
+    """First confirmation stage: show exactly what will be sent and where, before any call."""
     default_model, effort = runner.model_for(artifact_kind)
     model = model or default_model
     payload = runner.preview_payload(conn, session_id, artifact_kind)
@@ -93,14 +93,14 @@ def preview(conn: sqlite3.Connection, session_id: str, artifact_kind: str,
 
 
 def fill(template: str, text: str) -> str:
-    """Выдержка в шаблон заменой, а не .format(): в шаблоне «Что сделано» образец JSON в {…},
-    и format принимал его за поле подстановки (KeyError '"did"')."""
+    """Inserts the excerpt by replace, not .format(): the "What was done" template has a JSON sample in {…},
+    which format would treat as a replacement field (KeyError '"did"')."""
     return template.replace("{payload}", text)
 
 
 def produce(conn: sqlite3.Connection, session_id: str, artifact_kind: str, job_id: str,
             backend: str = runner.EXTERNAL_BACKEND, model: str | None = None) -> dict:
-    """Вторая стадия: вызов модели. Разрешение на отправку проверяется здесь же."""
+    """Second stage: the model call. The send permission is checked right here."""
     default_model, effort = runner.model_for(artifact_kind)
     model = model or default_model
     payload = runner.build_payload(conn, session_id, artifact_kind)
@@ -109,12 +109,12 @@ def produce(conn: sqlite3.Connection, session_id: str, artifact_kind: str, job_i
         raise RuntimeError(msg("enrich.cancelled"))
 
     template = prompts.summary() if artifact_kind == "catalog_summary" else prompts.handoff()
-    # Большой хендофф идёт долго: окно на миллион токенов читается не за минуту.
+    # A large handoff takes long: a million-token window is not read within a minute.
     try:
         raw = runner.run_isolated(fill(template, payload["text"]), model=model,
                                   effort=effort, timeout=2400)
     except runner.PromptTooLong:
-        # Символы на токен зависят от языка и содержимого, поэтому одна попытка урезать.
+        # Characters per token depend on language and content, so there is one retry with a trimmed input.
         payload = runner.build_payload(conn, session_id, artifact_kind, scale=0.6)
         raw = runner.run_isolated(fill(template, payload["text"]), model=model,
                                   effort=effort, timeout=2400)
@@ -147,7 +147,7 @@ def produce(conn: sqlite3.Connection, session_id: str, artifact_kind: str, job_i
 
 
 def export_handoff(conn: sqlite3.Connection, session_id: str, destination_dir: str) -> str:
-    """Экспорт в проект — отдельное явное действие, цель только из allowlist сервера."""
+    """Export to a project is a separate explicit action; the target must be in the server allowlist."""
     art = cached(conn, session_id, "handoff")
     if not art or not art["payload"]:
         raise LookupError(msg("enrich.no_handoff"))

@@ -1,13 +1,13 @@
-// Свои всплывающие подсказки вместо системных: у тех задержка около двух секунд и её не
-// настроить. Работает для любого элемента с title — атрибут на время наведения прячется.
-// Классический скрипт: общий глобальный контекст с остальными файлами страницы.
+// Own tooltips instead of the system ones: those have a delay of about two seconds that cannot be
+// configured. Works for any element with a title; the attribute is hidden while hovering.
+// Classic script: shares one global scope with the other page files.
 const TIP_DELAY_MS = 1000;
 let tipTimer = null;
 let tipTarget = null;
 let tipBox = null;
 
 function hideTip() {
-  clearTimeout(tipTimer);
+  window.clearTimeout(tipTimer);
   tipTimer = null;
   tipTarget = null;
   if (tipBox) tipBox.classList.add("hidden");
@@ -22,7 +22,7 @@ function showTip(target) {
   }
   tipBox.textContent = target.dataset.tip;
   tipBox.classList.remove("hidden");
-  // Позиция — свойствами через JS: CSP запрещает атрибут style, но не CSSOM.
+  // Position through JS properties: the CSP forbids the style attribute, not the CSSOM.
   const r = target.getBoundingClientRect();
   const w = tipBox.offsetWidth, h = tipBox.offsetHeight;
   const left = Math.max(6, Math.min(window.innerWidth - w - 6, r.left + r.width / 2 - w / 2));
@@ -36,14 +36,14 @@ document.addEventListener("mouseover", e => {
   if (t === tipTarget) return;
   hideTip();
   if (!t) return;
-  if (t.hasAttribute("title")) {             // системная подсказка не должна всплыть поверх своей
+  if (t.hasAttribute("title")) {             // the system tooltip must not pop up over ours
     const text = t.getAttribute("title");
     t.removeAttribute("title");
     if (text) t.dataset.tip = text;
   }
   if (!t.dataset.tip) return;
   tipTarget = t;
-  tipTimer = setTimeout(() => showTip(t), TIP_DELAY_MS);
+  tipTimer = window.setTimeout(() => showTip(t), TIP_DELAY_MS);
 });
 document.addEventListener("mousedown", hideTip, true);
 document.addEventListener("keydown", hideTip, true);

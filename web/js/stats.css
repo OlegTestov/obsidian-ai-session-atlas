@@ -1,4 +1,4 @@
-/* «Статистика». Размеры столбцов и полос ставит скрипт через CSSOM: атрибут style закрыт CSP. */
+/* Statistics. The script sets bar sizes through the CSSOM: the CSP blocks the style attribute. */
 #stats{height:calc(100vh - 32px);display:flex;flex-direction:column;min-height:0}
 #stats-bar{flex:0 0 auto;height:38px;display:flex;gap:10px;align-items:center;padding:0 12px;
   border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:none;white-space:nowrap}

@@ -1,8 +1,8 @@
-"""Стоимость сессии: что записал Claude Code при выходе и оценка «сейчас» по токенам.
+"""Session cost: what Claude Code recorded on exit, plus a token-based "now" estimate.
 
-Claude Code пишет `cost-state` только при выходе из процесса. У живой сессии это сумма на
-момент прошлого выхода; всё, что после, досчитывается по `message.usage` ответов.
-Цены сверены с его же записями `cost-state` по всем сессиям: медианная ошибка 0%.
+Claude Code writes `cost-state` only when the process exits. For a live session it is the total
+as of the last exit; everything after that is added from the replies' `message.usage`.
+Prices are checked against its own `cost-state` records across all sessions: median error 0%.
 """
 from __future__ import annotations
 
@@ -11,8 +11,8 @@ import json
 import os
 import re
 
-# Базовые цены за миллион токенов: вход, выход, множитель чтения кэша.
-# Запись в кэш: на 5 минут — ×1.25 входа, на час — ×2 (у каждого ответа своя разбивка).
+# Base prices per million tokens: input, output, cache-read multiplier.
+# Cache write: 5-minute is ×1.25 input, 1-hour is ×2 (each reply has its own breakdown).
 PRICES = {
     "claude-opus-5-5": (4.0, 20.0, 0.05),
     "claude-opus-5": (5.0, 25.0, 0.1),
@@ -32,7 +32,7 @@ COST_MARK = b'"cost-state"'
 USAGE_MARK = b'"usage"'
 _TS_RE = re.compile(rb'"timestamp"\s*:\s*"([^"]{10,40})"')
 
-# путь → (inode, просмотрено байт, сумма, id ответов, неизвестные модели, записано, когда)
+# path → (inode, bytes scanned, total, reply ids, unknown models, recorded, when)
 _cache: dict[str, tuple] = {}
 
 
@@ -44,7 +44,7 @@ def price_for(model: str | None):
 
 
 def message_cost(model: str | None, usage: dict) -> float | None:
-    """Стоимость одного ответа модели так, как её считает Claude Code."""
+    """Cost of one model reply, computed the way Claude Code computes it."""
     price = price_for(model)
     if price is None:
         return None
@@ -52,7 +52,7 @@ def message_cost(model: str | None, usage: dict) -> float | None:
     split = usage.get("cache_creation") or {}
     write_5m = split.get("ephemeral_5m_input_tokens")
     write_1h = split.get("ephemeral_1h_input_tokens")
-    if write_5m is None and write_1h is None:            # старые записи без разбивки
+    if write_5m is None and write_1h is None:            # old records without the breakdown
         write_5m, write_1h = usage.get("cache_creation_input_tokens") or 0, 0
     tokens = ((usage.get("input_tokens") or 0) * pin
               + (usage.get("output_tokens") or 0) * pout
@@ -66,24 +66,25 @@ SYNTHETIC = "<synthetic>"
 
 WINDOW_DEFAULT = 200_000
 WINDOW_1M = 1_000_000
-NATIVE_1M = {"claude-opus-5-5"}      # окно 1M без суффикса [1m] — как в runner
+NATIVE_1M = {"claude-opus-5-5"}      # 1M window without the [1m] suffix, same as in runner
 
 
 def context_window(model: str | None, tokens: int | None) -> int:
-    """Окно модели. Суффикса [1m] в транскрипте нет — больше 200k занято, значит окно 1M."""
+    """Model window. The transcript has no [1m] suffix: more than 200k used means a 1M window."""
     if tokens and tokens > WINDOW_DEFAULT:
         return WINDOW_1M
     return WINDOW_1M if model and _SUFFIX.sub("", model) in NATIVE_1M else WINDOW_DEFAULT
 
 
 def context_tokens(usage: dict) -> int:
-    """Сколько занято в окне на этом запросе: вход целиком — свежий, из кэша и в кэш."""
+    """How much of the window this request uses: all input, i.e. fresh, cache read and cache write."""
+    # Claude Code's own service replies carry no tokens.
     return sum(int(usage.get(k) or 0) for k in
-               ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))      # служебные ответы самого Claude Code, токенов в них нет
+               ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
 
 
 def _scan(blob: bytes, state: list) -> None:
-    """Полная сумма по ответам, досчёт после последней cost-state и сама запись."""
+    """Full total over replies, the amount added after the last cost-state, and the record itself."""
     total, after, seen, unknown, recorded, stamp, last_ts, rows, ctx, model = state
     for raw in blob.split(b"\n"):
         if COST_MARK in raw:
@@ -108,7 +109,7 @@ def _scan(blob: bytes, state: list) -> None:
             continue
         key = msg.get("id") or rec.get("uuid")
         if key in seen or msg.get("model") == SYNTHETIC:
-            continue                     # один ответ пишется несколькими строками — по блоку
+            continue                     # one reply is written as several lines, one per block
         seen.add(key)
         if not rec.get("isSidechain"):
             ctx, model = context_tokens(msg["usage"]), msg.get("model")
@@ -141,7 +142,7 @@ def _file_state(path: str, keep_rows: bool = False) -> list | None:
                 blob = fh.read()
         except OSError:
             return None
-        end = blob.rfind(b"\n") + 1          # недописанную строку оставим следующему разу
+        end = blob.rfind(b"\n") + 1          # leave an unfinished line for the next pass
         _scan(blob[:end], state)
         begin += end
     _cache[path] = (st.st_ino, begin, *state)
@@ -151,10 +152,10 @@ def _file_state(path: str, keep_rows: bool = False) -> list | None:
 def session_cost(path: str | None) -> dict:
     """{recorded, recorded_at, now, partial}.
 
-    now — последняя сумма Claude Code плюс ответы после неё (свои и сабагентов): так число
-    сопоставимо с тем, что он сам показывает. Полная сумма по токенам с ним не сходится у
-    возобновлённых сессий (втрое больше), поэтому она — только пока записи ещё нет.
-    Бэктест по соседним записям: медиана −3.9%; выбросы — от параллельных копий сессии.
+    now is Claude Code's last total plus the replies after it (own and subagents'): this keeps the
+    number comparable with what Claude Code shows. The full token total does not match it for
+    resumed sessions (three times higher), so it is used only until a record exists.
+    Backtest on neighboring records: median −3.9%; outliers come from parallel copies of a session.
     """
     empty = {"recorded": None, "recorded_at": None, "now": None, "partial": False,
              "context_tokens": None, "context_model": None}
@@ -174,9 +175,6 @@ def session_cost(path: str | None) -> dict:
         unknown |= state[3]
         sub_total += state[0]
         sub_after += sum(c for ts, c in state[7] or [] if stamp and ts > stamp)
-    if recorded is not None:
-        now = recorded + after + sub_after
-    else:
-        now = (total + sub_total) or None
+    now = recorded + after + sub_after if recorded is not None else (total + sub_total) or None
     return {"recorded": recorded, "recorded_at": stamp, "now": now, "partial": bool(unknown),
             "context_tokens": main[8], "context_model": main[9]}

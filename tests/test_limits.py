@@ -1,4 +1,4 @@
-"""Лимиты подписки: строка состояния пишет файл, каталог его читает."""
+"""Subscription limits: the status line writes a file, the catalog reads it."""
 from __future__ import annotations
 
 import json
@@ -9,7 +9,7 @@ import sys
 from atlas import limits
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SCRIPT = os.path.join(HERE, "atlas", "statusline.py")      # так его зовёт Claude Code
+SCRIPT = os.path.join(HERE, "atlas", "statusline.py")      # this is how Claude Code calls it
 SHIM = os.path.join(HERE, "tools", "statusline.py")
 
 
@@ -27,7 +27,8 @@ def test_statusline_saves_limits_and_prints_a_line(tmp_path):
     (tmp_path / "config.json").write_text(json.dumps({"language": "ru"}), encoding="utf-8")
     out = run_statusline(tmp_path, payload, script=SHIM)
     assert out.stdout.startswith("Opus 5.5 · 5ч 42%") and "нед 87% до" in out.stdout
-    got = limits.read_limits(str(tmp_path), now=json.load(open(tmp_path / "rate-limits.json"))["captured_at"] + 5)
+    captured_at = json.loads((tmp_path / "rate-limits.json").read_text())["captured_at"]
+    got = limits.read_limits(str(tmp_path), now=captured_at + 5)
     assert got["age_seconds"] == 5
     assert [(w["key"], w["used_percentage"]) for w in got["windows"]] == [("five_hour", 41.6), ("seven_day", 87.2)]
     assert got["windows"][0]["resets_at"].startswith("2026-")
@@ -40,7 +41,7 @@ def test_statusline_without_limits_keeps_old_file_and_never_fails(tmp_path):
     for payload in ("{}", "не json", json.dumps({"rate_limits": "мусор"})):
         out = run_statusline(tmp_path, payload)
         assert out.returncode == 0
-    # Мусор в лимитах не отнимает у строки модель.
+    # Garbage in the limits does not drop the model from the line.
     out = run_statusline(tmp_path, json.dumps({"model": {"display_name": "Opus 5.5"},
                                                "rate_limits": {"seven_day": "мусор"}}))
     assert out.stdout.strip() == "Opus 5.5"

@@ -1,8 +1,8 @@
-// Подтверждение закрытия: вкладка терминала держит живую сессию агента, вкладка каталога —
-// то, что обидно закрыть случайно. Крестик, средний клик по заголовку и ⌘W идут через окно,
-// где по умолчанию выбрано «Оставить». Подмешивается в класс плагина.
-const { Modal } = require("obsidian");
-const { VIEW_TYPE, AGENT_VIEW_TYPE, TERMINAL_VIEW_TYPE, TERMINAL_STATE_KEY, TAB_CLOSE_SELECTOR } = require("./constants");
+// Close confirmation: a terminal tab holds a live agent session, and the catalog tab is annoying to
+// close by accident. The close button, a middle click on the header and ⌘W go through a dialog
+// where "Keep open" is the default. Mixed into the plugin class.
+import { Modal, View } from "obsidian";
+import { VIEW_TYPE, AGENT_VIEW_TYPE, TERMINAL_VIEW_TYPE, TERMINAL_STATE_KEY, TAB_CLOSE_SELECTOR } from "./constants";
 
 const TAB_HEADER_SELECTOR = ".workspace-tab-header";
 const CLOSE_TAB_COMMAND_ID = "workspace:close";
@@ -18,7 +18,7 @@ class ConfirmCloseModal extends Modal {
     this.titleEl.setText(this.title);
     this.contentEl.createEl("p", { text: this.text });
     const buttons = this.contentEl.createDiv({ cls: "modal-button-container" });
-    // Фокус на «оставить»: случайный Enter не должен закрывать вкладку.
+    // Focus on "keep": a stray Enter must not close the tab.
     const keep = buttons.createEl("button", { text: this.keepLabel });
     keep.addEventListener("click", () => this.close());
     const close = buttons.createEl("button", { text: this.closeLabel, cls: "mod-warning" });
@@ -34,21 +34,20 @@ class ConfirmCloseModal extends Modal {
 }
 
 class GuardMethods {
-  /** Что за вкладка: "terminal", "atlas" или null — такую закрываем без вопросов. */
+  /** The tab kind: "terminal", "atlas", or null for a tab that closes without asking. */
   guardKind(leaf) {
     const type = leaf && leaf.view && typeof leaf.view.getViewType === "function"
       ? leaf.view.getViewType() : null;
     if (type === VIEW_TYPE) return "atlas";
     if (type === AGENT_VIEW_TYPE) return "terminal";
-    // Пока включён старый плагин с тем же вопросом, терминалы спрашивает он — не дважды.
-    if (type === TERMINAL_VIEW_TYPE && !this.legacyEnabled("agent-terminal-ribbons")) return "terminal";
+    if (type === TERMINAL_VIEW_TYPE) return "terminal";
     return null;
   }
 
   installCloseGuard(doc) {
     if (!doc || doc.__sessionAtlasGuard) return;
     doc.__sessionAtlasGuard = true;
-    // Крестик ловим с pointerdown: Obsidian закрывает вкладку раньше, чем дойдёт click.
+    // The close button is caught on pointerdown: Obsidian closes the tab before click arrives.
     for (const type of ["pointerdown", "mousedown", "click"]) {
       this.registerDomEvent(doc, type, (event) => this.onCloseButton(event, type === "click"),
                             { capture: true });
@@ -80,18 +79,24 @@ class GuardMethods {
     this.confirmClose(leaf);
   }
 
-  /** ⌘W — та же команда, что у меню: подменяем её на время работы плагина. */
+  /** ⌘W is the same command as the menu item: it is wrapped while the plugin runs. */
   patchCloseTabCommand() {
     const commands = this.app.commands && this.app.commands.commands;
     const command = commands ? commands[CLOSE_TAB_COMMAND_ID] : null;
     if (!command) return;
-    const self = this;
+    // The leaf to confirm, or null when the command runs as usual. Arrow functions keep the plugin
+    // as `this`; the wrappers below keep the command's own `this` for the original callback.
+    const guardedLeaf = () => {
+      const leaf = this.activeLeaf();
+      return this.guardKind(leaf) ? leaf : null;
+    };
+    const confirm = (leaf) => this.confirmClose(leaf);
     if (typeof command.checkCallback === "function") {
       const original = command.checkCallback;
       command.checkCallback = function (checking) {
-        const leaf = self.activeLeaf();
-        if (!checking && self.guardKind(leaf) && original.call(this, true)) {
-          self.confirmClose(leaf);
+        const leaf = checking ? null : guardedLeaf();
+        if (leaf && original.call(this, true)) {
+          confirm(leaf);
           return true;
         }
         return original.call(this, checking);
@@ -99,18 +104,20 @@ class GuardMethods {
       this.register(() => { command.checkCallback = original; });
     } else if (typeof command.callback === "function") {
       const original = command.callback;
-      command.callback = function () {
-        const leaf = self.activeLeaf();
-        if (self.guardKind(leaf)) { self.confirmClose(leaf); return undefined; }
-        return original.apply(this, arguments);
+      command.callback = function (...args) {
+        const leaf = guardedLeaf();
+        if (leaf) { confirm(leaf); return undefined; }
+        return original.apply(this, args);
       };
       this.register(() => { command.callback = original; });
     }
   }
 
+  /** The active view's leaf, else the last active leaf of the main area. */
   activeLeaf() {
     const ws = this.app.workspace;
-    if (ws.activeLeaf) return ws.activeLeaf;
+    const view = typeof ws.getActiveViewOfType === "function" ? ws.getActiveViewOfType(View) : null;
+    if (view && view.leaf) return view.leaf;
     return typeof ws.getMostRecentLeaf === "function" ? ws.getMostRecentLeaf() : null;
   }
 
@@ -123,14 +130,14 @@ class GuardMethods {
     return found;
   }
 
-  /** Подпись сессии: название вкладки или имя профиля терминала. */
+  /** Session label: the terminal profile name or the tab title. */
   terminalLabel(leaf) {
     try {
       const state = leaf.getViewState();
       const term = state && state.state && state.state[TERMINAL_STATE_KEY];
       if (term && term.profile && term.profile.name) return term.profile.name;
     } catch (error) {
-      console.error("Session Atlas: не прочитать состояние вкладки", error);
+      console.error("Session Atlas: cannot read the tab state", error);
     }
     return (leaf.view && typeof leaf.view.getDisplayText === "function" && leaf.view.getDisplayText())
       || "Terminal";
@@ -152,4 +159,4 @@ class GuardMethods {
   }
 }
 
-module.exports = { GuardMethods, ConfirmCloseModal };
+export { GuardMethods, ConfirmCloseModal };

@@ -1,4 +1,4 @@
-"""Новая сессия из «Активных»: папка только из списка, запрос экранирован для шелла."""
+"""New session from "Active": folder only from the list, prompt escaped for the shell."""
 from __future__ import annotations
 
 import os
@@ -17,7 +17,7 @@ def home(tmp_path, monkeypatch):
     (fake / "Code" / "alpha").mkdir(parents=True)
     (fake / "Code" / ".hidden").mkdir()
     monkeypatch.setattr(launch, "_home", lambda: str(fake))
-    monkeypatch.setenv("HOME", str(fake))          # «~» в настройках — тоже сюда
+    monkeypatch.setenv("HOME", str(fake))          # "~" in settings resolves here too
     return fake
 
 

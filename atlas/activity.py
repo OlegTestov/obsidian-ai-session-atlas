@@ -1,14 +1,14 @@
-"""Сырьё «Статистики»: ответы модели и запросы человека с токенами, ценой и временем работы.
+"""Raw data for "Stats": model replies and human prompts with tokens, cost and working time.
 
-Строка — ответ модели (ключ message.id: один ответ пишется несколькими записями) или запрос
-человека (ключ uuid записи). Возобновлённая сессия копирует чужую историю в свой файл с теми же
-ключами, поэтому при подсчёте строки схлопываются по ключу — иначе ~3,5% ответов считались бы
-дважды.
+A row is a model reply (key message.id: one reply spans several records) or a human prompt
+(key: the record uuid). A resumed session copies the earlier history into its own file with the
+same keys, so rows are collapsed by key when counting; otherwise ~3.5% of replies would be
+counted twice.
 
-Активное время — сумма промежутков между соседними записями основного файла, но только
-коротких: пауза длиннее IDLE_SECONDS — человек ушёл, и она не считается вовсе. Промежуток
-приписывается следующей строке-ответу или запросу. У сабагентов время не считается: они идут
-параллельно с основной сессией и удвоили бы её.
+Active time is the sum of gaps between adjacent records of the main file, short ones only:
+a pause longer than IDLE_SECONDS means the human left, and it is not counted at all. A gap is
+assigned to the next reply or prompt row. Subagent time is not counted: subagents run in
+parallel with the main session and would double it.
 """
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ _COMMAND = re.compile(r"<command-name>/?([^<\s]+)</command-name>")
 
 
 def seconds_between(prev: str | None, ts: str | None) -> float:
-    """Секунды от prev до ts; 0 — если одного нет, порядок нарушен или строка не разбирается."""
+    """Seconds from prev to ts; 0 if either is missing, out of order, or unparsable."""
     if not prev or not ts:
         return 0.0
     try:
@@ -39,7 +39,7 @@ def active_part(gap: float) -> float:
 
 
 def _tool_names(content) -> list[str]:
-    """Имена вызовов; у скилла и агента — с тем, что именно вызвано: `Skill:browse`, `Agent:Explore`."""
+    """Call names; skills and agents include what was called: `Skill:browse`, `Agent:Explore`."""
     if not isinstance(content, list):
         return []
     out = []
@@ -57,7 +57,7 @@ def _tool_names(content) -> list[str]:
 
 
 def _command(rec: dict) -> list[str]:
-    """Слэш-команда, набранная человеком: `/loop` приезжает тегом внутри текста запроса."""
+    """Slash command typed by the human: `/loop` arrives as a tag inside the prompt text."""
     content = (rec.get("message") or {}).get("content")
     texts = [content] if isinstance(content, str) else [
         b.get("text") or "" for b in content or [] if isinstance(b, dict)]
@@ -69,7 +69,7 @@ def _command(rec: dict) -> list[str]:
 
 
 def note_answer(facts, rec: dict) -> None:
-    """Ответ модели: токены и цена — по первой записи ответа, инструменты — со всех."""
+    """Model reply: tokens and cost from the reply's first record, tools from all of them."""
     msg = rec.get("message") or {}
     usage = msg.get("usage")
     if not isinstance(usage, dict) or msg.get("model") == costs.SYNTHETIC:
@@ -107,7 +107,7 @@ def note_prompt(facts, rec: dict) -> None:
 
 
 def store(conn, session_id: str, rows: dict, sub: bool = False) -> None:
-    """Дописать строки. Ответ, начатый прошлым проходом, дополняется временем и инструментами."""
+    """Appends rows. A reply started in the previous pass gets its time and tools extended."""
     for key, r in rows.items():
         if sub and r["kind"] == PROMPT:
             continue

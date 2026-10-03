@@ -1,1 +1,1 @@
-APP = "session-atlas"                 # /health называет себя: чужой сервер на порту не спутать
+APP = "session-atlas"                 # /health names itself to tell it apart from a foreign server

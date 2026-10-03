@@ -1,10 +1,11 @@
-// «Активные»: недавно закрытые сессии — процесс завершён, а работа была за последние часы.
-// Классический скрипт: общий глобальный контекст с остальными файлами страницы.
-// Карточка пропадает вместе с процессом; отсюда сессию продолжают одной кнопкой.
+// Active: recently closed sessions, the process ended but there was work in the last hours.
+// Classic script: shares one global scope with the other page files.
+/* exported closedSection -- used by other page scripts */
+// The card disappears with the process; from here one button continues the session.
 const CLOSED_OPEN_KEY = "atlas.closedOpen";
 let recentClosed = [];
 let closedOpen = loadStored(CLOSED_OPEN_KEY, true);
-const closedNotes = new Map();          // id сессии → {text, pending, at}: «открываю…» / почему не вышло
+const closedNotes = new Map();          // session id → {text, pending, at}: "opening…" / why it failed
 
 async function continueClosed(c) {
   closedNotes.set(c.session_id, { text: i18n("closed.opening"), pending: true, at: Date.now() });
@@ -14,13 +15,13 @@ async function continueClosed(c) {
     const a = card.actions || {};
     if (!EMBEDDED || !a.resume_command || !a.can_open_terminal) {
       closedNotes.delete(c.session_id);
-      showResume(card);                    // вне Obsidian или без папки — окно с командой
+      showResume(card);                    // outside Obsidian or without a folder: a dialog with the command
       renderActive(null, true);
       return;
     }
     tellHost("resume", { session_id: c.session_id, cwd: a.resume_cwd, command: a.resume_command,
                          title: c.title || card.title || "Claude" });
-    setTimeout(loadActive, 4000);
+    window.setTimeout(loadActive, 4000);
   } catch (e) {
     closedNotes.set(c.session_id, { text: i18n("closed.failed", { msg: e.message }), pending: false, at: Date.now() });
     renderActive(null, true);
@@ -51,7 +52,7 @@ function closedRow(c) {
   return row;
 }
 
-/** Секция внизу «Активных»; null — закрытых за последние часы нет. */
+/** Section at the bottom of Active; null when nothing closed in the last hours. */
 function closedSection() {
   const list = recentClosed;
   if (!list.length) return null;

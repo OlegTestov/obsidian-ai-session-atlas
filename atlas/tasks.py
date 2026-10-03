@@ -1,8 +1,8 @@
-"""Список задач агента (TaskCreate/TaskUpdate): сколько сделано и что идёт сейчас.
+"""The agent's task list (TaskCreate/TaskUpdate): how much is done and what is in progress.
 
-Claude Code держит его файлами `~/.claude/tasks/<id сессии>/<n>.json`, по файлу на задачу:
-subject, activeForm («Reviewing merge request diff»), status pending / in_progress / completed,
-удалённая — deleted. Файлы маленькие и их единицы: читаем на каждом опросе «Активных».
+Claude Code keeps it as files `~/.claude/tasks/<session id>/<n>.json`, one file per task:
+subject, activeForm ("Reviewing merge request diff"), status pending / in_progress / completed,
+a removed one is deleted. The files are small and few, so every "Active" poll reads them.
 """
 from __future__ import annotations
 
@@ -10,7 +10,9 @@ import glob
 import json
 import os
 
-TASKS_DIR = os.path.expanduser("~/.claude/tasks")
+from . import paths
+
+TASKS_DIR = os.path.join(paths.claude_dir(), "tasks")
 MAX_ITEMS = 30
 
 
@@ -20,7 +22,7 @@ def _number(path: str) -> int:
 
 
 def progress(session_id: str, root: str | None = None) -> dict | None:
-    """{total, done, active: [что идёт], items: [{subject, status}]} или None — задач нет."""
+    """{total, done, active: [in progress], items: [{subject, status}]} or None: no tasks."""
     folder = os.path.join(root or TASKS_DIR, session_id)
     if not os.path.isdir(folder):
         return None

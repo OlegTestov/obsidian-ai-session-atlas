@@ -1,4 +1,4 @@
-"""Задачи агента для карточки «Активных»: счёт, текущая, удалённые, порядок по номеру."""
+"""Agent tasks for the "Active" card: count, current task, deleted ones, order by number."""
 from __future__ import annotations
 
 import json

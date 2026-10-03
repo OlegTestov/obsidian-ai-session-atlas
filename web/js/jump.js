@@ -1,7 +1,7 @@
-// Быстрый переход по названию: ⌘K (Ctrl+K) с любого раздела — живые и недавно закрытые сессии.
-// Классический скрипт: общий глобальный контекст с остальными файлами страницы.
-// ⌘K свободен: в меню Obsidian его нет, а нажатия внутри iframe до горячих клавиш Obsidian
-// не доходят; «вставить ссылку» по ⌘K работает только в редакторе заметок.
+// Quick jump by name: ⌘K (Ctrl+K) from any section, live and recently closed sessions.
+// Classic script: shares one global scope with the other page files.
+// ⌘K is free: Obsidian's menu does not use it, and key presses inside the iframe do not reach
+// Obsidian's hotkeys; "insert link" on ⌘K works only in the note editor.
 let jumpItems = [];
 let jumpActive = 0;
 
@@ -44,7 +44,7 @@ function jumpDialog() {
       if (jumpItems[jumpActive]) jumpTo(jumpItems[jumpActive]);
     }
   });
-  dlg.addEventListener("click", e => { if (e.target === dlg) dlg.close(); });   // клик мимо окна
+  dlg.addEventListener("click", e => { if (e.target === dlg) dlg.close(); });   // click outside the dialog
   document.body.appendChild(dlg);
   return dlg;
 }
@@ -74,7 +74,7 @@ function openJump() {
   dlg.querySelector("input").focus();
 }
 
-// Живая — выбрать её карточку; скрытая или отсеянная фильтром — вернуть на экран.
+// Live: select its card; hidden or filtered out: bring it back on screen.
 function jumpTo(it) {
   $("#jump").close();
   if (it.kind === "closed") { setView("search"); openCard(it.id); return; }

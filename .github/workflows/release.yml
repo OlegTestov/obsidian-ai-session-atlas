@@ -4,19 +4,31 @@ on:
     tags: ["*"]
 jobs:
   release:
-    runs-on: macos-14
+    runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v4
-      - name: Build
-        run: /usr/bin/python3 tools/build.py --out dist
-      # Obsidian ищет в релизе ровно эти три файла; тег должен совпадать с версией в manifest.json.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      # Obsidian looks for exactly these three files; the tag must equal the manifest version.
       - name: Check tag matches manifest
-        run: test "$(/usr/bin/python3 -c 'import json;print(json.load(open("dist/manifest.json"))["version"])')" = "${GITHUB_REF_NAME}"
+        run: test "$(node -p 'require("./manifest.json").version')" = "${GITHUB_REF_NAME}"
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            main.js
+            manifest.json
+            styles.css
       - uses: softprops/action-gh-release@v2
         with:
           files: |
-            dist/main.js
-            dist/manifest.json
-            dist/styles.css
+            main.js
+            manifest.json
+            styles.css

@@ -1,10 +1,10 @@
-// Строки страницы: вкладка «Активные»: карточки, диалоги, план, фильтры, восстановление. Ключи — с префиксом «active.»; en и ru — одинаковый набор ключей.
-// Множественное число — массивом: ru [one, few, many], en [one, other]; {n} — само число.
+// Page strings: the Active tab: cards, dialogs, plan, filters, restore. Keys start with "active."; en and ru have the same key set.
+// Plurals are arrays: ru [one, few, many], en [one, other]; {n} is the number.
 (function (root) {
-  const I = typeof module !== "undefined" && module.exports ? require("./i18n.js") : root.I18N;
+  const I = root.I18N;
   I.add({
     en: {
-      // общее
+      // common
       "active.sending": "sending…",
       "active.noHostReply": "Obsidian did not respond — check the tab",
       "active.error": "error: {msg}",
@@ -13,7 +13,7 @@
       "active.quoted": "“{text}”",
       "active.go": "Go",
       "active.close": "Close",
-      // статусы
+      // statuses
       "active.status.busy": "working",
       "active.status.busyHint": "The agent is working right now",
       "active.status.background": "working in background",
@@ -23,7 +23,7 @@
       "active.status.waitingHint": "A question or permission request is open — answer with a button in the card or in the tab",
       "active.status.idle": "waiting",
       "active.status.idleHint": "The agent is done and waiting for your message",
-      // карточка
+      // card
       "active.openInSearch": "Open the card in search",
       "active.notIndexed": "Session is not indexed yet",
       "active.noDescription": "The description appears after classification.",
@@ -47,12 +47,14 @@
       "active.buttonsInObsidian": "Buttons work inside Obsidian",
       "active.tasksAllDone": "all tasks done",
       "active.tasksNotStarted": "not started yet",
-      // доставка и ответ
+      // delivery and reply
       "active.delivery.sending": "sent, waiting for it in the session…",
       "active.delivery.queued": "queued — Claude will read it after the current step",
       "active.delivery.lost": "not visible in the session — check the tab",
       "active.you": "You, {ago} · {state}",
       "active.youWas": "You, {ago}",
+      "active.toNewest": "↓ Newest",
+      "active.toNewest.hint": "Scroll to the newest message; the chat then follows new ones again",
       "active.promptCut": "… the prompt continues in the feed",
       "active.interrupted": "interrupted — Claude did not reply",
       "active.awaitingClaude": "waiting for Claude's reply",
@@ -66,7 +68,7 @@
       "active.queuedMany": "queued {n} msgs — “{text}”",
       "active.replyStartAbove": "… the start of the reply is above",
       "active.noTextReply": "No text reply yet.",
-      // поле ответа и картинки
+      // reply field and images
       "active.maxImages": "no more than {n} images",
       "active.imageFailed": "image not attached: {msg}",
       "active.imageAlt": "image {n}",
@@ -82,7 +84,7 @@
       "active.placeholderBusy": "The agent is working — the message will be queued…",
       "active.placeholderBackground": "The session is waiting on background work — write now, the agent reads it right away…",
       "active.placeholder": "Reply… Enter to send, Shift+Enter for a new line, ⌘V for an image",
-      // сводка и секции
+      // summary and sections
       "active.none": "none",
       "active.shown": "shown {n}",
       "active.shownHint": "{shown} of {total} match the filters",
@@ -106,7 +108,7 @@
       "active.noMatches": "No session matches the selected filters.",
       "active.sectionWaiting": "Waiting for you",
       "active.sectionWorking": "Working",
-      // диалог и «Стоп»
+      // dialog and Stop
       "active.answerSent": "answer sent",
       "active.permissionInTab": "Permission request — answer it in the terminal tab",
       "active.questionInTab": "Question — answer it in the terminal tab",
@@ -131,7 +133,7 @@
       "active.stopping": "stopping…",
       "active.stopped": "stopped",
       "active.notStopped": "not stopped: {reason}",
-      // план
+      // plan
       "active.planAutoFull": "Run — edits without asking",
       "active.planAutoShort": "Run",
       "active.planManualFull": "Run — approve each edit",
@@ -149,7 +151,7 @@
       "active.reviseHint": "Write what to change: the plan goes back to the agent for revision",
       "active.plan": "Plan",
       "active.readPlanHint": "Read the full plan",
-      // восстановление и перенос
+      // restore and move
       "active.restoreMore": " and {n} more",
       "active.restoreOne": "After Obsidian restarted, a session open in a tab was closed: {names}.",
       "active.restoreMany": ["After Obsidian restarted, {n} session open in tabs was closed: {names}.",
@@ -170,7 +172,7 @@
       "active.moveEnding": "ending the session there…",
       "active.moveFailed": "failed: {msg}",
       "active.moveNoFolder": "The session ended, but it has no working folder — open it from search.",
-      // фильтры и сетка
+      // filters and grid
       "active.filter.domain": "Domain",
       "active.filter.project": "Project",
       "active.filter.topic": "Topic",
@@ -193,7 +195,7 @@
       "active.modeCompactHint": "Compact: many small cards",
       "active.modeFull": "detailed",
       "active.modeFullHint": "Detailed: Claude's reply and a reply field in the card",
-      // закрепить и скрыть
+      // pin and hide
       "active.unpin": "Unpin",
       "active.pinHint": "Pin to the top of the section",
       "active.hide": "hide",
@@ -201,7 +203,7 @@
       "active.hideAria": "Hide until the next message",
     },
     ru: {
-      // общее
+      // common
       "active.sending": "отправляю…",
       "active.noHostReply": "Obsidian не ответил — проверь вкладку",
       "active.error": "ошибка: {msg}",
@@ -210,7 +212,7 @@
       "active.quoted": "«{text}»",
       "active.go": "Перейти",
       "active.close": "Закрыть",
-      // статусы
+      // statuses
       "active.status.busy": "работает",
       "active.status.busyHint": "Агент сейчас работает",
       "active.status.background": "работает в фоне",
@@ -220,7 +222,7 @@
       "active.status.waitingHint": "Открыт вопрос или запрос разрешения — ответь кнопкой в карточке или во вкладке",
       "active.status.idle": "ждёт",
       "active.status.idleHint": "Агент закончил и ждёт твоего сообщения",
-      // карточка
+      // card
       "active.openInSearch": "Открыть карточку в поиске",
       "active.notIndexed": "Сессия ещё не в индексе",
       "active.noDescription": "Описание появится после классификации.",
@@ -244,12 +246,14 @@
       "active.buttonsInObsidian": "Кнопки работают внутри Obsidian",
       "active.tasksAllDone": "все задачи сделаны",
       "active.tasksNotStarted": "ждут начала",
-      // доставка и ответ
+      // delivery and reply
       "active.delivery.sending": "отправлено, жду его в сессии…",
       "active.delivery.queued": "в очереди — Claude прочтёт после текущего шага",
       "active.delivery.lost": "не видно в сессии — проверь вкладку",
       "active.you": "Ты, {ago} · {state}",
       "active.youWas": "Ты, {ago}",
+      "active.toNewest": "↓ К новым",
+      "active.toNewest.hint": "К последнему сообщению; дальше чат снова сам следит за новыми",
       "active.promptCut": "… продолжение запроса — в ленте",
       "active.interrupted": "прервано — Claude не ответил",
       "active.awaitingClaude": "ждёт ответа Claude",
@@ -263,7 +267,7 @@
       "active.queuedMany": "в очереди {n} сообщ. — «{text}»",
       "active.replyStartAbove": "… начало ответа выше",
       "active.noTextReply": "Текстового ответа пока нет.",
-      // поле ответа и картинки
+      // reply field and images
       "active.maxImages": "не больше {n} картинок",
       "active.imageFailed": "картинка не прикрепилась: {msg}",
       "active.imageAlt": "картинка {n}",
@@ -279,7 +283,7 @@
       "active.placeholderBusy": "Агент работает — сообщение встанет в очередь…",
       "active.placeholderBackground": "Сессия ждёт фон — можно написать, агент прочтёт сразу…",
       "active.placeholder": "Ответить… Enter — отправить, Shift+Enter — перенос, ⌘V — картинка",
-      // сводка и секции
+      // summary and sections
       "active.none": "нет",
       "active.shown": "показано {n}",
       "active.shownHint": "Под фильтры подходит {shown} из {total}",
@@ -303,7 +307,7 @@
       "active.noMatches": "Под выбранные фильтры не подходит ни одна сессия.",
       "active.sectionWaiting": "Ждут тебя",
       "active.sectionWorking": "Работают",
-      // диалог и «Стоп»
+      // dialog and Stop
       "active.answerSent": "ответ отправлен",
       "active.permissionInTab": "Запрос разрешения — ответить можно во вкладке терминала",
       "active.questionInTab": "Вопрос — ответить можно во вкладке терминала",
@@ -328,7 +332,7 @@
       "active.stopping": "останавливаю…",
       "active.stopped": "остановлено",
       "active.notStopped": "не остановлено: {reason}",
-      // план
+      // plan
       "active.planAutoFull": "Выполнять — правки без спроса",
       "active.planAutoShort": "Выполнять",
       "active.planManualFull": "Выполнять — правки с подтверждением",
@@ -346,7 +350,7 @@
       "active.reviseHint": "Написать, что изменить: план вернётся агенту на доработку",
       "active.plan": "План",
       "active.readPlanHint": "Прочитать план целиком",
-      // восстановление и перенос
+      // restore and move
       "active.restoreMore": " и ещё {n}",
       "active.restoreOne": "После перезапуска Obsidian закрылась сессия, открытая во вкладке: {names}.",
       "active.restoreMany": ["После перезапуска Obsidian закрылись {n} сессия, открытые во вкладках: {names}.",
@@ -368,7 +372,7 @@
       "active.moveEnding": "завершаю сессию там…",
       "active.moveFailed": "не вышло: {msg}",
       "active.moveNoFolder": "Сессия завершена, но рабочей папки нет — открой её из поиска.",
-      // фильтры и сетка
+      // filters and grid
       "active.filter.domain": "Домен",
       "active.filter.project": "Проект",
       "active.filter.topic": "Тема",
@@ -391,7 +395,7 @@
       "active.modeCompactHint": "Компактно: много маленьких карточек",
       "active.modeFull": "подр.",
       "active.modeFullHint": "Подробно: ответ Claude и поле ответа в карточке",
-      // закрепить и скрыть
+      // pin and hide
       "active.unpin": "Открепить",
       "active.pinHint": "Закрепить сверху секции",
       "active.hide": "скрыть",
@@ -399,4 +403,4 @@
       "active.hideAria": "Скрыть до следующего сообщения",
     },
   });
-})(typeof window !== "undefined" ? window : globalThis);
+})(window);

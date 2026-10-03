@@ -1,3 +1,12 @@
+# Third-party notices
+
+The release `main.js` and `styles.css` include the following components.
+
+## xterm.js, @xterm/addon-fit, @xterm/addon-web-links
+
+https://github.com/xtermjs/xterm.js — MIT License
+
+```
 Copyright (c) 2017-2019, The xterm.js authors (https://github.com/xtermjs/xterm.js)
 Copyright (c) 2014-2016, SourceLair Private Company (https://www.sourcelair.com)
 Copyright (c) 2012-2013, Christopher Jeffrey (https://github.com/chjj/)
@@ -19,3 +28,4 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+```

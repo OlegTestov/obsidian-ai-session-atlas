@@ -1,8 +1,8 @@
-"""Сообщения, набранные, пока Claude работал: они ждут в очереди, а не в транскрипте.
+"""Messages typed while Claude was working: they wait in a queue, not in the transcript.
 
-Claude Code пишет очередь записями `queue-operation`: `enqueue` с текстом, `dequeue` — первое
-ушло в работу, `remove` — убрано (часто уведомление фоновой задачи), `popAll` — забрано всё.
-Через ту же очередь идут уведомления тулов — их считаем, но наружу не отдаём.
+Claude Code writes the queue as `queue-operation` records: `enqueue` with text, `dequeue` when
+the first one is taken, `remove` when one is dropped (often a background task notice), `popAll`
+when all are taken. Tool notifications go through the same queue; they are counted but not returned.
 """
 from __future__ import annotations
 
@@ -12,11 +12,11 @@ import os
 MARK = b'"queue-operation"'
 TAIL_BYTES = 2 * 1024 * 1024
 TEXT_CHARS = 400
-# Не твои сообщения: уведомления фоновых задач и сабагентов.
+# Not your messages: background task and subagent notifications.
 SYSTEM_PREFIXES = ("<task-notification>", "<teammate-message", "<agent-message",
                    "Another Claude session sent")
 
-_cache: dict[str, tuple] = {}      # путь → (inode, размер, очередь)
+_cache: dict[str, tuple] = {}      # path -> (inode, size, queue)
 
 
 def _records(blob: bytes):
@@ -35,7 +35,7 @@ def _records(blob: bytes):
 
 
 def replay(records) -> list[dict]:
-    """Очередь после всех операций, по порядку. [{text, at}] — только твои сообщения."""
+    """Queue after all operations, in order. [{text, at}], your messages only."""
     queue: list[dict] = []
     for rec in records:
         op, content = rec.get("operation"), rec.get("content")

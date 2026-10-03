@@ -1,4 +1,4 @@
-"""CLI: index | search | show | rebuild. stdout — только JSON, диагностика в stderr."""
+"""CLI: index | search | show | rebuild. stdout carries only JSON, diagnostics go to stderr."""
 from __future__ import annotations
 
 import argparse
@@ -28,13 +28,13 @@ def _emit(data: dict) -> None:
 
 
 def _refresh(conn, args) -> None:
-    """search и show освежают индекс сами: агент не должен смотреть в устаревший каталог."""
+    """search and show refresh the index themselves: an agent must not read a stale catalog."""
     if getattr(args, "no_refresh", False):
         return
     index.ensure_indexed(conn)
     stats = index.index_all(conn)
     if stats["errors"]:
-        print(f"warning: {stats['errors']} файлов не разобрались", file=sys.stderr)
+        print(f"warning: {stats['errors']} files failed to parse", file=sys.stderr)
 
 
 def cmd_index(conn, args) -> int:
@@ -44,7 +44,7 @@ def cmd_index(conn, args) -> int:
 
 
 def cmd_rebuild(conn, args) -> int:
-    """Пересоздаёт только производное — ручные правки в user_overrides остаются."""
+    """Rebuilds only derived data; manual edits in user_overrides stay."""
     kept = conn.execute("SELECT count(*) AS n FROM user_overrides").fetchone()["n"]
     db.drop_derived(conn)
     stats = index.index_all(conn, full=True)
@@ -75,7 +75,7 @@ def cmd_show(conn, args) -> int:
     _refresh(conn, args)
     data = search_mod.load_session(conn, args.session_id)
     if data is None:
-        print(f"сессия не найдена: {args.session_id}", file=sys.stderr)
+        print(f"session not found: {args.session_id}", file=sys.stderr)
         return EXIT_NOT_FOUND
     _emit(_envelope(conn, {"command": "show", "session": data}))
     return EXIT_OK
@@ -96,7 +96,7 @@ def cmd_open(conn, args) -> int:
 
 
 def cmd_ensure(conn, args) -> int:
-    """Поднять сервер, если он лежит, и выйти. Браузер не открывается — плагину он не нужен."""
+    """Start the server if it is down, then exit. No browser opens: the plugin does not need one."""
     from . import service
     ok, message = service.ensure_running(args.port)
     _emit(_envelope(conn, {"command": "ensure", "ok": ok, "message": message,
@@ -125,18 +125,18 @@ def cmd_status(conn, args) -> int:
 
 
 def cmd_resume(conn, args) -> int:
-    """Печатает команду восстановления. Ничего не запускает — решает пользователь."""
+    """Prints the resume command. Runs nothing: the user decides."""
     _refresh(conn, args)
     info = actions.actions_for(conn, args.session_id)
     if not info["resume_command"]:
-        print("рабочая папка сессии не существует", file=sys.stderr)
+        print("the session's working folder does not exist", file=sys.stderr)
         return EXIT_NOT_FOUND
     _emit(_envelope(conn, {"command": "resume", "session_id": args.session_id, **info}))
     return EXIT_OK
 
 
 def cmd_handoff(conn, args) -> int:
-    """Двухстадийно и здесь: без --confirm показывает, что уйдёт наружу, и выходит."""
+    """Two-step here too: without --confirm it shows what will be sent out and exits."""
     kind = args.kind
     preview = enrich.preview(conn, args.session_id, kind)
     if not args.confirm:
@@ -145,7 +145,7 @@ def cmd_handoff(conn, args) -> int:
                                "chars": preview["chars"], "backend": preview["backend"],
                                "model": preview["model"],
                                "sensitivity": preview["sensitivity"],
-                               "hint": "перезапусти с --confirm, чтобы отправить"}))
+                               "hint": "rerun with --confirm to send"}))
         return EXIT_OK
     runner.grant_egress(conn, args.session_id, preview["content_hash"], kind,
                         preview["backend"], runner.model_for(kind)[0])
@@ -162,7 +162,7 @@ def cmd_handoff(conn, args) -> int:
 
 
 def cmd_classify(conn, args) -> int:
-    """Домен и тема силами модели. Без --confirm показывает, что уйдёт наружу, и выходит."""
+    """Domain and topic by the model. Without --confirm it shows what will be sent out and exits."""
     _refresh(conn, args)
     preview = classify.preview_batch(conn)
     if not args.confirm:
@@ -170,12 +170,12 @@ def cmd_classify(conn, args) -> int:
             print(sample + "\n---", file=sys.stderr)
         _emit(_envelope(conn, {"command": "classify-preview", **{
             k: v for k, v in preview.items() if k != "samples"},
-            "hint": "перезапусти с --confirm"}))
+            "hint": "rerun with --confirm"}))
         return EXIT_OK
     ids = classify.pending(conn)[: args.limit] if args.limit else classify.pending(conn)
     if not ids:
         _emit(_envelope(conn, {"command": "classify", "classified": 0,
-                               "note": "нечего классифицировать"}))
+                               "note": "nothing to classify"}))
         return EXIT_OK
     result = classify.classify_batch(conn, ids)
     _emit(_envelope(conn, {"command": "classify", **result}))
@@ -194,20 +194,20 @@ def cmd_topics(conn, args) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="atlas", description="Каталог сессий Claude Code")
+    parser = argparse.ArgumentParser(prog="atlas", description="Claude Code session catalog")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = sub.add_parser("index", help="проиндексировать изменившиеся транскрипты")
-    p.add_argument("--full", action="store_true", help="перечитать все файлы")
+    p = sub.add_parser("index", help="index changed transcripts")
+    p.add_argument("--full", action="store_true", help="reread all files")
     p.set_defaults(func=cmd_index)
 
-    p = sub.add_parser("rebuild", help="пересоздать производные таблицы")
+    p = sub.add_parser("rebuild", help="rebuild derived tables")
     p.set_defaults(func=cmd_rebuild)
 
-    p = sub.add_parser("purge-cache", help="удалить описания, хендоффы и классификацию")
+    p = sub.add_parser("purge-cache", help="delete summaries, handoffs and classification")
     p.set_defaults(func=cmd_purge_cache)
 
-    p = sub.add_parser("search", help="найти сессии")
+    p = sub.add_parser("search", help="search sessions")
     p.add_argument("query")
     p.add_argument("--limit", type=int, default=20)
     p.add_argument("--project", action="append", default=[])
@@ -216,53 +216,53 @@ def build_parser() -> argparse.ArgumentParser:
                    help="interactive | automation")
     p.add_argument("--topic", action="append", default=[])
     p.add_argument("--scope", choices=["prompts", "all"], default="prompts",
-                   help="prompts — по запросам и заголовку (по умолчанию), all — по всему индексу")
+                   help="prompts: prompts and title (default); all: the whole index")
     p.add_argument("--order", choices=["date", "relevance"], default="date")
     p.add_argument("--include-automation", action="store_true",
-                   help="показать и фоновые прогоны (хуки, ночной агент)")
-    p.add_argument("--since", help="ISO-дата нижней границы последней активности")
+                   help="include background runs too (hooks, nightly agent)")
+    p.add_argument("--since", help="ISO date: lower bound of last activity")
     p.add_argument("--no-refresh", action="store_true")
     p.set_defaults(func=cmd_search)
 
-    p = sub.add_parser("show", help="карточка сессии")
+    p = sub.add_parser("show", help="session card")
     p.add_argument("session_id")
     p.add_argument("--no-refresh", action="store_true")
     p.set_defaults(func=cmd_show)
 
-    p = sub.add_parser("resume", help="команда восстановления сессии")
+    p = sub.add_parser("resume", help="session resume command")
     p.add_argument("session_id")
     p.add_argument("--no-refresh", action="store_true")
     p.set_defaults(func=cmd_resume)
 
-    p = sub.add_parser("handoff", help="сжать сессию (по умолчанию только preview)")
+    p = sub.add_parser("handoff", help="compress a session (preview only by default)")
     p.add_argument("session_id")
     p.add_argument("--kind", choices=["handoff", "catalog_summary"], default="handoff")
-    p.add_argument("--confirm", action="store_true", help="подтвердить отправку наружу")
+    p.add_argument("--confirm", action="store_true", help="confirm sending out")
     p.add_argument("--no-refresh", action="store_true")
     p.set_defaults(func=cmd_handoff)
 
-    p = sub.add_parser("classify", help="проставить домен и тему моделью")
-    p.add_argument("--confirm", action="store_true", help="подтвердить отправку наружу")
-    p.add_argument("--limit", type=int, help="сколько сессий за прогон")
+    p = sub.add_parser("classify", help="set domain and topic with the model")
+    p.add_argument("--confirm", action="store_true", help="confirm sending out")
+    p.add_argument("--limit", type=int, help="how many sessions per run")
     p.add_argument("--no-refresh", action="store_true")
     p.set_defaults(func=cmd_classify)
 
-    p = sub.add_parser("topics", help="реестр тем")
-    p.add_argument("--merge", action="store_true", help="схлопнуть синонимы моделью")
+    p = sub.add_parser("topics", help="topic registry")
+    p.add_argument("--merge", action="store_true", help="merge synonyms with the model")
     p.set_defaults(func=cmd_topics)
 
-    p = sub.add_parser("serve", help="поднять локальный сервер")
+    p = sub.add_parser("serve", help="start the local server")
     p.add_argument("--port", type=int, default=8787)
     p.set_defaults(func=cmd_serve)
 
-    p = sub.add_parser("open", help="открыть интерфейс (поднимет сервер, если нужно)")
+    p = sub.add_parser("open", help="open the interface (starts the server if needed)")
     p.add_argument("--port", type=int, default=8787)
     p.set_defaults(func=cmd_open)
 
-    for name, fn, help_text in (("ensure", cmd_ensure, "поднять сервер, если он не работает"),
-                                ("install", cmd_install, "поставить LaunchAgent"),
-                                ("uninstall", cmd_uninstall, "снять LaunchAgent"),
-                                ("status", cmd_status, "состояние сервера и агента")):
+    for name, fn, help_text in (("ensure", cmd_ensure, "start the server if it is not running"),
+                                ("install", cmd_install, "install the LaunchAgent"),
+                                ("uninstall", cmd_uninstall, "remove the LaunchAgent"),
+                                ("status", cmd_status, "server and agent status")):
         p = sub.add_parser(name, help=help_text)
         p.add_argument("--port", type=int, default=8787)
         p.set_defaults(func=fn)
@@ -276,7 +276,7 @@ def main(argv: list[str] | None = None) -> int:
         return args.func(conn, args)
     except BrokenPipeError:
         return EXIT_OK
-    except Exception as exc:  # диагностика в stderr, stdout остаётся машиночитаемым
+    except Exception as exc:  # diagnostics to stderr, stdout stays machine-readable
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_ERROR
     finally:

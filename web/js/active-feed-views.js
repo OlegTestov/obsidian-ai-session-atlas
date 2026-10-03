@@ -1,6 +1,7 @@
-// Лента сессии: виды «Шаги» и «Файлы». «Ходы» — в active-feed.js, он же выбирает вид.
-// Классический скрипт: общий глобальный контекст с остальными файлами страницы.
-// Только чтение: ни один вид ничего не отправляет в сессию.
+// Session feed: the Steps and Files views. Turns live in active-feed.js, which also picks the view.
+// Classic script: shares one global scope with the other page files.
+/* exported FEED_VIEWS, renderSteps, renderFiles -- used by other page scripts */
+// Read-only: no view sends anything to the session.
 const FEED_VIEWS = [{ value: "turns", label: i18n("feed.view.turns") },
                     { value: "steps", label: i18n("feed.view.steps") },
                     { value: "files", label: i18n("feed.view.files") }];
@@ -65,7 +66,7 @@ function stepsTurn(t, last, busy) {
 function renderSteps(turns, s) {
   const busy = !!s && ["busy", "background"].includes(s.activity || s.status);
   if (!turns.length) return [el("p", "empty", i18n("feed.noPrompts"))];
-  // С фильтром — только ходы, где есть подходящие шаги: иначе строки «нет» заслоняют найденное.
+  // With a filter, only turns that have matching steps: otherwise "none" rows bury the matches.
   const keep = turns.map((t, i) => [t, i]).filter(([t]) => stepFilter === "all"
     || ((t.events && t.events.events) || []).some(e => AtlasLogic.stepPasses(e, stepFilter)));
   if (!keep.length) return [stepFilterBar(turns), el("p", "empty", i18n("feed.noMatchInTurns", { n: turns.length }))];
@@ -82,7 +83,7 @@ function fileRow(f, cwd, home) {
   if (f.edit || f.write) {
     const delta = el("span", "fdelta");
     delta.append(el("span", "plus", "+" + f.added));
-    if (f.removed) delta.appendChild(el("span", "minus", " −" + f.removed));   // Write: сколько стёр — неизвестно
+    if (f.removed) delta.appendChild(el("span", "minus", " −" + f.removed));   // Write: how much it erased is unknown
     row.appendChild(delta);
   }
   const ops = [f.write ? i18n("feed.file.written", { n: f.write }) : null,

@@ -3,6 +3,20 @@ on:
   push:
   pull_request:
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - name: ESLint (Obsidian recommended rules)
+        run: npm run lint
+      - uses: astral-sh/setup-uv@v6
+      - name: Ruff
+        run: uvx ruff@0.16.10 check atlas tests tools
   test:
     runs-on: macos-14
     steps:
@@ -10,18 +24,20 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-      # Тот же python3, что у пользователя: системный из Command Line Tools (3.9 на macOS 13+).
+          cache: npm
+      - run: npm ci
+      # The same python3 users have: the system one from Command Line Tools (3.9 on macOS 13+).
       - name: Tests on the system python3
         run: |
           /usr/bin/python3 --version
           /usr/bin/python3 -m venv .venv
           .venv/bin/pip install --quiet pytest
           .venv/bin/python -m pytest -q
-      - name: Page translations
-        run: node tools/check_i18n.js
+      - name: Node tests (plugin, page, translations, bundle)
+        run: npm test
       - name: Build
-        run: /usr/bin/python3 tools/build.py --out dist
-  # Самый старый поддерживаемый: python3 из Command Line Tools 13 на macOS 12 — это 3.8.
+        run: npm run build
+  # The oldest supported: python3 from Command Line Tools 13 on macOS 12 is 3.8.
   python38:
     runs-on: macos-14
     steps:
@@ -29,6 +45,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+          cache: npm
+      - run: npm ci
       - uses: astral-sh/setup-uv@v6
       - name: Tests on python 3.8
         run: uv run --no-project --python 3.8 --with pytest python -m pytest -q

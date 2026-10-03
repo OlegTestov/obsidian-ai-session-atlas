@@ -1,4 +1,4 @@
-"""«Статистика»: активное время, ответ считается один раз, сабагенты, дописанный файл, период."""
+"""The "Statistics" tab: active time, a reply counted once, subagents, an appended file, period."""
 from __future__ import annotations
 
 import os
@@ -42,7 +42,7 @@ def test_active_time_skips_long_pauses(atlas_env, write_session):
         answer("m1", "2026-09-01T10:01:00.000Z", tools=[("Bash", {"command": "ls"})]),
         tool_result("ok", ts="2026-09-01T10:03:00.000Z"),
         answer("m2", "2026-09-01T10:04:00.000Z"),
-        prompt("ещё", "2026-09-01T11:00:00.000Z", "u2"),          # 56 минут паузы — не работа
+        prompt("ещё", "2026-09-01T11:00:00.000Z", "u2"),          # a 56-minute pause is not work
         answer("m3", "2026-09-01T11:02:00.000Z"),
     ])
     t = _totals(_index(atlas_env))
@@ -57,8 +57,8 @@ def test_answer_split_into_records_and_copied_by_resume_counts_once(atlas_env, w
              answer("m1", "2026-09-01T10:01:01.000Z", uuid="b",
                     tools=[("Skill", {"skill": "browse"})])]
     write_session("p", first)
-    # Возобновлённая сессия несёт копию той же истории и свой новый ответ.
-    write_session("p", first + [prompt("дальше", "2026-09-01T12:00:00.000Z", "u9"),
+    # A resumed session carries a copy of the same history plus its own new reply.
+    write_session("p", [*first, prompt("дальше", "2026-09-01T12:00:00.000Z", "u9"),
                                 answer("m2", "2026-09-01T12:01:00.000Z")])
     conn = _index(atlas_env)
     t = _totals(conn)
@@ -77,7 +77,7 @@ def test_subagent_tokens_count_but_its_time_does_not(atlas_env, write_session):
     os.makedirs(sub)
     with open(os.path.join(sub, "agent-a1.jsonl"), "w") as fh:
         fh.write(answer("s1", "2026-09-01T10:01:30.000Z"))
-        # Без пометки isSidechain время всё равно не считается: файл сабагента идёт параллельно.
+        # Even without the isSidechain flag the time is not counted: the subagent file runs in parallel.
         fh.write(answer("s2", "2026-09-01T10:05:00.000Z"))
     s = stats.summary(_index(atlas_env), "all", now=NOW)
     assert s["totals"]["answers"] == 3
@@ -117,7 +117,7 @@ def test_period_takes_only_its_part_of_a_long_session(atlas_env, write_session):
 
 def test_wall_time_merges_parallel_sessions():
     rows = [{"act": 600, "ts": "2026-09-01T10:10:00.000Z"},
-            {"act": 600, "ts": "2026-09-01T10:15:00.000Z"},      # идёт параллельно первой
+            {"act": 600, "ts": "2026-09-01T10:15:00.000Z"},      # runs in parallel with the first
             {"act": 60, "ts": "2026-09-01T12:00:00.000Z"}]
     assert stats.wall_seconds(rows) == 900 + 60
 
@@ -132,7 +132,7 @@ def test_answer_continued_in_the_next_pass_adds_its_time(atlas_env, write_sessio
     path = write_session("p", [prompt("раз", "2026-09-01T10:00:00.000Z", "u1"),
                                answer("m1", "2026-09-01T10:01:00.000Z", uuid="a")])
     conn = _index(atlas_env)
-    with open(path, "a") as fh:                  # второй блок того же ответа — уже в хвосте
+    with open(path, "a") as fh:                  # second block of the same reply — already in the tail
         fh.write(answer("m1", "2026-09-01T10:02:00.000Z", uuid="b",
                         tools=[("Bash", {"command": "ls"})]))
     os.utime(path, None)

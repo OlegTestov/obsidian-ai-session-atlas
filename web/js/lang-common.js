@@ -1,10 +1,10 @@
-// Строки страницы: разметка, общее, поиск, карточка сессии, действия. Ключи — с префиксом «common / search / card / actions.»; en и ru — одинаковый набор ключей.
-// Множественное число — массивом: ru [one, few, many], en [one, other]; {n} — само число.
+// Page strings: markup, common, search, session card, actions. Keys start with "common / search / card / actions."; en and ru have the same key set.
+// Plurals are arrays: ru [one, few, many], en [one, other]; {n} is the number.
 (function (root) {
-  const I = typeof module !== "undefined" && module.exports ? require("./i18n.js") : root.I18N;
+  const I = root.I18N;
   I.add({
     en: {
-      // --- разметка: вкладки и подписи ---
+      // --- markup: tabs and labels ---
       "nav.sections": "Sections",
       "nav.search": "Search",
       "nav.active": "Active",
@@ -16,7 +16,7 @@
       "common.closeFeed": "Close feed",
       "common.statsPeriod": "Statistics period",
 
-      // --- общее ---
+      // --- common ---
       "common.loading": "loading…",
       "common.save": "Save",
       "common.saved": "saved",
@@ -42,7 +42,7 @@
       "common.obsidianNoAnswer": "Obsidian did not respond — turn the Session Atlas plugin off and on",
       "common.raiseFailed": "did not start: {reason} — in a terminal: atlas ensure",
 
-      // --- поиск ---
+      // --- search ---
       "search.placeholder": "search prompts…",
       "search.hint": "\"phrase\" — words in a row · -word — exclude · OR — either of two. ⌘K — focus, Esc — clear",
       "search.orderLabel": "Result order",
@@ -120,7 +120,7 @@
         + "and “What was done” for new and changed sessions (up to {max} per pass) — these are Claude calls "
         + "that use your subscription quota.",
 
-      // --- карточка сессии ---
+      // --- session card ---
       "card.pick": "Pick a session on the left",
       "delete.menu": "Delete session…",
       "delete.title": "Delete “{title}”?",
@@ -196,7 +196,7 @@
       "card.tickets": "Tickets",
       "card.renamedInCatalog": "Renamed in the catalog",
 
-      // --- действия ---
+      // --- actions ---
       "actions.noCwd": "The session's working folder no longer exists — there is nothing to build the command from.",
       "actions.forkNote": "An exact fork carries the whole context without compression. ",
       "actions.openingTab": "opening a terminal tab in Obsidian…",
@@ -231,7 +231,7 @@
       "actions.nsGo": "Start",
       "actions.nsCopy": "Copy command",
 
-      // --- справка ---
+      // --- help ---
       "help.gotIt": "Got it",
       "help.whatH": "What this is",
       "help.whatP": "A list of all your conversations with Claude Code. It reads the files Claude Code itself "
@@ -308,7 +308,7 @@
         + "size and the text itself. Sessions marked as sensitive are never sent out.",
     },
     ru: {
-      // --- разметка: вкладки и подписи ---
+      // --- markup: tabs and labels ---
       "nav.sections": "Разделы",
       "nav.search": "Поиск",
       "nav.active": "Активные",
@@ -320,7 +320,7 @@
       "common.closeFeed": "Закрыть ленту",
       "common.statsPeriod": "Период статистики",
 
-      // --- общее ---
+      // --- common ---
       "common.loading": "загрузка…",
       "common.save": "Сохранить",
       "common.saved": "сохранено",
@@ -346,7 +346,7 @@
       "common.obsidianNoAnswer": "Obsidian не ответил — выключи и включи плагин Session Atlas",
       "common.raiseFailed": "не поднялся: {reason} — в терминале: atlas ensure",
 
-      // --- поиск ---
+      // --- search ---
       "search.placeholder": "поиск по запросам…",
       "search.hint": "\"фраза\" — слова подряд · -слово — исключить · ИЛИ — любое из двух. ⌘K — фокус, Esc — очистить",
       "search.orderLabel": "Порядок выдачи",
@@ -426,7 +426,7 @@
         + "описания и «Что сделано» у новых и изменившихся сессий (до {max} за раз) — "
         + "это вызовы Claude за счёт квоты подписки.",
 
-      // --- карточка сессии ---
+      // --- session card ---
       "card.pick": "Выбери сессию слева",
       "delete.menu": "Удалить сессию…",
       "delete.title": "Удалить «{title}»?",
@@ -502,7 +502,7 @@
       "card.tickets": "Тикеты",
       "card.renamedInCatalog": "Переименовано в каталоге",
 
-      // --- действия ---
+      // --- actions ---
       "actions.noCwd": "Рабочая папка сессии не существует — команду собрать не из чего.",
       "actions.forkNote": "Точный форк тащит весь контекст без сжатия. ",
       "actions.openingTab": "открываю вкладку терминала в Obsidian…",
@@ -537,7 +537,7 @@
       "actions.nsGo": "Запустить",
       "actions.nsCopy": "Копировать команду",
 
-      // --- справка ---
+      // --- help ---
       "help.gotIt": "Понятно",
       "help.whatH": "Что это",
       "help.whatP": "Список всех твоих разговоров с Claude Code. Он читает файлы, которые Claude Code сам "
@@ -610,4 +610,4 @@
         + "показывают объём и сам текст. Сессии, помеченные чувствительными, наружу не идут вовсе.",
     },
   });
-})(typeof window !== "undefined" ? window : globalThis);
+})(window);

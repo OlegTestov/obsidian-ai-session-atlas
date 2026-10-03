@@ -1,10 +1,11 @@
-"""Полное удаление сессии: файлы Claude Code на диске и всё, что о ней знает каталог.
+"""Full session deletion: Claude Code files on disk and everything the catalog knows about it.
 
-Трогаем только стандартные места Claude Code (папка ~/.claude) и папку данных каталога.
-Запущенную сессию не удаляем: процесс тут же записал бы транскрипт заново.
+Touches only standard Claude Code locations (the ~/.claude folder) and the catalog data folder.
+A running session is not deleted: its process would immediately write the transcript again.
 """
 from __future__ import annotations
 
+import contextlib
 import glob
 import json
 import os
@@ -16,7 +17,7 @@ from . import active, db, index, store
 from .actions import valid_session_id
 from .messages import msg
 
-HISTORY = "history.jsonl"            # история ввода Claude Code (стрелка вверх)
+HISTORY = "history.jsonl"            # Claude Code input history (up arrow)
 DB_TABLES = ("sources", "user_overrides", "enrichment", "classification", "jobs", "egress_grants")
 
 
@@ -37,10 +38,8 @@ def _size(path: str) -> int:
     total = 0
     for root, _dirs, files in os.walk(path):
         for name in files:
-            try:
+            with contextlib.suppress(OSError):
                 total += os.lstat(os.path.join(root, name)).st_size
-            except OSError:
-                pass
     return total
 
 
@@ -67,7 +66,7 @@ def _line_sid(line: str) -> str | None:
 
 
 def _handoffs(conn: sqlite3.Connection, session_id: str) -> list[str]:
-    """Хендоффы каталога названы по 8 знакам id: берём, только если префикс ни у кого больше нет."""
+    """Catalog handoffs are named by 8 id characters: take one only if no other session shares the prefix."""
     short = session_id[:8]
     others = conn.execute("SELECT COUNT(*) FROM sessions WHERE session_id LIKE ? AND session_id<>?",
                           (short + "%", session_id)).fetchone()[0]
@@ -100,7 +99,7 @@ def is_running(session_id: str, sessions_dir: str | None = None, table: dict | N
 
 
 def footprint(conn: sqlite3.Connection, session_id: str) -> dict:
-    """Что будет удалено — для окна подтверждения. Ничего не меняет."""
+    """What will be deleted, for the confirmation dialog. Changes nothing."""
     if not valid_session_id(session_id):
         raise DeleteError(msg("session_id.invalid"))
     items = [{"kind": kind, "path": p, "bytes": _size(p), "files": _files_in(p)}
@@ -120,7 +119,7 @@ def footprint(conn: sqlite3.Connection, session_id: str) -> dict:
 
 
 def _drop_history(path: str, session_id: str) -> int:
-    """Строки этой сессии из истории ввода. Файл переписывается целиком и атомарно."""
+    """This session's lines from the input history. The file is rewritten whole and atomically."""
     try:
         with open(path, encoding="utf-8") as fh:
             lines = fh.readlines()
@@ -151,14 +150,14 @@ def delete_session(conn: sqlite3.Connection, session_id: str) -> dict:
         raise DeleteError(msg("delete.running"))
     roots = (os.path.realpath(claude_home()), os.path.realpath(db.atlas_home()))
     for item in plan["items"]:
-        # Только внутри своих папок: путь из glob, но проверяем и то, куда он ведёт.
+        # Only inside our own folders: the path comes from glob, but where it points is checked too.
         parent = os.path.realpath(os.path.dirname(item["path"]))
         if not any(parent == r or parent.startswith(r + os.sep) for r in roots):
             raise DeleteError(msg("delete.outside", path=item["path"]))
     for item in plan["items"]:
         _remove(item["path"])
     history = _drop_history(os.path.join(claude_home(), HISTORY), session_id)
-    with index.writer_lock():            # индексатор не допишет сессию обратно посреди удаления
+    with index.writer_lock():            # the indexer cannot write the session back mid-deletion
         store.purge(conn, session_id)
         for table in DB_TABLES:
             conn.execute(f"DELETE FROM {table} WHERE session_id=?", (session_id,))

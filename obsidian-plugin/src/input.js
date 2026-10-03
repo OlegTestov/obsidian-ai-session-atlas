@@ -1,17 +1,16 @@
-// Ввод в сессию из вкладки «Активные»: текст, ответ на диалог. Подмешивается в класс плагина.
-const {
-  ATLAS_ORIGIN,
+// Input into a session from the Active view: text and dialog answers. Mixed into the plugin class.
+import {
   HOST_SOURCE,
   MAX_SEND_CHARS,
   ENTER_DELAY_MS,
   IMAGE_ENTER_DELAY_MS,
   PASTE_START,
   PASTE_END,
-} = require("./constants");
-const { cleanInput } = require("./terminal");
-const { parseDialog, sameOption, extractCommandOutput, squash, FEEDBACK_LABEL } = require("./dialog");
+} from "./constants";
+import { cleanInput } from "./terminal";
+import { parseDialog, sameOption, extractCommandOutput, squash, FEEDBACK_LABEL } from "./dialog";
 
-// Команды, которые отвечают на экране, а не в транскрипте: их ответ читается с экрана вкладки.
+// Commands that answer on screen, not in the transcript: their output is read from the tab's screen.
 const SCREEN_COMMANDS = new Set(["context", "usage", "effort", "model", "goal", "rewind", "cost",
   "status", "stats", "mcp", "skills", "agents", "hooks", "permissions", "memory", "tasks",
   "help", "doctor", "release-notes", "config", "plugin"]);
@@ -21,20 +20,21 @@ const ESC = "\x1b";
 const SCREEN_POLL_MS = 100;
 const SCREEN_WAIT_MS = 1500;
 const MAX_FEEDBACK_CHARS = 4000;
-const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const pause = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
 const STOPPABLE = new Set(["busy", "shell", "waiting"]);
 
-const answer = (target, message) => {
-  if (target && typeof target.postMessage === "function") {
-    target.postMessage(Object.assign({ source: HOST_SOURCE }, message), ATLAS_ORIGIN);
-  }
-};
-
 class InputMethods {
+  /** A reply to the catalog page, addressed to this install's server origin only. */
+  answerPage(target, message) {
+    if (target && typeof target.postMessage === "function") {
+      target.postMessage(Object.assign({ source: HOST_SOURCE }, message), this.atlasOrigin());
+    }
+  }
+
   /**
-   * Своя ли это сессия: PID — вкладки терминала, процесс claude — её потомок, в его файле тот же
-   * id сессии. {error} или {tab, state}. Статус здесь не решает: для текста диалог — помеха,
-   * для ответа на диалог — условие.
+   * Whether this is our session: the PID belongs to a terminal tab, the claude process descends
+   * from it, and its file has the same session id. {error} or {tab, state}. Status is not checked
+   * here: a dialog blocks text input but is required for a dialog answer.
    */
   async checkTarget(data) {
     if (!Number.isInteger(data.ptyPid) || data.ptyPid <= 1
@@ -53,11 +53,11 @@ class InputMethods {
   }
 
   /**
-   * Печатает текст во вкладку терминала, как будто его набрал человек. Отказывает, если
-   * сессия ждёт решения в диалоге: Enter там выбрал бы вариант — вплоть до разрешения команды.
+   * Types text into the terminal tab as if a person typed it. Refuses while the session waits for a
+   * dialog decision: Enter there would pick an option, up to allowing a command.
    */
   async sendText(target, data) {
-    const reply = (ok, reason) => answer(target, { type: "sent", ok, reason: reason || null,
+    const reply = (ok, reason) => this.answerPage(target, { type: "sent", ok, reason: reason || null,
                                                    ptyPid: data.ptyPid, nonce: data.nonce });
     if (typeof data.text !== "string") return reply(false, this.t("input.badRequest"));
     const text = cleanInput(data.text);
@@ -73,7 +73,7 @@ class InputMethods {
     }
     const stdin = await this.ptyInput(tab.leaf);
     if (!stdin) return reply(false, this.t("input.noInput"));
-    // Путь к картинке, вставленный отдельно, Claude Code превращает во вложение [Image #N].
+    // An image path pasted on its own becomes an [Image #N] attachment in Claude Code.
     for (const image of images) stdin.write(PASTE_START + image + PASTE_END + " ");
     if (text) stdin.write(text.includes("\n") ? PASTE_START + text + PASTE_END : text);
     window.setTimeout(() => stdin.write("\r"),
@@ -83,23 +83,26 @@ class InputMethods {
     if (command && SCREEN_COMMANDS.has(command[1]) && !images.length) {
       window.setTimeout(() => {
         const out = extractCommandOutput(this.screenLines(tab.leaf), text.trim());
-        answer(target, { type: "command-output", sessionId: data.sessionId, nonce: data.nonce,
+        this.answerPage(target, { type: "command-output", sessionId: data.sessionId, nonce: data.nonce,
                          command: text.trim(), text: out ? out.text : "", panel: !!(out && out.panel) });
       }, ENTER_DELAY_MS + COMMAND_OUTPUT_MS);
     }
   }
 
-  /** Диалог на экране вкладки — разобранным, чтобы карточка показала вопрос и варианты. */
+  /** The dialog on the tab's screen, parsed, so the card can show the question and options. */
   async readDialog(target, data) {
-    const reply = (dialog, reason) => answer(target, { type: "dialog", sessionId: data.sessionId,
+    const reply = (dialog, reason) => this.answerPage(target, { type: "dialog", sessionId: data.sessionId,
       ptyPid: data.ptyPid, dialog: dialog || null, reason: reason || null });
     const { error, tab, state } = await this.checkTarget(data);
     if (error) return reply(null, error);
     if (state.status !== "waiting") return reply(null, this.t("input.noDialog"));
     const lines = this.screenLines(tab.leaf);
     const dialog = parseDialog(lines);
-    if (dialog) return reply(dialog);
-    // Не вопрос с вариантами, а панель (/usage, /effort, /model…): показать её текст, закрыть — Esc.
+    if (dialog) {
+      const title = dialog.kind === "plan" ? this.t(dialog.title) : dialog.title;
+      return reply({ ...dialog, title, reason: dialog.reason && this.t(dialog.reason) });
+    }
+    // Not a question with options but a panel (/usage, /effort, /model…): show its text; Esc closes it.
     const panel = extractCommandOutput(lines, "");
     if (panel && panel.panel) {
       return reply({ kind: "panel", title: panel.text.split("\n")[0], details: [], question: "",
@@ -109,12 +112,12 @@ class InputMethods {
   }
 
   /**
-   * Одна цифра, без Enter: Claude Code выбирает вариант сразу (проверено на живом CLI —
-   * лишний Enter уходит в строку ввода). Перед нажатием экран перечитывается: вариант под этим
-   * номером обязан совпасть с тем, что видел человек, иначе диалог сменился.
+   * One digit, no Enter: Claude Code picks the option at once (checked on the live CLI: an extra
+   * Enter lands in the input line). The screen is re-read before the key press: the option under
+   * this number must match what the person saw, otherwise the dialog has changed.
    */
   async answerDialog(target, data) {
-    const reply = (ok, reason) => answer(target, { type: "answered", ok, reason: reason || null,
+    const reply = (ok, reason) => this.answerPage(target, { type: "answered", ok, reason: reason || null,
       sessionId: data.sessionId, nonce: data.nonce });
     if (!Number.isInteger(data.option) || data.option < 1 || data.option > 9
         || typeof data.text !== "string") {
@@ -135,9 +138,9 @@ class InputMethods {
   }
 
   /**
-   * Замечания к плану: цифра ставит курсор в поле, текст набирается в него, Enter отклоняет
-   * план с этим текстом. После каждого шага экран перечитывается; не сошлось — Enter не жмём:
-   * план остаётся неотвеченным, и человек допишет во вкладке.
+   * Plan feedback: the digit puts the cursor into the field, the text is typed into it, and Enter
+   * rejects the plan with that text. The screen is re-read after each step; on a mismatch Enter is
+   * not pressed: the plan stays unanswered and the person finishes it in the tab.
    */
   async planFeedback(tab, dialog, data, reply) {
     const text = cleanInput(String(data.feedback || "")).replace(/\s+/g, " ").trim();
@@ -169,11 +172,11 @@ class InputMethods {
   }
 
   /**
-   * «Стоп» — ровно одно Esc, как в терминале: работающая сессия прерывает ход, открытый диалог
-   * закрывается. В покое — отказ: второе Esc подряд открывает в Claude Code меню отката.
+   * "Stop" is exactly one Esc, as in the terminal: a working session interrupts its turn, an open
+   * dialog closes. An idle session is refused: a second Esc in a row opens Claude Code's rewind menu.
    */
   async interrupt(target, data) {
-    const reply = (ok, reason) => answer(target, { type: "stopped", ok, reason: reason || null,
+    const reply = (ok, reason) => this.answerPage(target, { type: "stopped", ok, reason: reason || null,
       sessionId: data.sessionId, nonce: data.nonce });
     const { error, tab, state } = await this.checkTarget(data);
     if (error) return reply(false, error);
@@ -185,4 +188,4 @@ class InputMethods {
   }
 }
 
-module.exports = { InputMethods };
+export { InputMethods };

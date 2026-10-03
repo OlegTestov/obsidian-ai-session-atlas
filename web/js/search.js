@@ -1,9 +1,9 @@
-// Вкладка «Поиск»: список, фильтры слева и обработчики событий.
-// Классический скрипт: общий глобальный контекст с остальными файлами страницы.
-// --- список -----------------------------------------------------------------
+// Search tab: the list, the filters on the left and event handlers.
+// Classic script: shares one global scope with the other page files.
+// --- list --------------------------------------------------------------------
 
-// Поиск идёт на каждое нажатие: ответы приходят не по порядку, и ответ на «13» мог лечь
-// поверх ответа на «1359». Рисуем только ответ на последний отправленный запрос.
+// Search runs on every key press: answers arrive out of order, and the answer to "13" could land
+// over the answer to "1359". Only the answer to the last sent query is drawn.
 registerView("search", { tab: "#view-search", panel: "#app", refresh: () => loadList() });
 
 let listSeq = 0;
@@ -37,8 +37,8 @@ async function loadList(keepScroll) {
   renderChips(shownNote);
   $("#stat").textContent = data.indexing ? i18n("search.indexing")
     : i18n("search.indexedAt", { when: ago(data.indexed_through) });
-  // Долгий проход идёт в фоне: перерисуем список, когда он закончится, — если ты не печатаешь.
-  if (data.indexing) setTimeout(() => { if (seq === listSeq) loadList(true); }, 2500);
+  // A long pass runs in the background: redraw the list when it ends, unless you are typing.
+  if (data.indexing) window.setTimeout(() => { if (seq === listSeq) loadList(true); }, 2500);
   const lead = [];
   if (data.elsewhere) {
     const note = el("div", "elsewhere", i18nN("search.elsewhere", data.elsewhere));
@@ -89,12 +89,12 @@ async function loadList(keepScroll) {
       meta.appendChild(el("span", "pill acc", projects[0]
         + (projects.length > 1 ? ` +${projects.length - 1}` : "")));
     }
-    // «разное» — значение темы из данных, не текст интерфейса.
+    // The misc topic value (in either language) comes from the data, not interface text.
     if (s.topic && !/^(разное|misc)$/.test(s.topic)) meta.appendChild(el("span", "pill acc", s.topic));
     (s.domains || []).forEach(d => meta.appendChild(el("span", "pill", d)));
     if (s.sensitivity === "sensitive")
       meta.appendChild(el("span", "pill warn", i18n("search.sensitive")));
-    // Тикет, совпавший с запросом, — первым и выделенным: иначе на «1359» видны ABC-1082 и ABC-13.
+    // A ticket matching the query comes first and highlighted: otherwise "1359" shows ABC-1082 and ABC-13.
     const wanted = (data.plan || []).filter(t => !t.negate).map(t => t.text.toLowerCase());
     const isHit = t => wanted.some(w => t.toLowerCase().includes(w));
     const tickets = [...(s.tickets || [])].sort((a, b) => isHit(b) - isHit(a));
@@ -112,7 +112,7 @@ async function loadList(keepScroll) {
 }
 
 
-// --- фильтры ----------------------------------------------------------------
+// --- filters -----------------------------------------------------------------
 
 function fitsDomains(owned) {
   if (!state.domains.size) return true;
@@ -127,7 +127,7 @@ function refillSelect(sel, values, map, stateKey, label) {
   if (keep && allowed.includes(keep)) {
     sel.value = keep;
   } else if (keep) {
-    // Молча менять выбор нельзя: говорим, что и почему сняли.
+    // The selection must not change silently: say what was cleared and why.
     lastResetNote = i18n("search.filterReset", { label, value: keep });
     state[stateKey] = "";
     sel.value = "";
@@ -158,7 +158,7 @@ function bindFilters(data) {
   });
   refillDependentFilters();
   bindAutoClassify(data.auto_classify);
-  // ИИ-функции выключены — кнопки модели не показываем: сервер их всё равно отклонит.
+  // AI features off: hide the model buttons, the server rejects them anyway.
   const llm = data.llm_enabled === true;
   $("#classify").hidden = !llm;
   $("#auto-classify-label").hidden = !llm;
@@ -176,7 +176,7 @@ function bindFilters(data) {
 
 let classifyJobId = null;
 
-// Автоклассификация: сервер раз в час сам размечает новые сессии. Выключена по умолчанию.
+// Auto-classification: the server labels new sessions once an hour. Off by default.
 function bindAutoClassify(auto) {
   const box = $("#auto-classify");
   if (!auto) return;
@@ -204,14 +204,14 @@ function setClassifyRunning(left) {
   btn.textContent = left ? i18n("search.classifyingLeft", { n: left }) : i18n("search.classifying");
 }
 
-// Джоба крутится на сервере, поэтому окно закрываем сразу и следим за ней в фоне.
+// The job runs on the server, so the dialog closes at once and the job is tracked in the background.
 async function watchClassify(jobId) {
   if (classifyJobId === jobId) return;
   classifyJobId = jobId;
   for (let i = 0; i < 400; i++) {
     let job;
     try { job = await api("/api/job/" + jobId); }
-    catch (e) { break; }
+    catch { break; }
     if (job.state === "done" || job.state === "failed") {
       classifyJobId = null;
       const facets = await api("/api/facets");
@@ -224,19 +224,19 @@ async function watchClassify(jobId) {
       }
       return;
     }
-    // Осталось считаем по фасетам: pending честно убывает после каждой пачки.
-    try { setClassifyRunning((await api("/api/facets")).unclassified); } catch (e) {}
-    await new Promise(r => setTimeout(r, 5000));
+    // The remaining count comes from the facets: pending honestly drops after each batch.
+    try { setClassifyRunning((await api("/api/facets")).unclassified); } catch { /* keep the last count */ }
+    await new Promise(r => window.setTimeout(r, 5000));
   }
   classifyJobId = null;
 }
 
-// --- события ----------------------------------------------------------------
+// --- events ------------------------------------------------------------------
 
 let timer;
 $("#q").addEventListener("input", e => {
   state.q = e.target.value.trim();
-  clearTimeout(timer); timer = setTimeout(loadList, 220);
+  window.clearTimeout(timer); timer = window.setTimeout(loadList, 220);
 });
 $("#project").addEventListener("change", e => { state.project = e.target.value; loadList(); });
 $("#topic").addEventListener("change", e => { state.topic = e.target.value; loadList(); });
@@ -252,19 +252,19 @@ $("#m-close").addEventListener("click", () => $("#modal").close());
 $("#help-btn").addEventListener("click", () => {
   buildHelp();
   $("#help").showModal();
-  // Иначе фокус уходит на прокручиваемое тело и оно обводится рамкой.
+  // Otherwise focus moves to the scrolling body and it gets an outline.
   $("#help-close").focus();
 });
 $("#help-close").addEventListener("click", () => $("#help").close());
 $("#rename-cancel").addEventListener("click", () => $("#rename").close());
 
-// Меню закрывается кликом мимо. Слушатель один на всё приложение: карточка перерисовывается
-// часто, и вешать его заново на каждое открытие — течь.
+// A click outside closes the menu. One listener for the whole app: the card redraws
+// often, and adding a listener on every open leaks.
 document.addEventListener("click", e => {
   const menu = document.getElementById("menu");
   if (menu) menu.classList.add("hidden");
-  closeFilters();                 // выпадающие фильтры «Активных» закрываются тем же кликом мимо
-  selectCardByClick(e);           // клик по карточке «Активных» выбирает её для клавиатуры
+  closeFilters();                 // the Active dropdown filters close on the same outside click
+  selectCardByClick(e);           // a click on an Active card selects it for the keyboard
 });
 
 document.addEventListener("keydown", e => {
@@ -298,7 +298,7 @@ $("#classify").addEventListener("click", async () => {
       $("#m-ok").disabled = true;
       try {
         const job = await api("/api/classify", { confirmed:true });
-        $("#modal").close();                  // работа идёт на сервере, ждать её незачем
+        $("#modal").close();                  // the work runs on the server, no need to wait for it
         setClassifyRunning(prev.pending);
         watchClassify(job.job_id);
       } catch (e) {

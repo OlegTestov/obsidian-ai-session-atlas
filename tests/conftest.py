@@ -1,8 +1,9 @@
-"""Фикстуры: синтетические транскрипты под каждый разобранный в спеке случай."""
+"""Fixtures: synthetic transcripts for each case covered in the spec."""
 from __future__ import annotations
 
 import json
 import os
+import threading
 import uuid
 
 import pytest
@@ -10,9 +11,9 @@ import pytest
 from atlas import config
 
 HOME = os.path.expanduser("~")
-NOTES = os.path.join(HOME, "Notes")       # vault тестового профиля: разбор путей лексический
+NOTES = os.path.join(HOME, "Notes")       # test profile vault: path resolution is lexical
 
-# Нейтральный профиль для тестов: у настоящего пользователя всё это — его config.json.
+# Neutral test profile: for a real user all of this comes from their config.json.
 TEST_CONFIG = {
     "language": "ru",
     "vaults": [{"path": "~/Notes", "id": "vault"}],
@@ -38,7 +39,7 @@ def write_config(home, extra=None) -> None:
 
 @pytest.fixture(autouse=True)
 def _test_profile(tmp_path, monkeypatch):
-    """Каждый тест — со своей папкой данных и тестовым профилем, реальные настройки не трогаем."""
+    """Each test gets its own data folder and test profile; real settings stay untouched."""
     home = tmp_path / "atlas-profile"
     monkeypatch.setenv("ATLAS_HOME", str(home))
     write_config(str(home))
@@ -85,7 +86,7 @@ def image_block(ts="2026-09-01T10:04:00.000Z"):
 
 @pytest.fixture
 def atlas_env(tmp_path, monkeypatch):
-    """Изолированный ATLAS_HOME и корень транскриптов — реальные данные не трогаем."""
+    """Isolated ATLAS_HOME and transcript root; real data stays untouched."""
     home = tmp_path / "atlas-home"
     projects = tmp_path / "projects"
     projects.mkdir()
@@ -93,6 +94,7 @@ def atlas_env(tmp_path, monkeypatch):
     monkeypatch.setenv("ATLAS_PROJECTS_ROOT", str(projects))
     write_config(str(home))
     import importlib
+
     from atlas import index as index_mod
     importlib.reload(index_mod)
     return {"home": home, "projects": projects}
@@ -109,3 +111,22 @@ def write_session(atlas_env):
         os.utime(path, None)
         return str(path)
     return _write
+
+
+@pytest.fixture
+def live_server(atlas_env):
+    import socket
+
+    from atlas import server
+    with socket.socket() as probe:              # free port: parallel runs do not collide
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    server.PORT = port
+    server.ALLOWED_HOSTS = {f"127.0.0.1:{port}", f"localhost:{port}"}
+    server.ALLOWED_ORIGINS = {f"http://127.0.0.1:{port}"}
+    from http.server import ThreadingHTTPServer
+    httpd = ThreadingHTTPServer(("127.0.0.1", port), server.Handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{port}", server.csrf_token()
+    httpd.shutdown()
+    httpd.server_close()

@@ -1,4 +1,4 @@
-"""LLM-классификация: домен и тема работы. Реестр тем растёт сам, но не бесконтрольно."""
+"""LLM classification: work domain and topic. The topic registry grows on its own, but under control."""
 from __future__ import annotations
 
 import json
@@ -12,17 +12,17 @@ from .messages import msg
 
 CLASSIFIER_VERSION = 4
 
-# Сессии идут пачкой: модель видит их рядом и переиспользует темы, а не плодит синонимы.
+# Sessions go in a batch: the model sees them side by side and reuses topics instead of making synonyms.
 BATCH_SIZE = 8
 
 
-# На классификатор уходит не транскрипт, а карточка фактов — этого хватает и стоит копейки.
+# The classifier gets a fact card, not the transcript: that is enough and costs very little.
 SIGNAL_PROMPT_CHARS = 400
 SIGNAL_FILES = 12
-# У сессии без файлов и тикетов весь сигнал — в разговоре, поэтому берём больше реплик.
+# A session without files or tickets has all its signal in the conversation, so take more messages.
 THIN_PROMPTS = 6
 
-# Тексты запросов — в prompts.py: язык и домены берутся из настроек.
+# Prompt texts live in prompts.py: language and domains come from settings.
 
 
 
@@ -31,10 +31,10 @@ def context_path() -> str:
 
 
 def owner_context() -> str:
-    """Контекст владельца правится руками — без него модель путает Teams с личным."""
+    """The owner context is edited by hand; without it the model confuses Teams with personal."""
     path = context_path()
     if not os.path.exists(path):
-        # Шаблон на языке настроек; дальше файл только твой и не перезаписывается.
+        # Template in the settings language; after that the file is yours alone and is never overwritten.
         default = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                                f"context_default.{prompts.lang()}.md")
         with open(default, encoding="utf-8") as src, open(path, "w", encoding="utf-8") as dst:
@@ -49,7 +49,7 @@ def _now() -> str:
 
 
 def build_signal(conn: sqlite3.Connection, session_id: str) -> dict:
-    """Карточка фактов для классификатора. Полный транскрипт не нужен и наружу не идёт."""
+    """Fact card for the classifier. The full transcript is not needed and never leaves the machine."""
     row = conn.execute(
         "SELECT title, started_at, last_activity_at, cwd_last, branch_last, human_turns, "
         "content_hash, source_path FROM sessions WHERE session_id=?", (session_id,)
@@ -84,7 +84,7 @@ def build_signal(conn: sqlite3.Connection, session_id: str) -> dict:
 
 
 def signal_text(signal: dict) -> str:
-    # Язык подписей — язык страницы: предпросмотр показывает ровно то, что уйдёт в модель.
+    # Labels use the page language: the preview shows exactly what will go to the model.
     lines = [
         msg("fact.title", value=signal["title"]),
         msg("fact.workdir", cwd=signal["cwd"], branch=signal["branch"]),
@@ -111,12 +111,12 @@ def registry(conn: sqlite3.Connection, limit: int = 60) -> list[tuple[str, int]]
 
 def _registry_text(items: list[tuple[str, int]]) -> str:
     if not items:
-        return msg("classify.registry_empty", prompts.lang())      # только для модели
+        return msg("classify.registry_empty", prompts.lang())      # for the model only
     return "\n".join(f"- {topic} ({count})" for topic, count in items)
 
 
 def parse_batch(text: str, expected: int) -> dict[int, dict]:
-    """Битый вывод не чиним эвристикой: берём только те записи, что прошли проверку."""
+    """Broken output is not repaired by heuristics: only records that pass validation are kept."""
     match = re.search(r"\[.*\]", text, re.S)
     if not match:
         raise ValueError(msg("classify.no_array"))
@@ -143,7 +143,7 @@ def _verdict(data: dict) -> dict:
     if ids and domain not in ids:
         raise ValueError(msg("classify.bad_domain", domain=repr(domain)))
     if not ids:
-        domain = None                        # доменов в настройках нет — и спрашивать не о чем
+        domain = None                        # no domains in settings, so there is nothing to ask
     topic = (data.get("topic") or "").strip()
     if not topic:
         raise ValueError(msg("classify.empty_topic"))
@@ -153,7 +153,7 @@ def _verdict(data: dict) -> dict:
     except (TypeError, ValueError):
         confidence = 0.0
     confidence = max(0.0, min(1.0, confidence))
-    # «разное» с высокой уверенностью — противоречие: модель поняла, но поленилась назвать.
+    # "misc" with high confidence is a contradiction: the model understood but did not bother to name it.
     if topic.lower() in {t.lower() for t in prompts.MISC_TOPIC.values()} and confidence >= 0.5:
         confidence = 0.4
     return {"domain": domain, "topic": topic[:60], "summary": summary,
@@ -161,7 +161,7 @@ def _verdict(data: dict) -> dict:
 
 
 def pending(conn: sqlite3.Connection, include_automation: bool = False) -> list[str]:
-    """Сессии без свежей классификации. Чувствительные во внешнюю модель не идут."""
+    """Sessions without a fresh classification. Sensitive ones never go to an external model."""
     sql = """
         SELECT s.session_id FROM sessions s
         LEFT JOIN classification c
@@ -193,8 +193,8 @@ def _store(conn: sqlite3.Connection, session_id: str, verdict: dict, content_has
 def classify_batch(conn: sqlite3.Connection, session_ids: list[str], job_id: str | None = None,
                    backend: str = runner.EXTERNAL_BACKEND,
                    model: str | None = None, effort: str | None = None) -> dict:
-    """Пачками по BATCH_SIZE, одна пачка за вызов, пачки последовательно: фоновый
-    claude -p ест ту же квоту подписки, что интерактив."""
+    """In batches of BATCH_SIZE, one batch per call, batches in sequence: a background
+    claude -p uses the same subscription quota as interactive use."""
     default_model, default_effort = runner.model_for("classification")
     model = model or default_model
     effort = effort or default_effort
@@ -241,7 +241,7 @@ def classify_batch(conn: sqlite3.Connection, session_ids: list[str], job_id: str
             done += 1
     merged = {}
     if done:
-        try:                                     # проход дешёвый: наружу уходят только имена тем
+        try:                                     # the pass is cheap: only topic names leave the machine
             merged = merge_topics(conn, model=model)
         except Exception as exc:
             errors.append(msg("classify.merge_failed", error=f"{type(exc).__name__}: {exc}"))
@@ -251,7 +251,7 @@ def classify_batch(conn: sqlite3.Connection, session_ids: list[str], job_id: str
 
 def dry_run(conn: sqlite3.Connection, session_ids: list[str], model: str,
             effort: str = "low") -> dict[str, dict]:
-    """Классифицирует, ничего не записывая. Нужно замеру: сравнить модели на одной выборке."""
+    """Classifies without writing anything. Used for measuring: comparing models on the same sample."""
     out: dict[str, dict] = {}
     for start in range(0, len(session_ids), BATCH_SIZE):
         chunk = session_ids[start:start + BATCH_SIZE]
@@ -269,7 +269,7 @@ def dry_run(conn: sqlite3.Connection, session_ids: list[str], model: str,
 
 
 def preview_batch(conn: sqlite3.Connection, limit: int = 3) -> dict:
-    """Что именно уйдёт наружу — показываем до запуска, на настоящих примерах."""
+    """Shows exactly what will leave the machine, before the run, on real examples."""
     ids = pending(conn)
     samples = []
     for session_id in ids[:limit]:
@@ -294,7 +294,7 @@ def export_path() -> str:
     return os.path.join(os.path.expanduser("~"), ".atlas-topics.json")
 
 def merge_topics(conn: sqlite3.Connection, model: str = runner.DEFAULT_MODEL) -> dict:
-    """Отдельный проход: реестр растёт сам, но синонимы в нём надо схлопывать."""
+    """A separate pass: the registry grows on its own, but synonyms in it need merging."""
     items = registry(conn, limit=200)
     if len(items) < 3:
         return {"merged": 0, "mapping": {}}

@@ -1,4 +1,4 @@
-"""Картинки для быстрого ответа: что принимается и куда ложится."""
+"""Images for a quick reply: what is accepted and where it is stored."""
 from __future__ import annotations
 
 import base64
@@ -8,11 +8,12 @@ import stat
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 import pytest
 
 from atlas import messages, uploads
-from tests.test_actions_security import _post, live_server  # noqa: F401 — фикстура
+from tests.test_actions_security import _post
 
 PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC")
 
@@ -22,7 +23,7 @@ def test_png_is_saved_privately_under_app_data(atlas_env):
     assert saved["kind"] == "png" and saved["bytes"] == len(PNG)
     assert os.path.dirname(saved["path"]) == uploads.uploads_dir()
     assert stat.S_IMODE(os.stat(saved["path"]).st_mode) == 0o600
-    assert open(saved["path"], "rb").read() == PNG
+    assert Path(saved["path"]).read_bytes() == PNG
 
 
 def test_data_url_prefix_is_accepted(atlas_env):
@@ -31,7 +32,7 @@ def test_data_url_prefix_is_accepted(atlas_env):
 
 
 @pytest.mark.parametrize("payload, lang, reason", [
-    (base64.b64encode(b"<svg onload=alert(1)>").decode(), "en", "PNG, JPEG"),   # svg — не картинка
+    (base64.b64encode(b"<svg onload=alert(1)>").decode(), "en", "PNG, JPEG"),   # svg is not an image
     ("это не base64!!", "ru", "повреждена"),
     ("это не base64!!", "en", "corrupted"),
     ("", "ru", "нет картинки"),

@@ -1,10 +1,10 @@
-// Вкладки плагина Terminal: поиск PTY, ввод, профиль запуска. Подмешивается в класс плагина.
-const { Notice } = require("obsidian");
-const childProcess = require("child_process");
-const fsSync = require("fs");
-const path = require("path");
-const { parseLaunch } = require("./agents");
-const {
+// Terminal tabs: PTY lookup, input, launch. Mixed into the plugin class.
+import { Notice } from "obsidian";
+import * as childProcess from "child_process";
+import * as fsSync from "fs";
+import * as path from "path";
+import { parseLaunch } from "./agents";
+import {
   PTY_WAIT_MS,
   AGENT_VIEW_TYPE,
   TERMINAL_VIEW_TYPE,
@@ -12,12 +12,12 @@ const {
   UPLOADS_DIR,
   IMAGE_EXT,
   MAX_IMAGES,
-} = require("./constants");
+} from "./constants";
 
 class TerminalMethods {
   /**
-   * PID прокси PTY, который плагин Terminal запускает на вкладку: процесс claude — его потомок.
-   * Путь `view.emulator.pseudoterminal.shell` — геттер и поля плагина Terminal 3.x.
+   * PID of the PTY proxy started per terminal tab: the claude process descends from it.
+   * The path `view.emulator.pseudoterminal.shell` is a getter and fields of Terminal plugin 3.x.
    */
   async ptyPidOf(leaf) {
     const wait = (promise) => Promise.race([
@@ -29,14 +29,14 @@ class TerminalMethods {
       const pty = emulator ? await wait(emulator.pseudoterminal) : null;
       const shell = pty ? await wait(pty.shell) : null;
       return shell && Number.isInteger(shell.pid) ? shell.pid : null;
-    } catch (error) {
+    } catch {
       return null;
     }
   }
 
   /**
-   * Вкладки и исправность связи. Причина — словами для страницы: связь рвётся, когда плагин
-   * Terminal выключен или его внутренности поменялись с обновлением (путь к PTY не наш API).
+   * Tabs and link health. The reason is in words for the page: the link breaks when the Terminal
+   * plugin is disabled or its internals change in an update (the PTY path is not a public API).
    */
   async terminalReport() {
     const leaves = this.terminalLeaves();
@@ -51,7 +51,7 @@ class TerminalMethods {
     return { tabs, health: { ok: true, reason: tabs.length ? null : this.t("health.noTabs") } };
   }
 
-  /** Свои вкладки агентов и оставшиеся вкладки плагина Terminal — у них одинаковый вид. */
+  /** Our own agent tabs and any remaining Terminal plugin tabs: both have the same shape. */
   terminalLeaves() {
     const ws = this.app.workspace;
     return [...ws.getLeavesOfType(AGENT_VIEW_TYPE), ...ws.getLeavesOfType(TERMINAL_VIEW_TYPE)];
@@ -69,7 +69,7 @@ class TerminalMethods {
     return tabs;
   }
 
-  /** Только свои загрузки: иначе страница могла бы подсунуть сессии любой файл диска. */
+  /** Only our own uploads: otherwise the page could hand the session any file on disk. */
   checkImages(list) {
     if (list === undefined) return [];
     if (!Array.isArray(list) || list.length > MAX_IMAGES) return null;
@@ -85,8 +85,8 @@ class TerminalMethods {
   }
 
   /**
-   * Видимый экран вкладки строками — как его рисует xterm плагина Terminal
-   * (`emulator.terminal`, тот же объект, что держит PTY). Нижняя страница буфера — экран.
+   * The tab's visible screen as lines, as xterm draws it (`emulator.terminal`, the object that
+   * holds the PTY). The bottom page of the buffer is the screen.
    */
   screenLines(leaf) {
     try {
@@ -98,7 +98,7 @@ class TerminalMethods {
         lines.push(line ? line.translateToString(true) : "");
       }
       return lines;
-    } catch (error) {
+    } catch {
       return [];
     }
   }
@@ -109,16 +109,16 @@ class TerminalMethods {
       const pty = await emulator.pseudoterminal;
       const shell = await pty.shell;
       return shell && shell.stdin && typeof shell.stdin.write === "function" ? shell.stdin : null;
-    } catch (error) {
+    } catch {
       return null;
     }
   }
 
-  /** Состояние процесса Claude Code — из его файла, прямо перед вводом. */
+  /** State of the Claude Code process, read from its file right before input. */
   readSessionState(claudePid) {
     try {
       return JSON.parse(fsSync.readFileSync(path.join(SESSIONS_DIR, `${claudePid}.json`), "utf8"));
-    } catch (error) {
+    } catch {
       return null;
     }
   }
@@ -137,14 +137,14 @@ class TerminalMethods {
       const out = childProcess.execFileSync("ps", ["-o", "ppid=", "-p", String(pid)],
                                             { encoding: "utf8", timeout: 2000 });
       return Number.parseInt(out.trim(), 10) || 0;
-    } catch (error) {
+    } catch {
       return 0;
     }
   }
 
   /**
-   * Команда из каталога. Узнанную (продолжить, форк, новая) открываем через скрипт вкладок
-   * агента — тогда после перезапуска Obsidian вкладка вернёт свою сессию. Остальное — как есть.
+   * A command from the catalog. A recognized one (resume, fork, new) opens through the agent tab
+   * script, so after an Obsidian restart the tab gets its session back. Anything else runs as is.
    */
   async openCommandInTerminal(command, cwd, label) {
     const launch = parseLaunch(command);
@@ -171,11 +171,12 @@ class TerminalMethods {
 }
 
 /**
- * Только печатный текст, переводы строк и табуляция. Управляющие символы из поля ответа
- * в терминал не проходят: Ctrl-C, Esc и escape-последовательности управляли бы сессией.
+ * Printable text, line breaks and tabs only. Control characters from the reply field never reach
+ * the terminal: Ctrl-C, Esc and escape sequences would control the session.
  */
 function cleanInput(text) {
+  // eslint-disable-next-line no-control-regex -- matching control characters is the point here
   return String(text).replace(/\r\n?/g, "\n").replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");
 }
 
-module.exports = { TerminalMethods, cleanInput };
+export { TerminalMethods, cleanInput };

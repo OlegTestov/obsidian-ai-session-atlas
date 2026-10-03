@@ -1,10 +1,11 @@
-// «Активные» с клавиатуры: стрелки и j/k — выбор карточки, Enter — поле ответа, g — «Перейти».
-// Классический скрипт: общий глобальный контекст с остальными файлами страницы.
-let selectedCard = null;              // id выбранной сессии: переживает перерисовку
+// Active from the keyboard: arrows and j/k pick a card, Enter opens the reply field, g is Go to.
+// Classic script: shares one global scope with the other page files.
+/* exported showKeys, selectCardByClick -- used by other page scripts */
+let selectedCard = null;              // id of the selected session: survives a redraw
 
 const cardEls = () => [...document.querySelectorAll("#active-grid .acard")];
 
-// Клавиши — столбцом в 20 знаков, затем что они делают.
+// Keys in a 20-character column, then what they do.
 const KEYS_HELP = [
   [i18n("keys.help.arrows"), i18n("keys.help.select")],
   ["Enter", i18n("keys.help.answer")],
@@ -17,7 +18,7 @@ const KEYS_HELP = [
 
 function showKeys() {
   modal(i18n("keys.title"), i18n("keys.intro"), KEYS_HELP);
-  $("#m-copy").classList.add("hidden");       // копировать справку незачем
+  $("#m-copy").classList.add("hidden");       // no reason to copy the help
 }
 
 function applySelection(scroll) {
@@ -30,7 +31,7 @@ function applySelection(scroll) {
   });
 }
 
-// Столбцов в сетке той секции, где стоит выбор: вверх-вниз — на ряд именно этой сетки.
+// Columns in the grid of the section holding the selection: up/down moves by a row of that grid.
 function columnsAt(id) {
   const card = cardEls().find(c => c.dataset.id === id) || cardEls()[0];
   const grid = card && card.closest(".agrid");
@@ -41,7 +42,7 @@ function columnsAt(id) {
 function focusAnswer(id) {
   const find = () => document.querySelector(`.answer textarea[data-id="${CSS.escape(id)}"]`);
   if (!find() && activeMode !== "full") {
-    // В компактном виде поля нет: ответ пишется в подробном.
+    // The compact view has no field: replies are written in the detailed one.
     const full = document.querySelector('.mode button[data-mode="full"]');
     if (full) full.click();
   }
@@ -53,7 +54,7 @@ document.addEventListener("keydown", e => {
   if (state.view !== "active" || e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
   const target = e.target;
   if (target && target.tagName === "TEXTAREA" && e.key === "Escape") {
-    // Из поля — обратно к карточкам, выбор остаётся на этой.
+    // From the field back to the cards; the selection stays on this one.
     selectedCard = target.dataset.id || selectedCard;
     target.blur();
     applySelection();
@@ -84,15 +85,15 @@ document.addEventListener("keydown", e => {
     e.preventDefault();
     if (feedSid === selectedCard) closeFeed(); else openFeed(selectedCard);
   } else if (e.key === "Escape" && feedSid) {
-    closeFeed();                          // сначала закрывается лента, потом снимается выбор
+    closeFeed();                          // the feed closes first, then the selection clears
   } else if (e.key === "Escape" && selectedCard) {
     selectedCard = null;
     applySelection();
   }
 });
 
-// Клик по карточке тоже выбирает её: дальше можно стрелками. Слушатель клика на документе
-// один на страницу (search.js), он и зовёт эту функцию.
+// A click on a card also selects it, so the arrows continue from there. The document click listener
+// is one per page (search.js), and it calls this function.
 function selectCardByClick(e) {
   const card = e.target && e.target.closest && e.target.closest("#active-grid .acard");
   if (!card) return;

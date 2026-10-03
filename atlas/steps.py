@@ -1,9 +1,9 @@
-"""Шаги хода для ленты: каждый вызов инструмента по порядку — что, сколько шёл, чем кончился.
+"""Turn steps for the feed: each tool call in order, with what it was, how long it ran, how it ended.
 
-Итог хода лента и так показывает свёрнутыми метками («3 команды»); шаги отвечают на другой
-вопрос — что агент делает прямо сейчас и где застрял. Результат вызова приходит отдельной
-записью `tool_result` с тем же id: из неё — ошибка (`is_error`) и время выполнения.
-Подряд идущие чтения и поиски сливаются в одну строку: иначе их сотни и не видно главного.
+The feed already shows the turn summary as collapsed labels ("3 commands"); steps answer another
+question: what the agent is doing right now and where it is stuck. A call result arrives as a
+separate `tool_result` record with the same id; the error (`is_error`) and duration come from it.
+Consecutive reads and searches merge into one line, otherwise there are hundreds and the main ones get lost.
 """
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from datetime import datetime
 
 from .messages import msg, plural
 
-MAX_EVENTS = 300              # на ход: в длинном ходе старые шаги отрезаются, считаются числом
+MAX_EVENTS = 300              # per turn: in a long turn older steps are cut and only counted
 DETAIL_CHARS = 600
 ERROR_CHARS = 400
 TEXT_CHARS = 240
@@ -29,7 +29,7 @@ def _base(path) -> str:
 
 
 def describe(name: str, args: dict) -> tuple[str, str, str]:
-    """(вид, строка, подробности в подсказку) для одного вызова."""
+    """(kind, line, tooltip details) for one call."""
     a = args if isinstance(args, dict) else {}
     if name in ("Edit", "MultiEdit", "NotebookEdit"):
         path = a.get("file_path") or a.get("notebook_path")
@@ -45,7 +45,8 @@ def describe(name: str, args: dict) -> tuple[str, str, str]:
         return "search", msg("step.search", pattern=_short(a.get("pattern"), 50)), _short(a.get("path") or "", 200)
     if name in ("Agent", "Task"):
         who = a.get("subagent_type") or msg("step.agent_default")
-        return "agent", msg("step.agent", who=who, what=_short(a.get("description"), 70)), _short(a.get("prompt"), DETAIL_CHARS)
+        what = msg("step.agent", who=who, what=_short(a.get("description"), 70))
+        return "agent", what, _short(a.get("prompt"), DETAIL_CHARS)
     if name in ("WebFetch", "WebSearch"):
         return "web", _short(a.get("url") or a.get("query"), 90), ""
     if name == "Skill":
@@ -76,7 +77,7 @@ def _result_text(content) -> str:
 
 
 class Collector:
-    """Шаги одного хода. Записи — по порядку, как в транскрипте."""
+    """Steps of one turn. Records come in transcript order."""
 
     def __init__(self):
         self.events: list[dict] = []
@@ -113,7 +114,7 @@ class Collector:
 
     def finish(self, reply: str | None) -> dict:
         events = self.events
-        # Последний текст хода — это ответ, лента показывает его ниже целиком.
+        # The turn's last text is the reply; the feed shows it in full below.
         if reply and events and events[-1]["kind"] == "text":
             events = events[:-1]
         merged: list[dict] = []

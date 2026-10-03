@@ -1,4 +1,4 @@
-"""Что уходит наружу и через что. Fail-closed: без явного разрешения не уходит ничего."""
+"""What leaves the machine and through what. Fail-closed: nothing leaves without explicit permission."""
 from __future__ import annotations
 
 import json
@@ -13,16 +13,16 @@ from .messages import msg
 
 EXTRACTOR_VERSION = 1
 
-# Локальным считается только явно перечисленный backend. Сам по себе litellm локальности
-# не означает — он маршрутизирует дальше во внешнего провайдера.
+# Only an explicitly listed backend counts as local. litellm alone does not mean local:
+# it routes on to an external provider.
 LOCAL_BACKENDS = {"ollama", "lmstudio", "llamacpp"}
 EXTERNAL_BACKEND = "claude-cli"
 
 DEFAULT_MODEL = "sonnet"
 DEFAULT_EFFORT = "medium"
 
-# Модели с окном 1M без суффикса `[1m]` — замерено по contextWindow в выводе `claude -p`:
-# `claude-opus-5-5` отдаёт 1 000 000, как и `[1m]`.
+# Models with a 1M window without the `[1m]` suffix, measured by contextWindow in `claude -p` output:
+# `claude-opus-5-5` reports 1 000 000, same as `[1m]`.
 NATIVE_1M = {"claude-opus-5-5"}
 WINDOW_1M = 1_000_000
 WINDOW_DEFAULT = 200_000
@@ -33,21 +33,21 @@ def has_1m_window(model: str) -> bool:
 
 
 def _models() -> dict:
-    """Модель и эффорт под задачу — из настроек. Классификация идёт пачками — там low;
-    описание и хендофф — по одной штуке по кнопке."""
+    """Model and effort for the task, from settings. Classification runs in batches, so it uses low;
+    description and handoff run one at a time, on a button press."""
     out = {}
     for kind, value in (config.get("models") or {}).items():
         if isinstance(value, (list, tuple)) and len(value) == 2 and all(isinstance(v, str) and v for v in value):
             out[kind] = (value[0], value[1])
     return out
 
-# Бюджет отправки в символах (≈ делить на 4 для токенов). Для хендоффа берём почти всё окно,
-# для короткого описания столько не нужно.
-# Замерено на боевой сессии: 2 798 964 символа дали 1 315 799 токенов, то есть ~2.1 символа
-# на токен. Делить на 4, как для английского, нельзя — кириллица дороже вдвое.
+# Send budget in characters (≈ divide by 4 for tokens). A handoff takes almost the whole window;
+# a short description does not need that much.
+# Measured on a real session: 2 798 964 characters gave 1 315 799 tokens, i.e. ~2.1 characters
+# per token. Dividing by 4, as for English, is wrong: Cyrillic costs twice as much.
 CHARS_PER_TOKEN = 2.1
 
-# Бюджет в токенах, с запасом под шаблон промпта и ответ (лимит окна — 1M).
+# Budget in tokens, with headroom for the prompt template and the answer (window limit is 1M).
 TOKEN_BUDGET = {
     "handoff": 750_000,
     "catalog_summary": 50_000,
@@ -57,18 +57,18 @@ DEFAULT_TOKEN_BUDGET = 20_000
 
 def budget_chars(artifact_kind: str, scale: float = 1.0) -> int:
     tokens = TOKEN_BUDGET.get(artifact_kind, DEFAULT_TOKEN_BUDGET)
-    # Бюджеты рассчитаны на окно 1M; у модели с обычным окном — та же доля от него.
+    # Budgets assume a 1M window; a model with a standard window gets the same share of its own.
     window = WINDOW_1M if has_1m_window(model_for(artifact_kind)[0]) else WINDOW_DEFAULT
     return int(tokens * window / WINDOW_1M * CHARS_PER_TOKEN * scale)
 
-# В preview целиком 3 МБ не покажешь — отдаём начало и хвост, полный текст кладём в файл.
+# A preview cannot show 3 MB whole: return the head and tail, put the full text in a file.
 PREVIEW_HEAD = 6_000
 PREVIEW_TAIL = 2_000
 
 
 def model_for(artifact_kind: str) -> tuple[str, str]:
-    """С настройкой force_1m модели без родного окна 1M получают суффикс [1m] — он есть не на
-    каждом тарифе, поэтому по умолчанию выключен."""
+    """With force_1m set, models without a native 1M window get the [1m] suffix. Not every plan
+    has it, so it is off by default."""
     model, effort = _models().get(artifact_kind, (DEFAULT_MODEL, DEFAULT_EFFORT))
     if config.get("force_1m") and not has_1m_window(model):
         model += "[1m]"
@@ -82,7 +82,7 @@ class EgressDenied(RuntimeError):
 
 
 class LlmDisabled(EgressDenied):
-    """ИИ-функции выключены в настройках: ни один запрос к модели не уходит."""
+    """AI features are off in settings: no request goes to the model."""
 
 
 def llm_enabled() -> bool:
@@ -95,15 +95,15 @@ def require_llm() -> None:
 
 
 class PromptTooLong(RuntimeError):
-    """Окно всё-таки не вместило: оценка по символам зависит от языка и содержимого."""
+    """The window did not fit after all: the character-based estimate depends on language and content."""
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-# launchd не наследует пользовательский PATH: сервер под ним не находил claude в ~/.local/bin,
-# и классификация падала «claude не найден в PATH» на каждой пачке.
+# launchd does not inherit the user's PATH: without this, a server under launchd cannot find
+# claude in ~/.local/bin, and classification fails with "claude not found in PATH" on every batch.
 CLAUDE_CANDIDATES = (
     "~/.local/bin/claude", "/opt/homebrew/bin/claude", "/usr/local/bin/claude",
 )
@@ -124,14 +124,14 @@ def find_claude() -> str:
 
 
 def runner_cwd() -> str:
-    """Отдельная папка: транскрипт компрессора ложится под свой слаг и отсекается индексатором."""
+    """Separate folder: the compressor's transcript lands under its own slug and the indexer skips it."""
     path = os.path.join(db.atlas_home(), "runner")
     os.makedirs(path, mode=0o700, exist_ok=True)
     return path
 
 
 def _sample(items: list[str], limit: int) -> list[str]:
-    """Равномерно по всей сессии, а не голова с хвостом: решение обычно лежит в середине."""
+    """Evenly across the whole session, not head and tail: the decision usually sits in the middle."""
     if len(items) <= limit:
         return items
     step = len(items) / limit
@@ -139,7 +139,7 @@ def _sample(items: list[str], limit: int) -> list[str]:
 
 
 def _tail_within(items: list[str], budget: int) -> list[str]:
-    """Берём с конца, пока влезает: «последняя часть сессии» — это хвост, а не начало."""
+    """Take from the end while it fits: "the last part of the session" is the tail, not the start."""
     out, used = [], 0
     for text in reversed(items):
         cost = len(text) + 2
@@ -153,10 +153,11 @@ def _tail_within(items: list[str], budget: int) -> list[str]:
 
 def build_payload(conn: sqlite3.Connection, session_id: str,
                   artifact_kind: str = "handoff", scale: float = 1.0) -> dict:
-    """Ровно тот текст, который уйдёт наружу.
+    """Exactly the text that will leave the machine.
 
-    Порядок приоритетов: сводки компактации и запросы пользователя идут целиком — они несут
-    цель и решения и весят мало. Остаток бюджета добивается ответами ассистента с конца.
+    Priority order: compaction summaries and user prompts go in whole, since they carry
+    the goal and decisions and weigh little. The rest of the budget is filled with assistant
+    replies, starting from the end.
     """
     row = conn.execute(
         "SELECT source_path, title, started_at, last_activity_at, cwd_last, branch_last, "
@@ -174,7 +175,7 @@ def build_payload(conn: sqlite3.Connection, session_id: str,
     tickets = [r["ticket"] for r in conn.execute(
         "SELECT ticket FROM session_tickets WHERE session_id=?", (session_id,))]
 
-    # Подписи — на языке страницы: предпросмотр показывает ровно тот текст, что уйдёт наружу.
+    # Labels use the page language: the preview shows exactly the text that will leave the machine.
     header = "\n".join([
         msg("fact.session", sid=session_id),
         msg("fact.title", value=row["title"]),
@@ -216,8 +217,8 @@ def build_payload(conn: sqlite3.Connection, session_id: str,
         "commands": len(facts.commands),
     }
     kept = {title: count for title, count, _ in sections}
-    # «Обрезано» — это про потерянные куски, а не про упор в бюджет: команды могут не влезть,
-    # даже когда итог чуть меньше потолка.
+    # "Truncated" means lost pieces, not hitting the budget: commands may not fit
+    # even when the total is slightly under the cap.
     truncated = (kept.get(t_summaries, 0) < dropped["summaries"]
                  or kept.get(t_prompts, 0) < dropped["prompts"]
                  or kept.get(t_answers, 0) < dropped["answers"]
@@ -260,7 +261,7 @@ def grant_egress(conn: sqlite3.Connection, session_id: str, content_hash: str,
 
 def check_egress(conn: sqlite3.Connection, session_id: str, content_hash: str,
                  artifact_kind: str, backend: str, model: str) -> None:
-    """Разрешение привязано к состоянию контента: любой append его аннулирует."""
+    """The grant is tied to the content state: any append invalidates it."""
     if backend in LOCAL_BACKENDS:
         return
     sensitivity = sensitivity_of(conn, session_id)
@@ -275,8 +276,8 @@ def check_egress(conn: sqlite3.Connection, session_id: str, content_hash: str,
                            backend=backend, model=model))
 
 
-# Выше этого объёма сначала проверяем сами флаги дешёвым вызовом: ошибка в них иначе
-# обнаружится только после отправки мегабайтов.
+# Above this size, check the flags first with a cheap call: otherwise an error in them
+# shows up only after megabytes are sent.
 PREFLIGHT_ABOVE = 200_000
 
 
@@ -294,7 +295,7 @@ def _argv(binary: str, model: str, effort: str) -> list[str]:
 
 
 def preflight(model: str = "claude-haiku-4-5-20251001", effort: str = "low") -> None:
-    """Крошечный прогон теми же флагами: ловит поломку вызова до дорогой отправки."""
+    """A tiny run with the same flags: catches a broken invocation before the expensive send."""
     binary = find_claude()
     env = dict(os.environ)
     env.pop("CLAUDE_EFFORT", None)
@@ -309,20 +310,20 @@ def preflight(model: str = "claude-haiku-4-5-20251001", effort: str = "low") -> 
 
 def run_isolated(prompt: str, model: str = DEFAULT_MODEL, effort: str = DEFAULT_EFFORT,
                  timeout: int = 900) -> str:
-    """`claude -p` без настроек, хуков, плагинов, MCP и тулов: иначе компрессор поднимет
-    твоё окружение и наплодит собственных транскриптов."""
-    require_llm()                  # последний рубеж: сюда сходятся все вызовы модели
+    """`claude -p` without settings, hooks, plugins, MCP and tools: otherwise the compressor loads
+    your environment and creates transcripts of its own."""
+    require_llm()                  # last line of defense: every model call passes through here
     binary = find_claude()
     if len(prompt) > PREFLIGHT_ABOVE:
         preflight(effort=effort)
     argv = _argv(binary, model, effort)
     env = dict(os.environ)
-    env.pop("CLAUDE_EFFORT", None)      # уровень задан флагом; переменная из окружения помешает
+    env.pop("CLAUDE_EFFORT", None)      # the level is set by a flag; the environment variable would interfere
     env.pop("ANTHROPIC_API_KEY", None)
     proc = subprocess.run(argv, input=prompt, capture_output=True, text=True,
                           timeout=timeout, cwd=runner_cwd(), env=env)
     if proc.returncode != 0:
-        # Причина приходит в stdout: при пустом stderr сообщение «вернул ошибку» бесполезно.
+        # The reason comes in stdout: with an empty stderr, a bare "returned an error" is useless.
         detail = ((proc.stderr or "").strip() or (proc.stdout or "").strip()
                   or msg("runner.cli_error"))
         if "Prompt is too long" in detail:
@@ -332,7 +333,7 @@ def run_isolated(prompt: str, model: str = DEFAULT_MODEL, effort: str = DEFAULT_
 
 
 def preview_payload(conn: sqlite3.Connection, session_id: str, artifact_kind: str) -> dict:
-    """Показать нельзя 3 МБ: отдаём начало и хвост, полный текст пишем в файл для сверки."""
+    """3 MB cannot be shown: return the head and tail, write the full text to a file for checking."""
     payload = build_payload(conn, session_id, artifact_kind)
     text = payload["text"]
     if len(text) > PREVIEW_HEAD + PREVIEW_TAIL:

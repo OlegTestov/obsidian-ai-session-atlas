@@ -1,8 +1,8 @@
-"""Запись сессии в индекс: целиком или только дописанное.
+"""Writes a session to the index: in full or only the appended part.
 
-Строка полнотекстового индекса — ход (твой запрос с ответами на него), а не вся сессия.
-Живая сессия дописывается постоянно, и переписывать мегабайты её текста на каждом проходе
-стоило 2–5 с: теперь меняются только последний ход и новые.
+A full-text index row is a turn (your prompt with its replies), not the whole session.
+A live session grows constantly, and rewriting megabytes of its text on every pass costs
+2–5 s, so only the last turn and the new ones are rewritten.
 """
 from __future__ import annotations
 
@@ -15,9 +15,9 @@ from datetime import datetime, timezone
 from . import activity, resolve
 from .parse import SessionFacts, facts_state, parse_file, parse_tail
 
-META_TURN = -2        # заголовок, тикеты, пути из истории файлов
-SUBAGENT_TURN = -1    # тексты сабагентов: меняются только вместе с их файлами
-STATE_VERSION = 3     # поднять при любой правке разбора — старые состояния отбросятся
+META_TURN = -2        # title, tickets, paths from file history
+SUBAGENT_TURN = -1    # subagent texts: change only together with their files
+STATE_VERSION = 3     # bump on any parser change: old states get discarded
 TAIL_SIG_BYTES = 4096
 
 
@@ -26,7 +26,7 @@ def _now() -> str:
 
 
 def tail_sig(path: str, offset: int) -> str:
-    """Подпись байтов перед местом продолжения: файл переписали — подпись не совпадёт."""
+    """Signature of the bytes before the resume point: if the file is rewritten, it will not match."""
     with open(path, "rb") as fh:
         fh.seek(max(0, offset - TAIL_SIG_BYTES))
         return hashlib.sha1(fh.read(min(offset, TAIL_SIG_BYTES))).hexdigest()
@@ -45,7 +45,7 @@ def purge(conn: sqlite3.Connection, session_id: str, keep_text: bool = False) ->
 
 def _write_meta(conn, session_id: str, path: str, st, sig: str, facts: SessionFacts,
                 resolved_files: list[tuple[str, str]]) -> str:
-    """Всё, кроме текстов: маленькие таблицы проще переписать, чем сливать."""
+    """Everything except texts: small tables are easier to rewrite than to merge."""
     projects, workspace_kind = resolve.resolve_projects(facts.cwds, [r for _, r in resolved_files])
     domains = resolve.resolve_domains(facts.cwds, [r for _, r in resolved_files])
     sensitivity = resolve.resolve_sensitivity(facts.cwds, [r for _, r in resolved_files])
@@ -78,8 +78,8 @@ def _write_meta(conn, session_id: str, path: str, st, sig: str, facts: SessionFa
     conn.executemany("INSERT INTO session_files VALUES (?,?,?,?)",
                      [(session_id, raw, res, resolve.classify_path(res).project_id)
                       for raw, res in resolved_files])
-    # frame-link пишется при каждом обновлении артефакта: у одной сессии их бывает 64
-    # строки на одну реальную ссылку. Схлопываем по url, пустые не храним вовсе.
+    # frame-link is written on every artifact update: one session can have 64 rows
+    # for one real link. Collapse by url and skip empty ones entirely.
     seen: dict[tuple[str, str], str] = {}
     for kind_, url, link_title in facts.links:
         if url:
@@ -110,7 +110,7 @@ def _write_meta_row(conn, session_id: str, title: str, facts: SessionFacts,
 
 
 def _write_turns(conn, session_id: str, facts: SessionFacts) -> None:
-    """Ходы от первого из facts.turns: прошлый последний переписывается, новые добавляются."""
+    """Turns from the first one in facts.turns: the previous last turn is rewritten, new ones are added."""
     first = facts.turn_base + 1
     conn.execute("DELETE FROM fts WHERE session_id=? AND turn>=?", (session_id, first))
     conn.execute("DELETE FROM fts_paths WHERE session_id=? AND turn>=?", (session_id, first))
@@ -152,7 +152,7 @@ def store_full(conn, path: str, st, sig: str, subagents: list[str], sub_sig: str
     sub_commands: list[str] = []
     sub_paths: list[str] = []
     sub_rows: dict = {}
-    # Сабагенты — часть родительской сессии: их команды, файлы и текст вливаются сюда.
+    # Subagents are part of the parent session: their commands, files and text are merged here.
     for sub_path in subagents:
         sub = parse_file(sub_path, session_id)
         facts.subagent_turns += sub.machine_turns + sub.subagent_turns
@@ -181,7 +181,7 @@ def store_full(conn, path: str, st, sig: str, subagents: list[str], sub_sig: str
 
 
 def store_tail(conn, path: str, st, sig: str, sub_sig: str) -> bool:
-    """Дочитать дописанное. False — продолжать нельзя, нужен полный проход."""
+    """Reads the appended part. False means resuming is impossible and a full pass is needed."""
     session_id = os.path.splitext(os.path.basename(path))[0]
     row = conn.execute("SELECT * FROM parse_state WHERE session_id=?", (session_id,)).fetchone()
     if row is None or row["version"] != STATE_VERSION or row["path"] != path \
@@ -191,7 +191,7 @@ def store_tail(conn, path: str, st, sig: str, sub_sig: str) -> bool:
     facts = parse_tail(path, json.loads(row["state"]))
     facts.session_id, facts.source_path = session_id, path
     if facts.subagent_text:
-        return False          # сабагент писал в основной файл — его строку надо собрать заново
+        return False          # a subagent wrote to the main file: its row must be rebuilt
     resolved = _resolved(facts)
     purge(conn, session_id, keep_text=True)
     activity.store(conn, session_id, facts.activity)

@@ -1,4 +1,4 @@
-"""Тексты сервера на двух языках: язык страницы приходит заголовком X-Atlas-Lang."""
+"""Server texts in two languages: the page language arrives in the X-Atlas-Lang header."""
 from __future__ import annotations
 
 import json
@@ -11,7 +11,7 @@ import pytest
 
 from atlas import messages, server
 from atlas.messages import msg
-from tests.test_actions_security import _post, live_server  # noqa: F401 — фикстура
+from tests.test_actions_security import _post
 
 
 def _fields(text) -> set:
@@ -32,7 +32,7 @@ def test_default_is_english_and_unknown_language_falls_back():
     out: list = []
     t.start()
     t.join()
-    assert out == ["en"]                                  # у нового потока своего языка нет
+    assert out == ["en"]                                  # a new thread has no language of its own
     assert messages.normalize(None) == "en" and messages.normalize("de") == "en"
     assert messages.normalize("RU") == "ru"
     assert msg("stats.no_topic", "de") == "no topic"
@@ -68,7 +68,7 @@ def test_server_answers_in_the_page_language(live_server):
     with pytest.raises(urllib.error.HTTPError) as ru:
         urllib.request.urlopen(req, timeout=5)
     assert json.loads(ru.value.read())["error"] == "нет такой джобы"
-    assert messages.last_lang() == "ru"                   # его возьмёт фоновый планировщик
+    assert messages.last_lang() == "ru"                   # the background scheduler picks it up
 
     with pytest.raises(urllib.error.HTTPError) as bad:
         _post(f"{base}/api/auto-classify", {"enabled": "yes"},

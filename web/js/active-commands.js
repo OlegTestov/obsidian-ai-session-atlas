@@ -1,15 +1,16 @@
-// «Активные»: быстрые команды Claude Code из поля ответа.
-// Классический скрипт: общий глобальный контекст с остальными файлами страницы.
-// /context, /usage и другие отвечают на экране вкладки, а не в транскрипте: плагин читает
-// экран и присылает ответ — он показывается в карточке. /effort и /model без аргумента
-// открыли бы во вкладке ползунок или список, поэтому выбор — кнопками прямо здесь.
-const commandOutputs = new Map();     // id сессии → {command, text, panel, at}
+// Active: quick Claude Code commands from the reply field.
+// Classic script: shares one global scope with the other page files.
+/* exported handleCommandOutput, commandOutputBlock, argChooser -- used by other page scripts */
+// /context, /usage and others answer on the tab's screen, not in the transcript: the plugin reads
+// the screen and sends the answer, which the card shows. /effort and /model without an argument
+// would open a slider or a list in the tab, so buttons pick the value right here.
+const commandOutputs = new Map();     // session id → {command, text, panel, at}
 
-// Выбор аргумента: значения — как их понимает сама команда (проверено на живом CLI).
+// Argument choice: values as the command itself understands them (checked on the live CLI).
 const ARG_CHOICES = {
   "/effort": [["low", "low"], ["medium", "medium"], ["high", "high"], ["xhigh", "xhigh"],
               ["max", "max"]],
-  // Алиасы: Claude Code сам подставит свежую модель семейства, и они есть на любом тарифе.
+  // Aliases: Claude Code picks the latest model of the family, and they exist on every plan.
   "/model": [["opus", "Opus"], ["sonnet", "Sonnet"], ["haiku", "Haiku"], ["default", i18n("cmd.model.default")]],
 };
 
@@ -21,14 +22,14 @@ function handleCommandOutput(d) {
   if (d.type !== "command-output" || typeof d.sessionId !== "string") return false;
   commandOutputs.set(d.sessionId, { command: String(d.command || ""), text: String(d.text || ""),
                                     panel: !!d.panel, at: new Date().toISOString() });
-  justSent.delete(d.sessionId);          // команда дошла: её ответ — на экране вкладки
+  justSent.delete(d.sessionId);          // the command arrived: its answer is on the tab's screen
   lastSignature = "";
   renderActive(null, true);
   return true;
 }
 
-// Закрыть открытую командой панель — то же одно Esc, что «Стоп», но без подтверждения:
-// панель ничего не выполняет.
+// Closing a panel a command opened is the same single Esc as Stop, but without confirmation:
+// the panel runs nothing.
 function closePanel(s, pid) {
   const nonce = Math.random().toString(36).slice(2);
   stopRequests.set(nonce, s.session_id);
@@ -67,7 +68,7 @@ function commandOutputBlock(s, pid) {
   return box;
 }
 
-// Кнопки выбора для «/effort» и «/model»; show(text) — перестроить под текущий текст поля.
+// Choice buttons for "/effort" and "/model"; show(text) rebuilds them for the field's current text.
 function argChooser(area, submit) {
   const row = el("div", "argpick hidden");
   const show = text => {
@@ -80,7 +81,7 @@ function argChooser(area, submit) {
         const b = el("button", null, label);
         b.type = "button";
         b.title = i18n("cmd.choice.hint", { cmd, value });
-        b.addEventListener("mousedown", e => e.preventDefault());   // фокус остаётся в поле
+        b.addEventListener("mousedown", e => e.preventDefault());   // focus stays in the field
         b.addEventListener("click", () => { area.value = `${cmd} ${value}`; row.classList.add("hidden"); submit(); });
         return b;
       }));

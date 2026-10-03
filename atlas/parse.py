@@ -1,4 +1,4 @@
-"""Разбор транскрипта Claude Code (.jsonl) в факты о сессии. Без LLM, без БД, без сети."""
+"""Parses a Claude Code transcript (.jsonl) into session facts. No LLM, no DB, no network."""
 from __future__ import annotations
 
 import json
@@ -7,11 +7,10 @@ from dataclasses import dataclass, field
 
 from . import activity, config
 
-
-# Первое user-сообщение после компактации — сводка прошлого контекста, а не промпт человека.
+# The first user message after compaction is a summary of earlier context, not a human prompt.
 COMPACT_PREFIX = "This session is being continued from a previous conversation"
 
-# Слэш-команда приезжает обёрнутой в теги — в карточке это нечитаемо.
+# A slash command arrives wrapped in tags, which is unreadable on a card.
 _COMMAND_NAME = re.compile(r"<command-name>(.*?)</command-name>", re.S)
 _COMMAND_ARGS = re.compile(r"<command-args>(.*?)</command-args>", re.S)
 
@@ -33,8 +32,8 @@ FILE_TOOL_INPUTS = {
     "NotebookEdit": "notebook_path",
 }
 
-# Что попадает в индекс. Всё остальное (tool_result, image, document, thinking,
-# attachment, snapshot) не попадает никогда: там base64 на мегабайты и сырой вывод тулов.
+# What goes into the index. Everything else (tool_result, image, document, thinking,
+# attachment, snapshot) never does: it holds megabytes of base64 and raw tool output.
 _TEXT_BLOCK = "text"
 
 
@@ -63,7 +62,7 @@ class SessionFacts:
     links: list[tuple[str, str, str]] = field(default_factory=list)  # kind, url, title
     mcp_servers: list[str] = field(default_factory=list)
     tickets: set[str] = field(default_factory=set)
-    # Тексты для FTS, по колонкам
+    # Texts for FTS, per column
     user_text: list[str] = field(default_factory=list)
     assistant_text: list[str] = field(default_factory=list)
     commands: list[str] = field(default_factory=list)
@@ -73,14 +72,14 @@ class SessionFacts:
     records: int = 0
     bad_lines: int = 0
     complete_bytes: int = 0
-    # Ходы для индекса: твой запрос вместе с ответами и командами на него. Строка индекса —
-    # ход, а не вся сессия: дописанный файл трогает только последний ход, а «слова рядом»
-    # не ловятся через границу двух сообщений.
+    # Turns for the index: your prompt together with its replies and commands. An index row is
+    # a turn, not the whole session: an appended file touches only the last turn, and "nearby
+    # words" do not match across the boundary of two messages.
     turns: list[dict] = field(default_factory=list)
     first_user_text: str | None = None
     first_assistant_text: str | None = None
-    turn_base: int = 0            # сколько ходов уже в индексе до первого из self.turns
-    # «Статистика»: строки ответов и запросов (только новые) и время, ещё не отданное строке.
+    turn_base: int = 0            # how many turns are already indexed before the first of self.turns
+    # "Stats": reply and prompt rows (new ones only) and time not yet assigned to a row.
     activity: dict = field(default_factory=dict)
     pending_active: float = 0.0
     last_main_ts: str | None = None
@@ -100,10 +99,10 @@ def _turn(facts: SessionFacts, start_new: bool = False) -> dict:
 
 
 def iter_complete_lines(fh):
-    """Отдаёт только строки, завершённые переводом строки, и смещение после каждой.
+    """Yields only newline-terminated lines, with the offset after each.
 
-    Живая сессия дописывается в этот же файл: недописанный хвост нужно оставить
-    следующему проходу, иначе запись теряется навсегда.
+    A live session appends to this same file: the unfinished tail must be left
+    to the next pass, or the record is lost for good.
     """
     offset = 0
     for raw in fh:
@@ -127,7 +126,7 @@ def _blocks(content):
 
 
 def _harvest_tickets(facts: SessionFacts, text: str) -> None:
-    pattern = config.ticket_re()          # префиксы тикетов — из настроек
+    pattern = config.ticket_re()          # ticket prefixes come from settings
     if text and pattern:
         facts.tickets.update(pattern.findall(text))
 
@@ -137,12 +136,12 @@ def _handle_user(facts: SessionFacts, rec: dict) -> None:
     sidechain = bool(rec.get("isSidechain"))
     for block in _blocks(msg.get("content")):
         if block.get("type") != _TEXT_BLOCK:
-            continue  # tool_result / image / document — никогда не в индекс
+            continue  # tool_result / image / document: never indexed
         text = (block.get("text") or "").strip()
         if not text:
             continue
         if text.startswith(COMPACT_PREFIX):
-            facts.summaries.append(text)  # сводка компактации, не промпт человека
+            facts.summaries.append(text)  # compaction summary, not a human prompt
             _turn(facts, start_new=True)["summaries"].append(text)
             continue
         if sidechain:
@@ -217,7 +216,7 @@ def _handle_meta(facts: SessionFacts, rec: dict, kind: str) -> None:
     if kind == "ai-title" and not facts.title_source:
         facts.title, facts.title_source = rec.get("aiTitle"), "ai"
     elif kind in ("custom-title", "agent-name"):
-        # Ручной заголовок всегда перебивает автоматический.
+        # A manual title always overrides the automatic one.
         facts.title = rec.get("customTitle") or rec.get("agentName")
         facts.title_source = "manual"
     elif kind == "last-prompt":
@@ -231,7 +230,7 @@ def _handle_meta(facts: SessionFacts, rec: dict, kind: str) -> None:
 
 
 def parse_file(path: str, session_id: str) -> SessionFacts:
-    """Разбирает транскрипт целиком. Дёшево: весь корпус в 218k строк читается за ~5 с."""
+    """Parses the whole transcript. Cheap: the full 218k-line corpus reads in ~5 s."""
     facts = SessionFacts(session_id=session_id, source_path=path)
     parse_range(path, facts, 0)
     _harvest_all(facts)
@@ -244,8 +243,8 @@ def _harvest_all(facts: SessionFacts) -> None:
 
 
 def parse_tail(path: str, state: dict) -> SessionFacts:
-    """Дочитывает дописанное с места прошлого прохода. Итог совпадает с `parse_file`,
-    кроме плоских текстов: в них только новое, а ходы — последний прошлый плюс новые."""
+    """Reads what was appended since the last pass. The result matches `parse_file`
+    except for flat texts: they hold only new content, and turns are the last old one plus new ones."""
     facts = facts_from_state(state)
     parse_range(path, facts, facts.complete_bytes)
     _harvest_all(facts)
@@ -300,8 +299,8 @@ def parse_range(path: str, facts: SessionFacts, start: int) -> None:
                 _handle_meta(facts, rec, kind or "")
 
 
-# Состояние разбора между проходами: всё, кроме текстов. Из ходов хранится только последний —
-# в него ещё допишутся ответы, остальные уже лежат в индексе.
+# Parse state between passes: everything except texts. Only the last turn is kept,
+# since more replies will be appended to it; the others are already in the index.
 _STATE_SKIP = ("user_text", "assistant_text", "commands", "paths", "summaries", "subagent_text",
                "activity")
 

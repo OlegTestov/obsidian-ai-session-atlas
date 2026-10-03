@@ -1,11 +1,12 @@
-// «Активные»: диалог «план готов» — прочитать план, одобрить или отправить замечания.
-// Классический скрипт: общий глобальный контекст с остальными файлами страницы.
-// Замечания плагин набирает в поле диалога и жмёт Enter, только увидев их на экране вкладки.
-const planTexts = new Map();          // id сессии → {name, text, at}
-const planDrafts = new Map();         // id сессии → недописанные замечания
-const planForms = new Set();          // у каких карточек открыто поле замечаний
-const PLAN_REFRESH_MS = 10000;        // после замечаний агент правит тот же файл
-// [подробно, компактно]: в компактной карточке четыре кнопки должны влезть в строку.
+// Active: the "plan ready" dialog: read the plan, approve it or send feedback.
+// Classic script: shares one global scope with the other page files.
+/* exported planBlock -- used by other page scripts */
+// The plugin types feedback into the dialog field and presses Enter only after seeing it on the tab's screen.
+const planTexts = new Map();          // session id → {name, text, at}
+const planDrafts = new Map();         // session id → unfinished feedback
+const planForms = new Set();          // cards with the feedback field open
+const PLAN_REFRESH_MS = 10000;        // after feedback the agent edits the same file
+// [detailed, compact]: in a compact card four buttons must fit on one line.
 const PLAN_LABELS = {
   "Yes, auto-accept edits": [i18n("active.planAutoFull"), i18n("active.planAutoShort")],
   "Yes, manually approve edits": [i18n("active.planManualFull"), i18n("active.planManualShort")],
@@ -37,11 +38,11 @@ function sendPlanFeedback(s, pid, d) {
                                  option: d.feedback.n, text: d.feedback.label, feedback: text, nonce });
   planDrafts.delete(s.session_id);
   planForms.delete(s.session_id);
-  // Пока фокус в поле, карточки не перерисовываются — снять, иначе форма повиснет.
+  // While the field has focus cards do not redraw: release it, otherwise the form hangs.
   if (document.activeElement && document.activeElement.matches(".planfb textarea")) document.activeElement.blur();
   lastSignature = "";
   renderActive(null, true);
-  setTimeout(() => {
+  window.setTimeout(() => {
     if (!dialogAnswers.has(nonce)) return;
     dialogAnswers.delete(nonce);
     dialogNotes.set(s.session_id, { note: i18n("active.noHostReply"), cls: "bad" });
@@ -66,11 +67,11 @@ function planFeedbackForm(s, pid, d) {
   go.title = i18n("active.sendFeedbackHint");
   go.addEventListener("click", () => sendPlanFeedback(s, pid, d));
   form.append(area, go);
-  setTimeout(() => { if (planForms.has(s.session_id) && document.activeElement !== area) area.focus(); });
+  window.setTimeout(() => { if (planForms.has(s.session_id) && document.activeElement !== area) area.focus(); });
   return form;
 }
 
-/** Блок диалога плана внутри .dialog; box — уже созданный контейнер. */
+/** Plan dialog block inside .dialog; box is the container already created. */
 function planBlock(s, pid, d, full, busy, note, box) {
   fetchPlan(s, d);
   const plan = planTexts.get(s.session_id) || {};

@@ -1,4 +1,4 @@
-"""ИИ-функции выключены — ни один запрос к модели не уходит: ни с кнопки, ни по расписанию."""
+"""With AI features off, no request reaches the model: neither from a button nor on schedule."""
 from __future__ import annotations
 
 import json
@@ -10,7 +10,7 @@ import pytest
 
 from atlas import autoclassify, config, db, runner
 from tests.conftest import write_config
-from tests.test_actions_security import _post, live_server  # noqa: F401  (фикстура)
+from tests.test_actions_security import _post
 
 SID = "11111111-1111-1111-1111-111111111111"
 
@@ -22,7 +22,7 @@ def _llm(on: bool) -> None:
 
 def test_runner_refuses_before_touching_claude(monkeypatch):
     _llm(False)
-    monkeypatch.setattr(runner, "find_claude", lambda: pytest.fail("claude не должен искаться"))
+    monkeypatch.setattr(runner, "find_claude", lambda: pytest.fail("claude must not be looked up"))
     with pytest.raises(runner.LlmDisabled):
         runner.run_isolated("hello")
 

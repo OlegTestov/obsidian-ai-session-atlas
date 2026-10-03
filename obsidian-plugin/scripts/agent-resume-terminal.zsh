@@ -3,10 +3,10 @@ set -u
 
 APP="${1:-}"
 INSTANCE="${2:-}"
-# Необязательный старт для вкладок из Session Atlas: с чего начать, пока у вкладки нет записи
-# в реестре. Запись важнее: после перезапуска Obsidian вкладка вернёт ту сессию, в которой
-# была последней, а не ту, с которой её открыли.
-#   resume <id> · resume-fork <id> · new <id> [первый запрос]
+# Optional start for tabs from Session Atlas: what to begin with while the tab has no registry
+# entry. The entry wins: after an Obsidian restart the tab returns to the session it was last in,
+# not the one it was opened with.
+#   resume <id> · resume-fork <id> · new <id> [first prompt]
 SEED_MODE="${3:-}"
 SEED_ID="${4:-}"
 SEED_PROMPT="${5:-}"
@@ -29,8 +29,8 @@ SCRIPT_DIR="${0:A:h}"
 source "$SCRIPT_DIR/agent-registry-lib.zsh"
 
 CODEX_SESSIONS_DIR="${OBS_AGENT_TERMINAL_CODEX_SESSIONS_DIR:-$HOME/.codex/sessions}"
-# Дополнительные аргументы агента — строкой в файле, её пишет плагин из своих настроек
-# (например «--chrome»). Файл, а не переменная окружения: его видят и старые вкладки.
+# Extra agent arguments: one line in a file the plugin writes from its settings (e.g. "--chrome").
+# A file rather than an environment variable, so tabs opened earlier see it too.
 AGENT_ARGS_DIR="${OBS_AGENT_TERMINAL_ARGS_DIR:-$HOME/Library/Application Support/session-atlas/agent-args}"
 
 extra_args() {
@@ -38,7 +38,7 @@ extra_args() {
   [[ -r "$AGENT_ARGS_DIR/$1" ]] && line="$(<"$AGENT_ARGS_DIR/$1")"
   reply=()
   [[ -n "${line//[[:space:]]/}" ]] || return 0
-  # Слова — по правилам оболочки (кавычки работают), но без подстановок: (z) только делит.
+  # Words follow shell rules (quotes work) without expansions: (z) only splits.
   reply=("${(@Q)${(z)line}}")
 }
 CLAUDE_PROJECTS_DIR="${OBS_AGENT_TERMINAL_CLAUDE_PROJECTS_DIR:-$HOME/.claude/projects}"
@@ -134,7 +134,7 @@ watch_codex_session_id() {
   done
 }
 
-# В любой папке проектов: вкладка из Session Atlas открывается не только в vault.
+# Any project folder: a tab from Session Atlas can open outside the vault too.
 claude_session_exists() {
   local session_id="$1"
   valid_uuid "$session_id" || return 1
@@ -142,9 +142,9 @@ claude_session_exists() {
   (( ${#found} > 0 ))
 }
 
-# Хук, который пишет в реестр сессию, где вкладка сейчас, — через --settings: проектные
-# настройки есть только у vault, а вкладка может работать в любой папке. Хуки из --settings
-# складываются с проектными, а не заменяют их (проверено на CLI).
+# The hook that records the tab's current session in the registry goes through --settings: only the
+# vault has project settings, while the tab may run in any folder. Hooks from --settings add to the
+# project ones instead of replacing them (checked on the CLI).
 hook_settings() {
   local hook="$SCRIPT_DIR/agent-session-hook.zsh"
   local cmd="${(qqq)hook}"
@@ -176,7 +176,7 @@ run_claude() {
   elif [[ -z "$session_id" && "$SEED_MODE" == resume* ]] && claude_session_exists "$SEED_ID"; then
     upsert_resume_id claude "$instance" "$SEED_ID"
     if [[ "$SEED_MODE" == resume-fork ]]; then
-      # Id форка заранее не известен — его запишет хук на старте сессии.
+      # The fork's id is unknown in advance: the hook records it when the session starts.
       print "Forking Claude Code session: $SEED_ID"
       claude "${flags[@]}" --resume "$SEED_ID" --fork-session
     else
@@ -259,11 +259,11 @@ case "$APP" in
   codex) run_codex "$INSTANCE" "$START_EPOCH" ;;
 esac
 
-# Агент мог выйти, не вернув терминал в обычный режим (мышь отдана программе — выделение не
-# работает, вставка в скобках, экран-альтернатива). Возвращаем как было до его запуска.
+# The agent may exit without restoring the terminal (mouse captured so selection fails, bracketed
+# paste, alternate screen). Reset to the state before it started.
 printf '\e[?1000l\e[?1002l\e[?1003l\e[?1006l\e[?1004l\e[?2004l\e[?1049l\e[?25h'
 
-# Тесты и автоматизация: без оболочки после выхода агента.
+# Tests and automation: no shell after the agent exits.
 [[ -n "${OBS_AGENT_TERMINAL_NO_SHELL:-}" ]] && exit 0
 print
 print "Agent exited. This shell is kept open for manual commands."

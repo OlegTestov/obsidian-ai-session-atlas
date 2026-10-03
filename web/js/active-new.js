@@ -1,6 +1,7 @@
-// «Активные»: новая сессия — папка из списка и первый запрос, вкладка терминала в Obsidian.
-// Классический скрипт: общий глобальный контекст с остальными файлами страницы.
-const LAST_DIR_KEY = "atlas.newSessionDir";   // только удобство: где запускал в прошлый раз
+// Active: a new session from a folder in the list and a first prompt, in an Obsidian terminal tab.
+// Classic script: shares one global scope with the other page files.
+/* exported newSessionButton -- used by other page scripts */
+const LAST_DIR_KEY = "atlas.newSessionDir";   // convenience only: where the last session started
 
 function newSessionButton() {
   const b = el("button", "chip newsess", i18n("newsess.button"));
@@ -11,11 +12,11 @@ function newSessionButton() {
 }
 
 function rememberedDir() {
-  try { return localStorage.getItem(LAST_DIR_KEY) || ""; } catch (e) { return ""; }
+  try { return window.localStorage.getItem(LAST_DIR_KEY) || ""; } catch { return ""; }
 }
 
 function rememberDir(path) {
-  try { localStorage.setItem(LAST_DIR_KEY, path); } catch (e) { /* приватное окно */ }
+  try { window.localStorage.setItem(LAST_DIR_KEY, path); } catch { /* private window */ }
 }
 
 async function openNewSession() {
@@ -67,12 +68,12 @@ async function launchNewSession() {
                                 title: r.title })) {
     $("#ns-prompt").value = "";
     $("#newsess").close();
-    // Процесс и его файл появляются за пару секунд — тогда сессия встанет в сетку.
-    setTimeout(loadActive, 3000);
-    setTimeout(loadActive, 8000);
+    // The process and its file appear within a couple of seconds; then the session joins the grid.
+    window.setTimeout(loadActive, 3000);
+    window.setTimeout(loadActive, 8000);
     return;
   }
-  // В браузере открыть вкладку некому — команда для терминала.
+  // In a browser nobody can open a tab, so show a terminal command.
   $("#ns-note").textContent = i18n("newsess.outside");
   $("#ns-cmd").textContent = r.command;
   $("#ns-cmd").classList.remove("hidden");

@@ -1,12 +1,13 @@
-// «Активные»: поле ответа — подсказки слэш-команд, история отправленного, черновики.
-// Классический скрипт: общий глобальный контекст с остальными файлами страницы.
-// localStorage здесь — удобство одного браузера: пропадёт — не страшно, поэтому всё в try.
+// Active: the reply field with slash-command hints, sent history and drafts.
+// Classic script: shares one global scope with the other page files.
+/* exported rememberSent, enhanceComposer -- used by other page scripts */
+// localStorage here is a single-browser convenience: losing it is harmless, so everything is in try.
 const DRAFTS_KEY = "atlas.drafts";
 const HISTORY_KEY = "atlas.sentHistory";
 const HISTORY_MAX = 50;
 let commandList = null;
 
-// Черновики переживают перезагрузку страницы и вкладки Obsidian.
+// Drafts survive a reload of the page and of the Obsidian tab.
 (function restoreDrafts() {
   const saved = loadStored(DRAFTS_KEY, {});
   if (saved && typeof saved === "object") {
@@ -30,18 +31,18 @@ function rememberSent(text) {
 async function ensureCommands() {
   if (commandList) return commandList;
   try { commandList = (await api("/api/commands")).commands || []; }
-  catch (e) { commandList = []; }
+  catch { commandList = []; }
   return commandList;
 }
 
-// Стрелка листает историю, только когда курсор на краю текста: иначе она нужна для правки.
+// The arrow walks the history only when the caret is at the text edge: otherwise it is for editing.
 function onEdge(area, dir) {
   const before = area.value.slice(0, area.selectionStart);
   const after = area.value.slice(area.selectionEnd);
   return dir === "up" ? !before.includes("\n") : !after.includes("\n");
 }
 
-/** Поведение поля ответа. Возвращает выпадающий список подсказок — его кладут рядом с полем. */
+/** Reply field behaviour. Returns the hint dropdown, which the caller places next to the field. */
 function enhanceComposer(area, sid, submit) {
   const pop = el("div", "suggest hidden");
   pop.setAttribute("role", "listbox");
@@ -56,13 +57,13 @@ function enhanceComposer(area, sid, submit) {
       const row = el("div", "sug" + (i === active ? " on" : ""));
       row.setAttribute("role", "option");
       row.append(el("b", null, "/" + c.name), el("span", null, c.description || ""));
-      // mousedown, а не click: иначе поле теряет фокус раньше выбора.
+      // mousedown, not click: otherwise the field loses focus before the choice.
       row.addEventListener("mousedown", e => { e.preventDefault(); pick(i); });
       return row;
     }));
     pop.classList.toggle("hidden", !items.length);
     const on = pop.querySelector(".sug.on");
-    if (on) on.scrollIntoView({ block: "nearest" });   // стрелками — за выбранной строкой
+    if (on) on.scrollIntoView({ block: "nearest" });   // with the arrows, follow the selected row
   };
   const pick = i => {
     area.value = "/" + items[i].name + " ";
@@ -76,15 +77,15 @@ function enhanceComposer(area, sid, submit) {
   const suggest = async () => {
     const text = area.value;
     const list = await ensureCommands();
-    if (area.value !== text) return;           // пока ждали список, набрали дальше
+    if (area.value !== text) return;           // typing continued while the list loaded
     items = AtlasLogic.commandMatches(list, text);
     active = Math.min(active, Math.max(0, items.length - 1));
     render();
   };
 
   area.addEventListener("input", () => { histIndex = -1; saveDrafts(); suggest(); });
-  area.addEventListener("blur", () => setTimeout(() => {
-    if (document.activeElement !== area) close();       // клик по списку фокус не уводит
+  area.addEventListener("blur", () => window.setTimeout(() => {
+    if (document.activeElement !== area) close();       // a click on the list keeps the focus
   }, 150));
   area.addEventListener("keydown", e => {
     if (e.isComposing) return;
@@ -102,7 +103,7 @@ function enhanceComposer(area, sid, submit) {
       }
       if (e.key === "Escape") {
         e.preventDefault();
-        e.stopPropagation();                   // Esc закрывает подсказки, а не уводит из поля
+        e.stopPropagation();                   // Esc closes the hints instead of leaving the field
         close();
         return;
       }

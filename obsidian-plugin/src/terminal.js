@@ -9,7 +9,6 @@ import {
   AGENT_VIEW_TYPE,
   TERMINAL_VIEW_TYPE,
   SESSIONS_DIR,
-  UPLOADS_DIR,
   IMAGE_EXT,
   MAX_IMAGES,
 } from "./constants";
@@ -73,7 +72,7 @@ class TerminalMethods {
   checkImages(list) {
     if (list === undefined) return [];
     if (!Array.isArray(list) || list.length > MAX_IMAGES) return null;
-    const root = path.resolve(UPLOADS_DIR) + path.sep;
+    const root = path.resolve(this.dataDir(), "uploads") + path.sep;
     const out = [];
     for (const item of list) {
       if (typeof item !== "string") return null;

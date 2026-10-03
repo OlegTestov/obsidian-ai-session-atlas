@@ -7,6 +7,7 @@ import { ItemView } from "obsidian";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import * as os from "os";
 import * as path from "path";
 import { spawnPty } from "./pty";
 import { AGENT_VIEW_TYPE } from "./constants";
@@ -178,7 +179,7 @@ class AgentTerminalView extends ItemView {
         OBS_AGENT_TERMINAL_ARGS_DIR: path.join(this.plugin.dataDir(), "agent-args") });
       if (!env.LANG) env.LANG = "en_US.UTF-8";      // launched from the Dock, Obsidian has no locale
       pty = spawnPty({ file: shell, args: ["-l", "-i", "-c", this.state.command],
-                       cwd: this.state.cwd || process.env.HOME, env, cols: term.cols, rows: term.rows });
+                       cwd: this.state.cwd || os.homedir(), env, cols: term.cols, rows: term.rows });
     }
     if (key) registry().set(key, { pty, timer: null });
     this.pty = pty;

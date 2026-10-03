@@ -1,6 +1,6 @@
 {
   "name": "session-atlas",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "private": true,
   "description": "Obsidian plugin to search, watch and resume Claude Code and Codex sessions on macOS.",
   "license": "MIT",

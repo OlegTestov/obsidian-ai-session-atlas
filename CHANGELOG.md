@@ -7,6 +7,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.1.1] - 2026-10-03
+
+### Fixed
+
+- Plugin styles override Obsidian's defaults through selector specificity, without `!important`.
+- The home folder comes from the operating system, not from the `HOME` environment variable.
+- Images attached to a reply are checked against the uploads folder of the running install, so a
+  development install accepts its own uploads.
+
 ## [2.1.0] - 2026-10-03
 
 ### Changed
@@ -52,6 +61,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - The server follows `CLAUDE_CONFIG_DIR` for every Claude Code folder, not only the status line.
 - The plan dialog title and the "several questions at once" note follow the interface language.
 - The "tab script is missing" notice no longer points end users at a development command.
+- The runtime is extracted file by file through a rename, so a page load during an update never
+  reads half a script.
 
 ### Removed
 
@@ -77,6 +88,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Setup checks in settings: macOS, `python3` (3.8+), Claude Code, Codex, server, index rebuild, and an
   opt-in switch for subscription limits in the status line.
 
-[Unreleased]: https://github.com/OlegTestov/obsidian-session-atlas/compare/2.1.0...HEAD
+[Unreleased]: https://github.com/OlegTestov/obsidian-session-atlas/compare/2.1.1...HEAD
+[2.1.1]: https://github.com/OlegTestov/obsidian-session-atlas/compare/2.1.0...2.1.1
 [2.1.0]: https://github.com/OlegTestov/obsidian-session-atlas/compare/2.0.0...2.1.0
 [2.0.0]: https://github.com/OlegTestov/obsidian-session-atlas/releases/tag/2.0.0

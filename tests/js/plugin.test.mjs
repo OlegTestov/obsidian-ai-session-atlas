@@ -108,7 +108,6 @@ const SessionAtlasPlugin = pluginClass(BUNDLE ? require(BUNDLE) : loadSrc("main"
 // Pure helpers come from the sources, also under the stand-ins (the build exports only the class).
 const agents = loadSrc("agents");
 const i18n = loadSrc("i18n");
-const { UPLOADS_DIR } = loadSrc("constants");
 const { AgentTerminalView, specialKey, canFit, applyTheme } = loadSrc("term-view");
 Module._load = realLoad;
 // No plugin instance in these tests writes to the real data folder.
@@ -437,11 +436,12 @@ describe("quick reply", () => {
 
   // Images: only from the catalog's uploads folder and only existing files.
   describe("images", () => {
-    const pic = path.join(UPLOADS_DIR, "test-plugin-bridge.png");
+    const uploads = path.join(plugin.dataDir(), "uploads");
+    const pic = path.join(uploads, "test-plugin-bridge.png");
     const outside = path.join(TMP, "outside.png");
     before(() => {
-      assert.ok(UPLOADS_DIR.startsWith(TMP), "the uploads folder must be inside the temp HOME");
-      fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+      assert.ok(uploads.startsWith(TMP), "the uploads folder must be inside the temp folder");
+      fs.mkdirSync(uploads, { recursive: true });
       fs.writeFileSync(pic, "png");
       fs.writeFileSync(outside, "png");
     });
@@ -451,8 +451,8 @@ describe("quick reply", () => {
       ["image only, no text", () => ({ images: [pic], text: "" }), true, () => ["\x1b[200~" + pic + "\x1b[201~ ", "\r"]],
       ["image outside the uploads folder: refused", () => ({ images: [outside] }), false, () => []],
       ["escaping the folder with ..: refused",
-       () => ({ images: [path.join(UPLOADS_DIR, "..", "..", "outside.png")] }), false, () => []],
-      ["missing image: refused", () => ({ images: [path.join(UPLOADS_DIR, "missing.png")] }), false, () => []],
+       () => ({ images: [path.join(uploads, "..", "..", "outside.png")] }), false, () => []],
+      ["missing image: refused", () => ({ images: [path.join(uploads, "missing.png")] }), false, () => []],
       ["not an image by extension: refused", () => ({ images: [pic.replace(".png", ".sh")] }), false, () => []],
       ["more than five images: refused", () => ({ images: Array(6).fill(pic) }), false, () => []],
     ];

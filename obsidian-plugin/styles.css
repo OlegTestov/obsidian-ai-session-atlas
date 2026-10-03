@@ -15,9 +15,10 @@
 }
 
 /* Agent terminal tab. xterm's own styles come first in the build (@xterm/xterm/css/xterm.css). */
-.session-atlas-terminal {
-  padding: 0 !important;
-  overflow: hidden !important;
+/* Two classes on the view's own content element beat Obsidian's view-content padding. */
+.view-content.session-atlas-terminal {
+  padding: 0;
+  overflow: hidden;
   background: var(--background-primary);
 }
 .session-atlas-terminal-box {
@@ -25,9 +26,6 @@
   height: 100%;
   padding: 4px 0 0 6px;
   box-sizing: border-box;
-}
-.session-atlas-terminal-box .xterm-viewport {
-  background-color: transparent !important;
 }
 
 /* Catalog settings: multi-line fields sit below the description, full width, without hyphenation. */

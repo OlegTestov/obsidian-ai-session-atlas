@@ -60,7 +60,11 @@ tmux or other Obsidian plugins.
 
 ## Installation
 
-Session Atlas is not in the Obsidian community plugin directory yet. Install it manually:
+From the community plugin directory
+([listing](https://community.obsidian.md/plugins/session-atlas)): in Obsidian open
+**Settings → Community plugins → Browse**, search for **Session Atlas**, install and enable it.
+
+Manually:
 
 1. Download `main.js`, `manifest.json` and `styles.css` from the
    [latest release](https://github.com/OlegTestov/obsidian-session-atlas/releases/latest).

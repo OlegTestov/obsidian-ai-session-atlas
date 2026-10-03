@@ -63,7 +63,11 @@ Obsidian не нужны.
 
 ## Установка
 
-В каталоге плагинов Obsidian Session Atlas пока нет. Установка вручную:
+Из каталога плагинов ([страница плагина](https://community.obsidian.md/plugins/session-atlas)):
+в Obsidian открой **Settings → Community plugins → Browse**, найди **Session Atlas**, установи и
+включи.
+
+Вручную:
 
 1. Скачай `main.js`, `manifest.json` и `styles.css` из
    [последнего релиза](https://github.com/OlegTestov/obsidian-session-atlas/releases/latest).

@@ -119,3 +119,80 @@ def test_terminal_modes_are_reset_after_the_agent_exits(tmp_path):
                          check=True, capture_output=True, timeout=20).stdout
     for mode in (b"1000l", b"1002l", b"1003l", b"1006l", b"2004l"):
         assert b"\x1b[?" + mode in out, mode
+
+
+def test_codex_tab_finds_sessions_in_a_moved_codex_home(tmp_path):
+    """CODEX_HOME moves Codex's data; the tab script looks there, not in ~/.codex."""
+    env, work = _env(tmp_path)
+    stub = tmp_path / "bin" / "codex"
+    stub.write_text('#!/bin/zsh\nprint -r -- "${(pj:\\x1f:)@}" >> "$CALLS"\n', encoding="utf-8")
+    stub.chmod(0o755)
+    moved = tmp_path / "elsewhere" / "codex"
+    day = moved / "sessions" / "2026" / "09" / "01"
+    day.mkdir(parents=True)
+    meta = {"type": "session_meta", "payload": {"id": NEW, "cwd": str(work)}}
+    (day / f"rollout-2026-09-01T10-00-00-{NEW}.jsonl").write_text(json.dumps(meta, separators=(",", ":")) + "\n",
+                                                                  encoding="utf-8")
+    env["CODEX_HOME"] = str(moved)
+    subprocess.run(["zsh", str(SCRIPT), "codex", "codex-tab-1", "resume", NEW], cwd=work, env=env,
+                   check=True, capture_output=True, timeout=20)
+    calls = [c.split("\x1f") for c in (tmp_path / "calls").read_text(encoding="utf-8").splitlines()]
+    assert calls and calls[-1][-2:] == ["resume", NEW]
+
+
+def _codex_stub(tmp_path, env, work):
+    """codex records its arguments and, like the real one, writes a rollout for the thread it starts."""
+    home = tmp_path / "codex-home"
+    env["CODEX_HOME"] = str(home)
+    stub = tmp_path / "bin" / "codex"
+    stub.write_text(
+        '#!/bin/zsh\nprint -r -- "${(pj:\\x1f:)@}" >> "$CALLS"\n'
+        'd="$CODEX_HOME/sessions/2026/10/03"; mkdir -p "$d"\n'
+        f'print -r -- \'{{"timestamp":"t","type":"session_meta","payload":{{"id":"{NEW}","cwd":"\'"$PWD"\'"}}}}\' '
+        f'> "$d/rollout-2026-10-03T10-00-00-{NEW}.jsonl"\n', encoding="utf-8")
+    stub.chmod(0o755)
+
+
+def _codex_run(tmp_path, *args):
+    env, work = _env(tmp_path)
+    _codex_stub(tmp_path, env, work)
+    # The thread watcher runs in the background and would hold a captured stdout open.
+    subprocess.run(["zsh", str(SCRIPT), "codex", *args], cwd=work, env=env, check=True,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20)
+    calls = [c.split("\x1f") for c in (tmp_path / "calls").read_text(encoding="utf-8").splitlines()]
+    registry = (tmp_path / "state" / "resume.tsv").read_text(encoding="utf-8")
+    return calls, registry
+
+
+def test_codex_new_starts_with_the_first_prompt_and_records_the_thread(tmp_path):
+    prompt = "Прочитай /h/launch-x.md и продолжи; $HOME `id` «x»"
+    calls, registry = _codex_run(tmp_path, "codex-tab-2", "new", "", prompt)
+    assert calls == [[prompt]]
+    assert f"codex\tcodex-tab-2\t{NEW}\t" in registry
+    # After a restart the tab resumes the recorded thread; the prompt is not sent again.
+    calls, _ = _codex_run(tmp_path, "codex-tab-2", "new", "", prompt)
+    assert calls[-1] == ["resume", NEW]
+
+
+def test_codex_new_prompt_never_becomes_a_flag(tmp_path):
+    calls, _ = _codex_run(tmp_path, "codex-tab-3", "new", "", "--yolo")
+    assert calls == [[" --yolo"]]
+
+
+def test_codex_new_without_a_thread_does_not_repeat_the_prompt(tmp_path):
+    """No thread was recorded (Codex quit at once): a restart opens a bare Codex, not the prompt again."""
+    env, work = _env(tmp_path)
+    stub = tmp_path / "bin" / "codex"
+    stub.write_text('#!/bin/zsh\nprint -r -- "${(pj:\\x1f:)@}" >> "$CALLS"\n', encoding="utf-8")
+    stub.chmod(0o755)
+    env["CODEX_HOME"] = str(tmp_path / "codex-home")
+    for _ in range(2):
+        subprocess.run(["zsh", str(SCRIPT), "codex", "codex-tab-4", "new", "", "сделай отчёт"], cwd=work,
+                       env=env, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20)
+    calls = (tmp_path / "calls").read_text(encoding="utf-8").splitlines()
+    assert calls == ["сделай отчёт", ""]
+
+
+def test_codex_new_without_a_prompt_is_a_bare_codex(tmp_path):
+    calls, _ = _codex_run(tmp_path, "codex-tab-5", "new", "")
+    assert calls == [[""]]

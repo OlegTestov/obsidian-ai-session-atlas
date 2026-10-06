@@ -3,7 +3,7 @@
 // handed back after a restart: the command runs again, and the tab script brings back its session
 // from the registry. From outside the tab looks like a Terminal plugin tab (emulator.terminal,
 // emulator.pseudoterminal.shell), so the Active view code works with both.
-import { ItemView } from "obsidian";
+import { ItemView, Menu } from "obsidian";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -11,6 +11,8 @@ import * as os from "os";
 import * as path from "path";
 import { spawnPty } from "./pty";
 import { AGENT_VIEW_TYPE } from "./constants";
+import { registry, keepHeldTabs, holdForReclaim } from "./held";
+import { selectWithModifier, isCopyKey, copySelection, pasteClipboard, menuItems, copyTarget } from "./term-copy";
 
 const DEFAULT_SHELL = "/bin/zsh";
 
@@ -28,44 +30,6 @@ function specialKey(e) {
   if (e.key === "Enter" && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) return "\x1b\r";
   return null;
 }
-const RECLAIM_MS = 120000;
-
-// Tab processes live in a window-wide registry: it survives a plugin reload (toggle, update), and
-// the new copy picks up the process by tab id without cutting off the agent.
-function registry() {
-  if (!window.__sessionAtlasPtys) {
-    window.__sessionAtlasPtys = new Map();
-    // Quitting Obsidian ends them all: otherwise the tabs would start second processes on the next launch.
-    window.addEventListener("beforeunload", () => {
-      for (const { pty } of window.__sessionAtlasPtys.values()) pty.kill();
-    });
-  }
-  return window.__sessionAtlasPtys;
-}
-
-/**
- * After a reload, keep every held process whose tab is still in the layout. Background tabs load
- * only when shown, so the reclaim timer would otherwise end their agents while nobody looks.
- * Output keeps going into the process's buffer until the tab opens. Returns the kept tab ids.
- */
-function keepHeldTabs(workspace) {
-  if (!workspace || typeof workspace.iterateAllLeaves !== "function") return [];
-  // The saved view state, not the view: a leaf can hold a placeholder until it loads.
-  const wanted = new Set();
-  workspace.iterateAllLeaves((leaf) => {
-    const state = leaf.getViewState && leaf.getViewState();
-    if (state && state.type === AGENT_VIEW_TYPE && state.state && state.state.instance) wanted.add(state.state.instance);
-  });
-  const kept = [];
-  for (const [key, held] of registry()) {
-    if (!wanted.has(key) || !held.timer) continue;
-    window.clearTimeout(held.timer);
-    held.timer = null;
-    kept.push(key);
-  }
-  return kept;
-}
-
 /** Terminal colours come from the Obsidian theme: light and dark without configuration. */
 function themeFromCss(el) {
   const css = getComputedStyle(el);
@@ -141,20 +105,20 @@ class AgentTerminalView extends ItemView {
       scrollback: 10000,
       macOptionIsMeta: true,
       // Claude Code takes the mouse (modes 1000–1006): select with ⌥ held, as in iTerm2.
+      // Inside Obsidian xterm misses that it runs on macOS, so selectWithModifier sets it up.
       macOptionClickForcesSelection: true,
+      rightClickSelectsWord: true,
       allowProposedApi: true,
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.loadAddon(new WebLinksAddon((event, uri) => window.open(uri)));
     term.open(this.box);
+    selectWithModifier(term);
     if (canFit(this.box)) { try { fit.fit(); } catch { /* the tab has no size yet */ } }
     // ⌘C with a selection copies; otherwise the key goes to the terminal as is.
     term.attachCustomKeyEventHandler((e) => {
-      if (e.type === "keydown" && e.metaKey && e.key === "c" && term.hasSelection()) {
-        navigator.clipboard.writeText(term.getSelection());
-        return false;
-      }
+      if (isCopyKey(e) && copySelection(term)) return false;
       const special = specialKey(e);
       if (special) {
         if (e.type === "keydown" && this.pty) this.pty.write(special);
@@ -170,7 +134,7 @@ class AgentTerminalView extends ItemView {
       // The plugin was reloaded and the process is alive: pick it up and show what was on screen.
       window.clearTimeout(held.timer);
       pty = held.pty;
-      term.write(pty.recent());
+      if (typeof pty.recent === "function") term.write(pty.recent());   // older versions kept no screen
       pty.resize(term.cols, term.rows);
     } else {
       const shell = settings.shellPath || process.env.SHELL || DEFAULT_SHELL;
@@ -181,7 +145,9 @@ class AgentTerminalView extends ItemView {
       pty = spawnPty({ file: shell, args: ["-l", "-i", "-c", this.state.command],
                        cwd: this.state.cwd || os.homedir(), env, cols: term.cols, rows: term.rows });
     }
-    if (key) registry().set(key, { pty, timer: null });
+    // A tab without an id is listed too, under its PTY: quitting Obsidian must end its process as well.
+    this.ptyKey = key || `pty-${pty.pid}`;
+    registry().set(this.ptyKey, { pty, timer: null, held: false });
     this.pty = pty;
     this.term = term;
     pty.onData((data) => term.write(data));
@@ -199,6 +165,19 @@ class AgentTerminalView extends ItemView {
       }, RESIZE_SETTLE_MS);
     });
     this.resizeObserver.observe(this.box);
+    this.registerDomEvent(this.box, "contextmenu", (event) => this.showMenu(event, term));
+    // A drag with ⌥ selects without giving the terminal the keyboard: the next ⌘C went to the page.
+    // xterm ends a forced selection on the document, so the check runs there, after its own handlers.
+    const doc = this.containerEl.ownerDocument || document;
+    this.registerDomEvent(doc, "mouseup", () => window.setTimeout(() => {
+      if (this.app.workspace.activeLeaf === this.leaf && term.hasSelection()) term.focus();
+    }, 0), { capture: true });
+    // ⌘C or Edit → Copy while the keyboard is elsewhere: this tab's selection is what is copied.
+    this.registerDomEvent(doc, "copy", (event) => {
+      if (!copyTarget(event, this.leaf, this.app.workspace.activeLeaf, term)) return;
+      event.clipboardData.setData("text/plain", term.getSelection());
+      event.preventDefault();
+    });
     // Same shape as Terminal plugin tabs: the Active view reads the screen and types through it.
     const shellInfo = { pid: pty.pid, stdin: { write: (data) => pty.write(data) } };
     this.emulator = { terminal: term, pseudoterminal: Promise.resolve({ shell: Promise.resolve(shellInfo) }) };
@@ -212,9 +191,22 @@ class AgentTerminalView extends ItemView {
     if (this.state.focus !== false) term.focus();
   }
 
+  /** Copy and paste on the right click; xterm has already selected the word under the pointer. */
+  showMenu(event, term) {
+    event.preventDefault();
+    const menu = new Menu();
+    for (const item of menuItems(term)) {
+      menu.addItem((entry) => entry.setTitle(this.plugin.t(`terminal.${item.id}`)).setIcon(item.icon)
+        .setDisabled(item.disabled)
+        .onClick(() => (item.id === "copy" ? copySelection(term) : pasteClipboard(term))));
+    }
+    menu.showAtMouseEvent(event);
+    return menu;
+  }
+
   /**
    * The tab was closed: the process ends. When the plugin itself unloads (Obsidian has already
-   * cleared its _loaded), the process waits RECLAIM_MS for the new plugin copy and only then ends.
+   * cleared its _loaded), the process is held for the next plugin copy (held.js).
    */
   async onClose() {
     if (this.resizeObserver) this.resizeObserver.disconnect();
@@ -223,12 +215,10 @@ class AgentTerminalView extends ItemView {
     if (this.pty) {
       const unloading = this.plugin && this.plugin._loaded === false;
       if (unloading && key && !this.pty.exited) {
-        const pty = this.pty;
-        pty.onData(null);
-        registry().set(key, { pty, timer: window.setTimeout(() => { pty.kill(); registry().delete(key); }, RECLAIM_MS) });
+        holdForReclaim(key, this.pty, this.getState());
       } else {
         this.pty.kill();
-        if (key) registry().delete(key);
+        registry().delete(this.ptyKey);
       }
     }
     if (this.term) this.term.dispose();

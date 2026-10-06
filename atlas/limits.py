@@ -15,6 +15,7 @@ from .messages import msg
 
 LIMITS_FILE = "rate-limits.json"
 WINDOWS = ("five_hour", "seven_day")        # labels come from messages, in the page language
+LIVE_FOR = 600      # seconds: older numbers get their age on the toolbar (Codex's too)
 
 
 def _iso(value) -> str | None:
@@ -51,6 +52,6 @@ def read_limits(home: str | None = None, now: float | None = None) -> dict | Non
     if not windows:
         return None
     captured = data.get("captured_at") if isinstance(data.get("captured_at"), (int, float)) else None
-    return {"captured_at": _iso(captured) if captured else None,
-            "age_seconds": round((now or time.time()) - captured) if captured else None,
-            "windows": windows}
+    age = round((now or time.time()) - captured) if captured else None
+    return {"captured_at": _iso(captured) if captured else None, "age_seconds": age, "windows": windows,
+            "source": "statusline", "live": age is not None and age <= LIVE_FOR}

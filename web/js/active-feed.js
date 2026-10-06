@@ -180,7 +180,8 @@ function feedTurn(t, last) {
   }
   if (t.interrupted && !t.reply) box.appendChild(el("div", "fwho bad", i18n("feed.interrupted")));
   if (t.reply) {
-    box.appendChild(el("div", "fwho", `Claude · ${fmtShort(t.reply_at)}`
+    const who = agentShort(activeSessions.find(x => x.session_id === feedSid));
+    box.appendChild(el("div", "fwho", `${who} · ${fmtShort(t.reply_at)}`
       + (t.interrupted ? " · " + i18n("feed.interrupted") : "")));
     const reply = el("div", "ftxt md");
     if (t.reply_len > t.reply.length) reply.appendChild(el("p", "cutmark", i18n("feed.replyCut")));

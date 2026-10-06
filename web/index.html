@@ -3,9 +3,10 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Session Atlas</title>
+<title>AI Session Atlas</title>
 <link rel="stylesheet" nonce="__NONCE__" href="/static/atlas.css">
 <link rel="stylesheet" nonce="__NONCE__" href="/static/stats.css">
+<link rel="stylesheet" nonce="__NONCE__" href="/static/folder-pick.css">
 </head>
 <body>
 <div id="server-banner" class="hidden" role="alert"></div>
@@ -35,9 +36,13 @@
 <div id="app" role="tabpanel" aria-labelledby="view-search">
   <aside id="filters">
     <div id="filter-body">
-      <h1>Session Atlas</h1>
-      <input type="search" id="q" placeholder="search prompts…" data-i18n-placeholder="search.placeholder"
-        autocomplete="off">
+      <h1>AI Session Atlas</h1>
+      <div id="q-row">
+        <input type="search" id="q" placeholder="search prompts…" data-i18n-placeholder="search.placeholder"
+          autocomplete="off">
+        <button type="button" class="ghost" id="filters-toggle" aria-expanded="false" aria-controls="filter-body"
+          data-i18n="search.filters">Filters</button>
+      </div>
       <p class="hint" data-i18n="search.hint">"phrase" — words in a row · -word — exclude · OR — either of two. ⌘K — focus, Esc — clear</p>
       <p id="qplan" aria-live="polite"></p>
       <div id="order-box" class="hidden">
@@ -47,6 +52,7 @@
         </select>
       </div>
       <label><input type="checkbox" id="scope"> <span data-i18n="search.scope">search everything, not only prompts</span></label>
+      <h2 data-i18n="agent.filter">Agent</h2><div id="search-agent"></div>
       <h2 data-i18n="search.domain">Domain</h2><div id="domains"></div>
       <h2 data-i18n="search.project">Project</h2><select id="project"><option value="" data-i18n="search.all">all</option></select>
       <h2 data-i18n="search.topic">Topic</h2><select id="topic"><option value="" data-i18n="search.all">all</option></select>
@@ -108,7 +114,21 @@
 
 <dialog id="newsess" aria-labelledby="ns-title">
   <h3 id="ns-title" data-i18n="actions.nsTitle">New session</h3>
-  <label class="ns-row"><span data-i18n="actions.nsDir">Folder</span> <select id="ns-dir"></select></label>
+  <div class="ns-row">
+    <label for="ns-dir" id="ns-dir-label" data-i18n="actions.nsDir">Folder</label>
+    <div class="fp">
+      <input id="ns-dir" type="text" role="combobox" aria-autocomplete="list" aria-expanded="false"
+        aria-controls="ns-dir-list" aria-describedby="ns-dir-hint" autocomplete="off" autocapitalize="off"
+        spellcheck="false" placeholder="~/Code/project, /full/path or a vault name"
+        data-i18n-placeholder="newsess.dirPlaceholder">
+      <ul id="ns-dir-list" role="listbox" aria-labelledby="ns-dir-label" hidden></ul>
+    </div>
+    <div class="fp-quick" id="ns-dir-quick" role="group" aria-label="Quick picks"
+      data-i18n-aria-label="newsess.quick"></div>
+    <p class="fp-hint" id="ns-dir-hint" aria-live="polite"></p>
+  </div>
+  <label class="ns-row" id="ns-agent-row" hidden><span data-i18n="actions.nsAgent">Agent</span>
+    <select id="ns-agent"></select></label>
   <label class="ns-row"><span data-i18n="actions.nsPrompt">First prompt</span>
     <textarea id="ns-prompt" rows="5" placeholder="What to do? Can be left empty. ⌘Enter — start"
       data-i18n-placeholder="actions.nsPlaceholder"></textarea></label>
@@ -127,19 +147,24 @@
 <script nonce="__NONCE__" src="/static/lang-active.js"></script>
 <script nonce="__NONCE__" src="/static/lang-views.js"></script>
 <script nonce="__NONCE__" src="/static/lang-server.js"></script>
+<script nonce="__NONCE__" src="/static/lang-resume.js"></script>
 <script nonce="__NONCE__" src="/static/markdown.js"></script>
 <script nonce="__NONCE__" src="/static/logic.js"></script>
 <script nonce="__NONCE__" src="/static/core.js"></script>
+<script nonce="__NONCE__" src="/static/agent-filter.js"></script>
 <script nonce="__NONCE__" src="/static/views.js"></script>
 <script nonce="__NONCE__" src="/static/server-status.js"></script>
 <script nonce="__NONCE__" src="/static/tips.js"></script>
 <script nonce="__NONCE__" src="/static/search.js"></script>
 <script nonce="__NONCE__" src="/static/card.js"></script>
 <script nonce="__NONCE__" src="/static/actions.js"></script>
+<script nonce="__NONCE__" src="/static/resume-with.js"></script>
 <script nonce="__NONCE__" src="/static/active-state.js"></script>
 <script nonce="__NONCE__" src="/static/active-dialog.js"></script>
+<script nonce="__NONCE__" src="/static/active-free.js"></script>
 <script nonce="__NONCE__" src="/static/active-plan.js"></script>
 <script nonce="__NONCE__" src="/static/active-commands.js"></script>
+<script nonce="__NONCE__" src="/static/folder-pick.js"></script>
 <script nonce="__NONCE__" src="/static/active-new.js"></script>
 <script nonce="__NONCE__" src="/static/active-feed-views.js"></script>
 <script nonce="__NONCE__" src="/static/active-feed.js"></script>

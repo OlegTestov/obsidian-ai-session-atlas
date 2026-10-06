@@ -11,9 +11,12 @@ import {
   HOST_SOURCE,
 } from "./constants";
 import { TerminalMethods } from "./terminal";
+import { codexScreenState } from "./dialog-codex";
 import { InputMethods } from "./input";
+import { CodexInputMethods } from "./input-codex";
 import { AtlasView } from "./view";
-import { AgentTerminalView, keepHeldTabs } from "./term-view";
+import { AgentTerminalView } from "./term-view";
+import { HeldMethods, keepHeldTabs } from "./held";
 import { AgentMethods } from "./agents";
 import { GuardMethods } from "./guard";
 import { RuntimeMethods } from "./runtime";
@@ -24,6 +27,16 @@ import { resolveLanguage, obsidianLanguage, translate } from "./i18n";
 import { NotifyMethods } from "./notify";
 import { RestoreMethods } from "./restore";
 import { AtlasSettingTab, DEFAULT_SETTINGS } from "./settings";
+
+/** A port written into the dev marker (a live test Obsidian next to the test vault), else none. */
+function markerPort(file) {
+  try {
+    const port = Number(fsSync.readFileSync(file, "utf8").trim());
+    return Number.isInteger(port) && port > 1024 && port < 65536 ? port : null;
+  } catch {
+    return null;
+  }
+}
 
 class SessionAtlasPlugin extends Plugin {
   async onload() {
@@ -50,10 +63,11 @@ class SessionAtlasPlugin extends Plugin {
     try {
       if (!saved.agentArgs && this.adoptAgentArgs()) await this.saveData(this.settings);
       this.writeAgentArgs();
-    } catch (error) { console.error("Session Atlas: could not sync agent arguments", error); }
+    } catch (error) { console.error("AI Session Atlas: could not sync agent arguments", error); }
     this.app.workspace.onLayoutReady(() => this.detectAgents().catch(() => {}));
     this.app.workspace.onLayoutReady(() => this.watchOwnBuild());
-    this.app.workspace.onLayoutReady(() => keepHeldTabs(this.app.workspace));
+    // Held processes whose tabs are still in the layout wait for them; the rest are offered back.
+    this.app.workspace.onLayoutReady(() => { keepHeldTabs(this.app.workspace); this.offerHeldTabs(); });
     // Not only the catalog tab needs the server: notifications poll it constantly, and Obsidian
     // does not create a background tab until you switch to it.
     this.app.workspace.onLayoutReady(() => this.ensureServer().catch(() => {}));
@@ -68,6 +82,7 @@ class SessionAtlasPlugin extends Plugin {
 
     this.pendingCloseConfirms = new WeakSet();
     this.installCloseGuard(document);
+    this.app.workspace.onLayoutReady(() => this.installCloseGuards());     // popout windows already open
     this.registerEvent(
       this.app.workspace.on("window-open", (win) => this.installCloseGuard(win && win.doc))
     );
@@ -115,13 +130,14 @@ class SessionAtlasPlugin extends Plugin {
     if (this.devInstall === undefined) {
       const adapter = this.app && this.app.vault && this.app.vault.adapter;
       const dir = this.manifest && this.manifest.dir;
-      this.devInstall = !!(adapter && adapter.getBasePath && dir
-        && fsSync.existsSync(path.join(adapter.getBasePath(), dir, DEV_MARKER)));
+      const marker = adapter && adapter.getBasePath && dir ? path.join(adapter.getBasePath(), dir, DEV_MARKER) : null;
+      this.devInstall = !!(marker && fsSync.existsSync(marker));
+      this.devPort = this.devInstall ? markerPort(marker) : null;
     }
     return this.devInstall;
   }
 
-  atlasPort() { return this.isDevInstall() ? DEV_PORT : ATLAS_PORT; }
+  atlasPort() { return this.isDevInstall() ? this.devPort || DEV_PORT : ATLAS_PORT; }
 
   atlasOrigin() { return `http://127.0.0.1:${this.atlasPort()}`; }
 
@@ -221,6 +237,14 @@ class SessionAtlasPlugin extends Plugin {
       this.replyRestorable(event.source);
       return;
     }
+    if (data.type === "reattach-held" || data.type === "release-held") {
+      // Only PTY pids of processes this plugin holds: nothing else can be reached through them.
+      const pids = Array.isArray(data.ptyPids) ? data.ptyPids.filter((p) => Number.isInteger(p) && p > 1) : [];
+      if (!pids.length) return;
+      const done = data.type === "reattach-held" ? this.reattachHeld(pids) : Promise.resolve(this.releaseHeldTabs(pids));
+      done.then(() => this.replyTabs(event.source)).catch((error) => console.error("AI Session Atlas:", error));
+      return;
+    }
     if (data.type === "interrupt") {
       this.interrupt(event.source, data);
       return;
@@ -241,13 +265,37 @@ class SessionAtlasPlugin extends Plugin {
     target.postMessage({
       source: HOST_SOURCE,
       type: "tabs",
-      tabs: tabs.map(({ pid, title }) => ({ ptyPid: pid, title })),
+      tabs: tabs.map((tab) => this.tabInfo(tab)),
+      // Processes whose tabs closed with the plugin: still running, offered back on the page.
+      held: this.heldTabs().map(({ ptyPid, title, agent }) => ({ ptyPid, title, agent })),
       health,
+      // The page offers only the agents enabled here (Settings → Agents).
+      agents: { claude: this.agentEnabled("claude"), codex: this.agentEnabled("codex") },
     }, this.atlasOrigin());
+  }
+
+  /**
+   * A tab for the page. A Codex tab also carries its screen state (waiting | busy | idle | null):
+   * Codex writes no approval into its rollout, so only the screen shows that it waits for you.
+   */
+  tabInfo({ leaf, pid, title }) {
+    const info = { ptyPid: pid, title };
+    if (this.tabAgent(leaf) === "codex") {
+      info.agent = "codex";
+      info.screen = codexScreenState(this.screenLines(leaf));
+    }
+    return info;
+  }
+
+  tabAgent(leaf) {
+    const state = leaf && leaf.view && leaf.view.state;
+    return state && typeof state.kind === "string" ? state.kind : null;
   }
 
   async actOnTab(type, ptyPid, title) {
     const tab = (await this.terminalTabs()).find((t) => t.pid === ptyPid);
+    // "Go to" on a session whose tab closed with the plugin: a tab on the same process comes back.
+    if (!tab && type === "focus-tab" && (await this.reattachHeld([ptyPid]))) return;
     if (!tab) {
       new Notice(this.t("tab.gone"));
       return;
@@ -262,8 +310,8 @@ class SessionAtlasPlugin extends Plugin {
 }
 
 // Methods from the other files are mixed into the plugin class and run with the plugin as `this`.
-for (const methods of [TerminalMethods, InputMethods, NotifyMethods, RestoreMethods, AgentMethods,
-                       GuardMethods, ExplorerMethods, RuntimeMethods, StatusLineMethods, ReloadMethods]) {
+for (const methods of [TerminalMethods, InputMethods, CodexInputMethods, NotifyMethods, RestoreMethods, HeldMethods,
+                       AgentMethods, GuardMethods, ExplorerMethods, RuntimeMethods, StatusLineMethods, ReloadMethods]) {
   for (const name of Object.getOwnPropertyNames(methods.prototype)) {
     if (name === "constructor") continue;
     Object.defineProperty(SessionAtlasPlugin.prototype, name,

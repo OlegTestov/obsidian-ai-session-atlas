@@ -28,8 +28,11 @@ class RestoreMethods {
     this.restoreChecked = true;
     const open = [];
     for (const s of sessions) {
-      if (await this.tabForSession(s)) {
-        open.push({ session_id: s.session_id, title: String(s.title || "").slice(0, 200), at: now });
+      // A process held without a tab (the plugin was toggled) is still ours: an Obsidian restart
+      // would end it, and it must be offered back like an open tab.
+      if ((await this.tabForSession(s)) || this.heldForSession(s)) {
+        open.push({ session_id: s.session_id, title: String(s.title || "").slice(0, 200), at: now,
+                    agent: s.agent === "codex" ? "codex" : "claude" });
       }
     }
     const saved = (this.settings && this.settings.openSessions) || [];
@@ -45,7 +48,8 @@ class RestoreMethods {
       source: HOST_SOURCE,
       type: "restorable",
       ready: !!this.restoreChecked && Date.now() - (this.loadedAt || 0) >= RESTORE_GRACE_MS,
-      sessions: (this.restorable || []).map(({ session_id, title, at }) => ({ session_id, title, at })),
+      sessions: (this.restorable || []).map(({ session_id, title, at, agent }) =>
+        ({ session_id, title, at, agent: agent || "claude" })),
     }, this.atlasOrigin());
   }
 

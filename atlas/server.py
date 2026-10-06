@@ -18,14 +18,18 @@ from urllib.parse import parse_qs, urlparse
 from . import (
     actions,
     active,
+    agents,
     autoclassify,
     classify,
+    codex_live,
     commands,
     config,
+    convert,
     db,
     delete,
     enrich,
     feed,
+    folders,
     index,
     launch,
     limits,
@@ -58,6 +62,7 @@ ALLOWED_ORIGINS = {f"http://127.0.0.1:{PORT}", f"http://localhost:{PORT}"}
 # of a second, but a live session is appended constantly and reread in full: 2-5 s.
 # Such a pass runs in the background; the response gets current data and a flag to redraw later.
 CATCHUP_EVERY = 15.0  # no more often: search sends a request on every keystroke
+DUE_RETRY = 3.0       # a due full pass that failed is retried, but not on every request
 CATCHUP_WAIT = 0.3    # a fast pass finishes in time; a long one does not block typing
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _catchup_lock = threading.Lock()
@@ -93,18 +98,31 @@ class _Pass:
             self.proc.wait(timeout)
 
 
-def catch_up() -> bool:
-    """Catch up the index. True: a pass still runs in the background, response data may be stale."""
+def catch_up(now: bool = False) -> bool:
+    """Catch up the index. True: a pass still runs in the background, response data may be stale.
+    `now` skips the pause between passes: a full pass is due."""
     global _catchup_proc, _catchup_at
     with _catchup_lock:
         if _catchup_proc is not None and _catchup_proc.is_alive():
             return True     # do not wait for another pass: each keystroke would add 0.3 s
-        if time.monotonic() - _catchup_at < CATCHUP_EVERY:
+        if time.monotonic() - _catchup_at < (DUE_RETRY if now else CATCHUP_EVERY):
             return False
         _catchup_at = time.monotonic()
         current = _catchup_proc = _Pass()
     current.join(CATCHUP_WAIT)
     return current.is_alive()
+
+
+def _index_new(path: str, agent: str) -> None:
+    """In a thread: the writer lock may wait for a running pass, the response does not."""
+    try:
+        conn = db.connect()
+        try:
+            index.index_one(conn, path, agent)
+        finally:
+            conn.close()
+    except Exception as exc:  # the next pass picks the file up anyway
+        print(f"atlas index: {path}: {type(exc).__name__}: {exc}", file=sys.stderr)
 
 
 def runtime_version() -> str | None:
@@ -283,7 +301,10 @@ class Handler(BaseHTTPRequestHandler):
                                         "version": runtime_version()})
             conn = db.connect()
             try:
-                index.ensure_indexed(conn)      # rebuild the index after a schema upgrade
+                # A full pass after a schema upgrade or a settings change takes minutes on a large
+                # corpus: it runs in the background, and pages show "indexing" meanwhile.
+                if index.reindex_due(conn):
+                    catch_up(now=True)
                 if url.path == "/api/index-status":           # the checks screen in settings
                     count = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
                     return self._json(200, {"sessions": count, "indexing": catch_up()})
@@ -292,23 +313,28 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(200, dict(self._list(conn, query), indexing=indexing))
                 if url.path == "/api/active":
                     indexing = catch_up()
-                    sessions = active_sessions(conn)
+                    picked = agents.parse_filter(query.get("agent"))
+                    sessions = [s for s in active_sessions(conn)
+                                if not picked or s.get("agent", agents.CLAUDE) in picked]
                     msgs = (query.get("msgs") or ["1"])[0]
                     msgs = min(feed.HISTORY_MAX, int(msgs)) if msgs.isdigit() else 1
                     if msgs > 1:          # detailed card's chat tail; cached list untouched
-                        sessions = [dict(s, history=feed.messages_tail(
-                            active._transcript(conn, s["session_id"], index.PROJECTS_ROOT), msgs))
-                            for s in sessions]
+                        sessions = [dict(s, history=feed.messages_tail(active._transcript(
+                            conn, s.get("transcript_session_id") or s["session_id"],
+                            index.PROJECTS_ROOT), msgs)) for s in sessions]
                     return self._json(200, {"count": len(sessions), "sessions": sessions,
                                             "recent_closed": active.recently_closed(
-                                                conn, {s["session_id"] for s in sessions}),
+                                                conn, {s["session_id"] for s in sessions},
+                                                agents=picked),
                                             "limits": limits.read_limits(),
+                                            "codex_limits": codex_live.limits(
+                                                live=(query.get("codex_usage") or [""])[0] == "1"),
                                             "indexing": indexing})
                 if url.path.startswith("/api/active/feed/"):
                     sid = url.path.rsplit("/", 1)[-1]
                     if not actions.valid_session_id(sid):
                         return self._json(400, {"error": msg("server.bad_session_id")})
-                    path = active._transcript(conn, sid, index.PROJECTS_ROOT)
+                    path = active.live_transcript(conn, sid, index.PROJECTS_ROOT)
                     if not path:
                         return self._json(404, {"error": msg("server.no_session")})
                     if (query.get("view") or [""])[0] == "files":
@@ -327,7 +353,7 @@ class Handler(BaseHTTPRequestHandler):
                     sid = url.path.rsplit("/", 1)[-1]
                     if not actions.valid_session_id(sid):
                         return self._json(400, {"error": msg("server.bad_session_id")})
-                    found = plans.plan_text(active._transcript(conn, sid, index.PROJECTS_ROOT),
+                    found = plans.plan_text(active.live_transcript(conn, sid, index.PROJECTS_ROOT),
                                             (query.get("path") or [None])[0])
                     return self._json(200 if found else 404, found or {"error": msg("server.plan_not_found")})
                 if url.path.startswith("/api/active/reply/"):
@@ -337,12 +363,15 @@ class Handler(BaseHTTPRequestHandler):
                     found = active.last_reply(conn, sid)
                     return self._json(200 if found else 404, found or {"error": msg("server.no_session")})
                 if url.path == "/api/workdirs":
-                    return self._json(200, {"workdirs": launch.workdirs(conn)})
+                    return self._json(200, {"workdirs": [dict(w, text=folders.field_text(w["path"]))
+                                                         for w in launch.workdirs(conn)],
+                                            "roots": folders.roots()})
                 if url.path == "/api/stats":
                     catch_up()
                     return self._json(200, stats.summary(
                         conn, (query.get("period") or ["7d"])[0],
-                        automation=(query.get("auto") or ["0"])[0] == "1"))
+                        automation=(query.get("auto") or ["0"])[0] == "1",
+                        agents=agents.parse_filter(query.get("agent"))))
                 if url.path == "/api/facets":
                     return self._json(200, self._facets(conn))
                 if url.path.startswith("/api/prompts/"):
@@ -387,6 +416,9 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/upload": self._upload,
                 "/api/auto-classify": self._auto_classify,
                 "/api/new-session": self._new_session,
+                "/api/folders": self._folders,
+                "/api/resume-with/plan": self._resume_with_plan,
+                "/api/resume-with": self._resume_with,
                 "/api/relocate": self._relocate,
                 "/api/shutdown": self._shutdown,
                 "/api/delete/preview": self._delete_preview,
@@ -433,16 +465,17 @@ class Handler(BaseHTTPRequestHandler):
         topics = query.get("topic") or None
         scope = (query.get("scope") or ["prompts"])[0]
         order = (query.get("order") or ["date"])[0]
+        agent_filter = agents.parse_filter(query.get("agent"))
         found = {"plan": [], "elsewhere": None, "error": None}
         if q:
             found = search.run(conn, q, limit=limit, projects=projects, domains=domains,
                                since=since, include_automation=include_automation,
-                               topics=topics, scope=scope, order=order)
+                               topics=topics, scope=scope, order=order, agents=agent_filter)
             rows, total = found["results"], found["total"]
         else:
             rows = search.recent(conn, limit=limit, projects=projects, domains=domains,
                                  since=since, include_automation=include_automation,
-                                 topics=topics)
+                                 topics=topics, agents=agent_filter)
             total = len(rows)
         for row in rows:
             art = enrich.cached(conn, row["session_id"], "catalog_summary")
@@ -541,7 +574,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _terminal(self, conn, body) -> None:
         cwd = actions.resume_cwd(conn, body["session_id"])
-        command = body.get("command") or actions.resume_command(cwd, body["session_id"])
+        command, cwd = (body.get("command"), cwd) if body.get("command") else actions.session_resume_command(
+            conn, cwd, body["session_id"], agents.session_agent(conn, body["session_id"]))
         if not cwd or not command:
             return self._json(400, {"error": msg("server.no_workdir")})
         ok, message = actions.open_in_terminal(cwd, command)
@@ -552,13 +586,17 @@ class Handler(BaseHTTPRequestHandler):
         art = enrich.cached(conn, session_id, "handoff")
         if not art or not art["payload"]:
             return self._json(400, {"error": msg("server.handoff_first")})
-        path = os.path.join(enrich.handoff_dir(), f"launch-{session_id[:8]}.md")
+        # The new session runs in the source's agent: a Codex thread continues in Codex.
+        agent = agents.session_agent(conn, session_id) or agents.CLAUDE
+        path = os.path.join(enrich.handoff_dir(), actions.handoff_name(session_id, agent))
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(art["payload"])
         new_id = actions.register_pending_launch(conn, session_id, path)
         cwd = actions.resume_cwd(conn, session_id)
-        self._json(200, {"new_session_id": new_id, "handoff_path": path, "cwd": cwd,
-                         "command": actions.new_session_command(cwd, new_id, path)})
+        # A Codex thread id is unknown until it starts: new_id is only the launch's placeholder.
+        self._json(200, {"new_session_id": new_id if agent == agents.CLAUDE else None,
+                         "handoff_path": path, "cwd": cwd, "agent": agent,
+                         "command": actions.new_session_command(cwd, new_id, path, agent=agent)})
 
     def _override(self, conn, body) -> None:
         fields = {k: body.get(k)
@@ -616,15 +654,43 @@ class Handler(BaseHTTPRequestHandler):
             stopped = relocate.stop_for_move(sid, body.get("pid"))
         except relocate.RelocateError as exc:
             return self._json(400, {"error": str(exc)})
-        cwd = actions.resume_cwd(conn, sid)
+        # A Codex thread not indexed yet has no catalog row: its folder comes from the rollout.
+        cwd = actions.resume_cwd(conn, sid) or stopped.pop("cwd", None)
+        stopped.pop("cwd", None)
+        agent = stopped.get("agent") or agents.session_agent(conn, sid)
         _active_cached["sessions"] = None          # the active list has changed
-        self._json(200, dict(stopped, cwd=cwd, command=actions.resume_command(cwd, sid)))
+        # A parked session goes on in its background job: the tab attaches to it.
+        command, cwd = actions.session_resume_command(conn, cwd, sid, agent)
+        self._json(200, dict(stopped, cwd=cwd, command=command))
 
     def _new_session(self, conn, body) -> None:
         try:
-            self._json(200, launch.new_session(conn, body.get("cwd"), body.get("prompt", "")))
+            self._json(200, launch.new_session(conn, body.get("cwd"), body.get("prompt", ""),
+                                               body.get("agent", agents.CLAUDE)))
         except launch.LaunchError as exc:
             self._json(400, {"error": str(exc)})
+
+    def _folders(self, conn, body) -> None:
+        """Folder field suggestions; a POST so that only the page (with its token) lists folders."""
+        self._json(200, folders.suggest(body.get("text", "")))
+
+    def _resume_with_plan(self, conn, body) -> None:
+        try:
+            self._json(200, convert.plan(conn, body.get("session_id", ""), body.get("agent")))
+        except convert.ConvertError as exc:
+            self._json(400, {"error": str(exc)})
+
+    def _resume_with(self, conn, body) -> None:
+        """Writes a new session of the other agent: only after the dialog that says so."""
+        if body.get("confirmed") is not True:
+            return self._json(400, {"error": msg("server.need_confirm")})
+        try:
+            result = convert.resume_with(conn, body.get("session_id", ""), body.get("agent"))
+        except convert.ConvertError as exc:
+            return self._json(400, {"error": str(exc)})
+        if result.get("converted"):
+            threading.Thread(target=_index_new, daemon=True, args=(result["path"], result["agent"])).start()
+        self._json(200, result)
 
     def _auto_classify(self, conn, body) -> None:
         if not isinstance(body.get("enabled"), bool):
@@ -672,12 +738,18 @@ def _summary_view(art: dict | None) -> dict | None:
             "model": art["model"], "created_at": art["created_at"]}
 
 
+class Server(ThreadingHTTPServer):
+    # The page loads ~35 scripts at once, each on its own connection (HTTP/1.0): with the standard
+    # backlog of 5, macOS refuses some of them and the page comes up without a script.
+    request_queue_size = 128
+
+
 def serve(port: int = PORT) -> None:
     global PORT, ALLOWED_HOSTS, ALLOWED_ORIGINS
     PORT = port
     ALLOWED_HOSTS = {f"127.0.0.1:{port}", f"localhost:{port}"}
     ALLOWED_ORIGINS = {f"http://127.0.0.1:{port}", f"http://localhost:{port}"}
-    httpd = ThreadingHTTPServer((HOST, port), Handler)
+    httpd = Server((HOST, port), Handler)
     autoclassify.start_scheduler()          # does nothing while auto-classification is off
     print(f"session-atlas listening on http://{HOST}:{port}", flush=True)
     try:

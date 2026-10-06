@@ -56,7 +56,8 @@ function stepsTurn(t, last, busy) {
   shown.forEach(e => box.appendChild(stepRow(e, last && busy && e === tail && e.status === "run")));
   if (!shown.length) box.appendChild(el("div", "fwho", stepFilter === "all" ? i18n("feed.noSteps") : i18n("feed.noMatchingSteps")));
   if (t.reply) {
-    const reply = el("div", "fwho", i18n("feed.replied", { time: fmtShort(t.reply_at) }));
+    const reply = el("div", "fwho", i18n("feed.replied",
+      { agent: agentShort(activeSessions.find(x => x.session_id === feedSid)), time: fmtShort(t.reply_at) }));
     reply.title = t.reply;
     box.appendChild(reply);
   } else if (t.interrupted) box.appendChild(el("div", "fwho bad", i18n("feed.interrupted")));

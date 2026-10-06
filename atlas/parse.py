@@ -41,6 +41,8 @@ _TEXT_BLOCK = "text"
 class SessionFacts:
     session_id: str = ""
     source_path: str = ""
+    agent: str = "claude"         # which agent wrote the transcript: claude | codex
+    spawned: bool = False         # started by another agent (a Codex subagent thread), not a human
     title: str | None = None
     title_source: str | None = None
     entrypoint: str | None = None
@@ -83,6 +85,15 @@ class SessionFacts:
     activity: dict = field(default_factory=dict)
     pending_active: float = 0.0
     last_main_ts: str | None = None
+    # A parked conversation (Claude Code 2.1.289+) goes on in a background job with its own
+    # transcript: the parent ends with `continued-in`, the job copies the chain since the last
+    # compaction (same uuids and message ids) and continues it. continued_in is set only while
+    # that record is the parent's last word; continuations keeps every hand-over.
+    continued_in: str | None = None
+    continuations: list = field(default_factory=list)          # [child id, timestamp]
+    continued_from: str | None = None
+    copied_until: str | None = None    # the child's records up to here are copies of the parent
+    copied: int = 0
 
 
 TURN_FIELDS = ("user_text", "assistant_text", "commands", "paths", "summaries")
@@ -229,9 +240,11 @@ def _handle_meta(facts: SessionFacts, rec: dict, kind: str) -> None:
         facts.links.append(("artifact", rec.get("frameUrl") or "", rec.get("title") or ""))
 
 
-def parse_file(path: str, session_id: str) -> SessionFacts:
+def parse_file(path: str, session_id: str, continued_from: str | None = None,
+               copied_until: str | None = None) -> SessionFacts:
     """Parses the whole transcript. Cheap: the full 218k-line corpus reads in ~5 s."""
-    facts = SessionFacts(session_id=session_id, source_path=path)
+    facts = SessionFacts(session_id=session_id, source_path=path,
+                         continued_from=continued_from, copied_until=copied_until)
     parse_range(path, facts, 0)
     _harvest_all(facts)
     return facts
@@ -268,6 +281,9 @@ def parse_range(path: str, facts: SessionFacts, start: int) -> None:
             kind = rec.get("type")
 
             ts = rec.get("timestamp")
+            if _is_copy(facts, rec, kind, ts):
+                facts.copied += 1
+                continue
             if ts and kind in ("user", "assistant", "system"):
                 if facts.started_at is None:
                     facts.started_at = ts
@@ -283,6 +299,8 @@ def parse_range(path: str, facts: SessionFacts, start: int) -> None:
                     activity.seconds_between(facts.last_main_ts, ts))
                 facts.last_main_ts = ts
 
+            if kind in ("user", "assistant") and not rec.get("isSidechain"):
+                facts.continued_in = None     # the conversation went on here after all
             if kind == "user":
                 prompts = facts.human_turns
                 _handle_user(facts, rec)
@@ -295,8 +313,28 @@ def parse_range(path: str, facts: SessionFacts, start: int) -> None:
                 _handle_cost(facts, rec)
             elif kind in ("file-history-delta", "file-history-snapshot"):
                 _handle_file_history(facts, rec)
+            elif kind == "continued-in":
+                _handle_continued(facts, rec)
             else:
                 _handle_meta(facts, rec, kind or "")
+
+
+def _is_copy(facts: SessionFacts, rec: dict, kind, ts) -> bool:
+    """A job's record written before the hand-over is the parent's, copied: it is indexed there."""
+    if not facts.copied_until:
+        return False
+    if kind == "file-history-snapshot":
+        ts = (rec.get("snapshot") or {}).get("timestamp")
+    elif kind not in ("user", "assistant", "system", "attachment"):
+        return False
+    return isinstance(ts, str) and ts <= facts.copied_until
+
+
+def _handle_continued(facts: SessionFacts, rec: dict) -> None:
+    child = rec.get("continuedInSessionId")
+    if isinstance(child, str) and child and child != facts.session_id:
+        facts.continuations.append([child, rec.get("timestamp") or ""])
+        facts.continued_in = child
 
 
 # Parse state between passes: everything except texts. Only the last turn is kept,

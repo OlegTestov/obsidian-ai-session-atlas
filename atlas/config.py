@@ -39,8 +39,12 @@ DEFAULTS = {
         "catalog_summary": ["sonnet", "low"],
         "handoff": ["sonnet", "medium"],
     },
+    # Codex cost: {"gpt-6-sol": {"input": 2, "cached_input": 0.2, "cache_write": 2.5, "output": 10}}
+    # per 1M tokens; adds a model or fixes a built-in price (atlas/openai_costs.py), null = unpriced.
+    "openai_prices": {},
     "force_1m": False,                # [1m] suffix for models without a native 1M window (not on every plan)
     "claude_bin": None,               # path to claude; the plugin finds it via the login shell
+    "codex_bin": None,                # path to codex, the same way; reads Codex's usage limits
     "service_label": "io.github.session-atlas",
 }
 

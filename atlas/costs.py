@@ -178,3 +178,29 @@ def session_cost(path: str | None) -> dict:
     now = recorded + after + sub_after if recorded is not None else (total + sub_total) or None
     return {"recorded": recorded, "recorded_at": stamp, "now": now, "partial": bool(unknown),
             "context_tokens": main[8], "context_model": main[9]}
+
+
+def parked_cost(parent: str, job: str) -> dict:
+    """A parked conversation: the parent's cost plus the job's own replies. The job's copies of
+    the parent's replies are written before the hand-over and counted already; context is the job's.
+    Its subagents linked to the parent's files are the parent's."""
+    out = session_cost(parent)
+    parent_state = _file_state(parent)
+    if _cache.get(job) and _cache[job][9] is None:
+        _cache.pop(job)                  # scanned once without rows: they are needed here
+    state = _file_state(job, keep_rows=True)
+    if parent_state is None or state is None:
+        return out
+    handed_over = parent_state[6] or ""
+    added = sum(c for ts, c in state[7] or [] if ts > handed_over)
+    unknown = bool(state[3])
+    folder = os.path.join(job[:-len(".jsonl")], "subagents")
+    for sub in glob.glob(os.path.join(glob.escape(folder), "*.jsonl")):
+        sub_state = None if os.path.islink(sub) else _file_state(sub)
+        if sub_state:
+            added += sub_state[0]
+            unknown = unknown or bool(sub_state[3])
+    base = out["now"] if out["now"] is not None else 0.0
+    return dict(out, now=(base + added) or None, partial=out["partial"] or unknown,
+                context_tokens=state[8] or out["context_tokens"],
+                context_model=state[9] or out["context_model"])

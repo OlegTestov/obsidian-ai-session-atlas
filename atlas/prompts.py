@@ -95,6 +95,33 @@ RESUME = {
 }
 
 
+# "Resume with…": the first message of a session copied from another agent's conversation.
+CONTINUED = {
+    "ru": "[Продолжение разговора] Этот разговор продолжен из сессии {agent} {id} в {cwd}. "
+          "Ниже — копия той переписки с её последней компактации. Вызовы инструментов и их "
+          "результаты показаны обычным текстом ([имя] …, [output] …): их выполнял {agent}, а не "
+          "ты, и названия инструментов у тебя могут быть другими. Исходная сессия не изменена.",
+    "en": "[Continued conversation] This conversation was continued from a {agent} session {id} in "
+          "{cwd}. Below is a copy of that conversation since its last compaction. Tool calls and their "
+          "results are shown as plain text ([name] …, [output] …): {agent} ran them, not you, and your "
+          "tools may have other names. The source session is unchanged.",
+}
+OMITTED = {
+    "ru": "[Начало разговора опущено, чтобы он поместился в окно контекста — см. исходную сессию {id}.]",
+    "en": "[The earlier part of the conversation was omitted to fit the context window — see the "
+          "source session {id}.]",
+}
+SUMMARY_HEAD = {"ru": "Сводка более ранней части разговора:", "en": "Summary of the earlier conversation:"}
+NO_REPLY = {"ru": "(В исходной сессии ответа на это сообщение нет.)",
+            "en": "(The source session has no reply to this message.)"}
+
+
+def continued(agent: str, session_id: str, cwd: str, omitted: bool, lg: str | None = None) -> str:
+    lg = lg or lang()
+    note = CONTINUED[lg].format(agent=agent, id=session_id, cwd=cwd)
+    return (OMITTED[lg].format(id=session_id) + "\n\n" + note) if omitted else note
+
+
 def summary(lg: str | None = None) -> str:
     lg = lg or lang()
     return UNTRUSTED[lg] + "\n\n" + _SUMMARY[lg]

@@ -78,15 +78,19 @@ def classify_path(path: str, cwd_at_record: str | None = None) -> Workspace:
     return Workspace("unknown", None, None, None)
 
 
-# Headless surfaces. Everything else (cli, claude-desktop, ide) is a human at the keyboard.
-HEADLESS_ENTRYPOINTS = {"sdk-cli", "sdk", "sdk-ts", "sdk-py"}
+# Headless surfaces. Everything else (cli, claude-desktop, ide, codex-tui, Codex Desktop) is a
+# human at the keyboard. `codex_exec` is Codex's originator for `codex exec` runs.
+HEADLESS_ENTRYPOINTS = {"sdk-cli", "sdk", "sdk-ts", "sdk-py", "codex_exec"}
 
 
-def session_kind(entrypoint: str | None, human_turns: int) -> str:
-    """Background runs (hooks, nightly agent) go through the SDK or have no human prompts at all."""
-    if entrypoint in HEADLESS_ENTRYPOINTS:
+def session_kind(entrypoint: str | None, human_turns: int, spawned: bool = False,
+                 continued: bool = False) -> str:
+    """Background runs (hooks, nightly agent) go through the SDK or have no human prompts at all.
+    A thread spawned by another agent (Codex subagent) gets its prompt from that agent.
+    A parked conversation's job works on the prompt you gave its parent: still yours."""
+    if entrypoint in HEADLESS_ENTRYPOINTS or spawned:
         return "automation"
-    if human_turns == 0:
+    if human_turns == 0 and not continued:
         return "automation"
     return "interactive"
 

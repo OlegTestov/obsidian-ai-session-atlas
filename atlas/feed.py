@@ -1,4 +1,4 @@
-"""Session feed for the side panel: recent turns with your prompt, what Claude did, its reply.
+"""Session feed for the side panel: recent turns with your prompt, what the agent did, its reply.
 
 A turn starts with your message (see `active.is_message`). Tool calls collapse into short
 lines: "edited 3 files", "commands: 2". The transcript tail is read with a growing window
@@ -10,7 +10,7 @@ import json
 import os
 from collections import OrderedDict
 
-from . import active, steps as stepmod
+from . import active, codex_feed, codex_parse, steps as stepmod
 from .messages import msg, plural as nplural
 
 DEFAULT_TURNS = 8
@@ -157,6 +157,8 @@ def _window(path: str, size: int, window: int) -> list[dict]:
         lines = fh.read().split(b"\n")
     if window < size:
         lines = lines[1:]                 # the window's first line is cut
+    if codex_parse.session_id_of(path):
+        return codex_feed.records(lines)  # a Codex rollout, in the records `build` reads
     out = []
     for raw in lines:
         try:

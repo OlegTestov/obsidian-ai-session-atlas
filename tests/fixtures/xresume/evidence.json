@@ -1,0 +1,406 @@
+{
+ "claude": {
+  "accepted_records": [
+   {
+    "cwd": "str",
+    "entrypoint": "str",
+    "isSidechain": "bool",
+    "message": {
+     "content": "str",
+     "role": "str"
+    },
+    "parentUuid": "NoneType",
+    "sessionId": "str",
+    "timestamp": "str",
+    "type": "str",
+    "userType": "str",
+    "uuid": "str"
+   },
+   {
+    "cwd": "str",
+    "entrypoint": "str",
+    "isSidechain": "bool",
+    "message": {
+     "content": [
+      {
+       "text": "str",
+       "type": "str"
+      }
+     ],
+     "id": "str",
+     "model": "str",
+     "role": "str",
+     "stop_reason": "str",
+     "stop_sequence": "NoneType",
+     "type": "str",
+     "usage": {
+      "input_tokens": "int",
+      "output_tokens": "int"
+     }
+    },
+    "parentUuid": "str",
+    "sessionId": "str",
+    "timestamp": "str",
+    "type": "str",
+    "userType": "str",
+    "uuid": "str"
+   },
+   {
+    "cwd": "str",
+    "entrypoint": "str",
+    "isSidechain": "bool",
+    "message": {
+     "content": "str",
+     "role": "str"
+    },
+    "parentUuid": "str",
+    "sessionId": "str",
+    "timestamp": "str",
+    "type": "str",
+    "userType": "str",
+    "uuid": "str"
+   },
+   {
+    "cwd": "str",
+    "entrypoint": "str",
+    "isSidechain": "bool",
+    "message": {
+     "content": [
+      {
+       "text": "str",
+       "type": "str"
+      }
+     ],
+     "id": "str",
+     "model": "str",
+     "role": "str",
+     "stop_reason": "str",
+     "stop_sequence": "NoneType",
+     "type": "str",
+     "usage": {
+      "input_tokens": "int",
+      "output_tokens": "int"
+     }
+    },
+    "parentUuid": "str",
+    "sessionId": "str",
+    "timestamp": "str",
+    "type": "str",
+    "userType": "str",
+    "uuid": "str"
+   },
+   {
+    "customTitle": "str",
+    "sessionId": "str",
+    "type": "str"
+   }
+  ],
+  "appended_kinds": [
+   [
+    "assistant",
+    null
+   ],
+   [
+    "atis-latch",
+    null
+   ],
+   [
+    "attachment",
+    null
+   ],
+   [
+    "cost-state",
+    null
+   ],
+   [
+    "custom-title",
+    null
+   ],
+   [
+    "file-history-snapshot",
+    null
+   ],
+   [
+    "last-prompt",
+    null
+   ],
+   [
+    "mode",
+    null
+   ],
+   [
+    "permission-mode",
+    null
+   ],
+   [
+    "system",
+    null
+   ],
+   [
+    "user",
+    null
+   ]
+  ],
+  "request_messages": [
+   {
+    "role": "user",
+    "type": "message",
+    "text": "[Continued conversation] This conversation was continued from a Codex session 019a0000-2222-7222-8222-000000000002 in /work. Below is a copy of that conversation since its last compaction. Tool calls and their results are shown as plain text ([name] …, [output] …): Codex ran them, not you, and your tools may have other names. The source session is unchanged.\n\nSummary of the earlier conversation:\n\nSUMMARY-MARKER lighthouse keeper log\n\nEARLY-PROMPT-MARKER: make the lamp blink twice"
+   },
+   {
+    "role": "assistant",
+    "type": "message",
+    "text": "[exec_command] grep -rn blink src/lamp.py\n[output] OUTPUT-MARKER src/lamp.py:3: blink(2)\n\n[apply_patch] src/lamp.py\n\nREPLY-MARKER: the lamp now blinks twice"
+   },
+   {
+    "role": "user",
+    "type": "message",
+    "text": "LAST-PROMPT-MARKER and the colour?"
+   },
+   {
+    "role": "assistant",
+    "type": "message",
+    "text": "LAST-REPLY-MARKER amber"
+   },
+   {
+    "role": "user",
+    "type": "message",
+    "text": "PROBE-QUESTION which colour was it"
+   }
+  ]
+ },
+ "codex": {
+  "accepted_records": [
+   {
+    "ordinal": "int",
+    "payload": {
+     "cli_version": "str",
+     "cwd": "str",
+     "id": "str",
+     "model_provider": "str",
+     "originator": "str",
+     "session_id": "str",
+     "source": "str",
+     "timestamp": "str"
+    },
+    "timestamp": "str",
+    "type": "str"
+   },
+   {
+    "ordinal": "int",
+    "payload": {
+     "model_context_window": "NoneType",
+     "turn_id": "str",
+     "type": "str"
+    },
+    "timestamp": "str",
+    "type": "str"
+   },
+   {
+    "ordinal": "int",
+    "payload": {
+     "content": [
+      {
+       "text": "str",
+       "type": "str"
+      }
+     ],
+     "role": "str",
+     "type": "str"
+    },
+    "timestamp": "str",
+    "type": "str"
+   },
+   {
+    "ordinal": "int",
+    "payload": {
+     "images": [],
+     "local_images": [],
+     "message": "str",
+     "text_elements": [],
+     "type": "str"
+    },
+    "timestamp": "str",
+    "type": "str"
+   },
+   {
+    "ordinal": "int",
+    "payload": {
+     "content": [
+      {
+       "text": "str",
+       "type": "str"
+      }
+     ],
+     "role": "str",
+     "type": "str"
+    },
+    "timestamp": "str",
+    "type": "str"
+   },
+   {
+    "ordinal": "int",
+    "payload": {
+     "message": "str",
+     "type": "str"
+    },
+    "timestamp": "str",
+    "type": "str"
+   },
+   {
+    "ordinal": "int",
+    "payload": {
+     "last_agent_message": "str",
+     "turn_id": "str",
+     "type": "str"
+    },
+    "timestamp": "str",
+    "type": "str"
+   },
+   {
+    "ordinal": "int",
+    "payload": {
+     "model_context_window": "NoneType",
+     "turn_id": "str",
+     "type": "str"
+    },
+    "timestamp": "str",
+    "type": "str"
+   },
+   {
+    "ordinal": "int",
+    "payload": {
+     "content": [
+      {
+       "text": "str",
+       "type": "str"
+      }
+     ],
+     "role": "str",
+     "type": "str"
+    },
+    "timestamp": "str",
+    "type": "str"
+   },
+   {
+    "ordinal": "int",
+    "payload": {
+     "images": [],
+     "local_images": [],
+     "message": "str",
+     "text_elements": [],
+     "type": "str"
+    },
+    "timestamp": "str",
+    "type": "str"
+   },
+   {
+    "ordinal": "int",
+    "payload": {
+     "content": [
+      {
+       "text": "str",
+       "type": "str"
+      }
+     ],
+     "role": "str",
+     "type": "str"
+    },
+    "timestamp": "str",
+    "type": "str"
+   },
+   {
+    "ordinal": "int",
+    "payload": {
+     "message": "str",
+     "type": "str"
+    },
+    "timestamp": "str",
+    "type": "str"
+   },
+   {
+    "ordinal": "int",
+    "payload": {
+     "last_agent_message": "str",
+     "turn_id": "str",
+     "type": "str"
+    },
+    "timestamp": "str",
+    "type": "str"
+   }
+  ],
+  "appended_kinds": [
+   [
+    "event_msg",
+    "agent_message"
+   ],
+   [
+    "event_msg",
+    "task_complete"
+   ],
+   [
+    "event_msg",
+    "task_started"
+   ],
+   [
+    "event_msg",
+    "thread_settings_applied"
+   ],
+   [
+    "event_msg",
+    "token_count"
+   ],
+   [
+    "event_msg",
+    "user_message"
+   ],
+   [
+    "response_item",
+    "message"
+   ],
+   [
+    "token_usage_record",
+    null
+   ],
+   [
+    "turn_context",
+    null
+   ],
+   [
+    "world_state",
+    null
+   ]
+  ],
+  "request_messages": [
+   {
+    "role": "user",
+    "type": "message",
+    "text": "[Continued conversation] This conversation was continued from a Claude Code session c1a0de00-1111-4111-8111-000000000001 in /work. Below is a copy of that conversation since its last compaction. Tool calls and their results are shown as plain text ([name] …, [output] …): Claude Code ran them, not you, and your tools may have other names. The source session is unchanged.\n\nSummary of the earlier conversation:\n\nThis session is being continued from a previous conversation that ran out of context. SUMMARY-MARKER lighthouse keeper log\n\nEARLY-PROMPT-MARKER: make the lamp blink twice"
+   },
+   {
+    "role": "assistant",
+    "type": "message",
+    "text": "[Bash] grep -rn blink src/lamp.py\n[output] OUTPUT-MARKER src/lamp.py:3: blink(2)\n\n[Edit] /work/src/lamp.py\n\nREPLY-MARKER: the lamp now blinks twice"
+   },
+   {
+    "role": "user",
+    "type": "message",
+    "text": "LAST-PROMPT-MARKER and the colour?"
+   },
+   {
+    "role": "assistant",
+    "type": "message",
+    "text": "LAST-REPLY-MARKER amber"
+   },
+   {
+    "role": "user",
+    "type": "message",
+    "text": "PROBE-QUESTION which colour was it"
+   }
+  ]
+ },
+ "versions": {
+  "claude": "2.1.289 (Claude Code)",
+  "codex": "codex-cli 0.160.0"
+ }
+}

@@ -51,6 +51,12 @@ MESSAGES: dict[str, dict] = {
                        "ru": "сессия запущена — сначала останови её или закрой вкладку"},
     "delete.outside": {"en": "refusing to delete outside the Claude Code folder: {path}",
                        "ru": "не удаляю за пределами папки Claude Code: {path}"},
+    "delete.outside_codex": {"en": "refusing to delete outside the Codex folder: {path}",
+                             "ru": "не удаляю за пределами папки Codex: {path}"},
+    "delete.codex_app_note": {
+        "en": "Codex itself may still list this thread for a while, until it notices the file is gone",
+        "ru": "Сам Codex может ещё какое-то время показывать этот тред в списке, пока не заметит, "
+              "что файла нет"},
     "session_id.invalid": {"en": "invalid session_id", "ru": "невалидный session_id"},
 
     # --- actions.py ---
@@ -65,6 +71,9 @@ MESSAGES: dict[str, dict] = {
     "rename.empty": {"en": "empty title", "ru": "пустой заголовок"},
     "rename.no_transcript": {"en": "transcript not found in the catalog",
                              "ru": "транскрипт не найден в каталоге"},
+    "rename.codex_transcript": {
+        "en": "Codex sessions are renamed in the catalog only: the Codex transcript is not changed",
+        "ru": "сессии Codex переименовываются только в каталоге: транскрипт Codex не меняется"},
     "rename.append_failed": {"en": "could not append to the transcript: {error}",
                              "ru": "не удалось дописать в транскрипт: {error}"},
     "actions.no_workdir": {
@@ -78,12 +87,35 @@ MESSAGES: dict[str, dict] = {
         "ru": "CLI может продолжить эту же сессию, а может открыть её копию — "
               "гарантии в обе стороны нет."},
 
+    # --- folders.py (the folder field of "+ Session") ---
+    "folder.not_text": {"en": "the folder must be text", "ru": "папка должна быть текстом"},
+    "folder.empty": {"en": "type a folder or pick one", "ru": "впиши папку или выбери из списка"},
+    "folder.bad_chars": {"en": "the path has control characters or is too long",
+                         "ru": "в пути управляющие символы, или он слишком длинный"},
+    "folder.relative": {"en": "not a full path: start with / or ~",
+                        "ru": "это не полный путь: начни с / или ~"},
+    "folder.relative_vaults": {"en": "not a full path: start with /, ~ or a vault name ({names})",
+                               "ru": "это не полный путь: начни с /, ~ или имени vault ({names})"},
+    "folder.dotdot": {"en": "“..” is not accepted: type the folder itself",
+                      "ru": "«..» не принимается: впиши саму папку"},
+    "folder.missing": {"en": "no such folder: {path}", "ru": "такой папки нет: {path}"},
+    "folder.not_dir": {"en": "not a folder: {path}", "ru": "это не папка: {path}"},
+    "folder.temp": {"en": "temporary and system folders are not opened as a session",
+                    "ru": "во временных и системных папках сессия не запускается"},
+
     # --- launch.py ---
-    "launch.bad_folder": {"en": "folder is not in the list — pick one of the suggested",
-                          "ru": "папка не из списка — выбери из предложенных"},
     "launch.prompt_not_text": {"en": "the prompt must be text", "ru": "запрос должен быть текстом"},
+    "launch.bad_agent": {"en": "unknown agent — pick Claude Code or Codex",
+                         "ru": "неизвестный агент — выбери Claude Code или Codex"},
     "launch.prompt_too_long": {"en": "the first prompt is too long",
                                "ru": "слишком длинный первый запрос"},
+
+    # --- convert.py ("Resume with…") ---
+    "convert.empty": {"en": "nothing to copy: the session has no messages since its last compaction",
+                      "ru": "копировать нечего: после последней компактации в сессии нет сообщений"},
+    "convert.no_transcript": {"en": "the session's transcript is gone", "ru": "транскрипта сессии больше нет"},
+    "convert.long_folder": {"en": "the folder path is too long for Claude Code's project folder",
+                            "ru": "путь папки слишком длинный для папки проекта Claude Code"},
 
     # --- relocate.py ---
     "relocate.bad_pid": {"en": "invalid process", "ru": "неверный процесс"},
@@ -132,6 +164,8 @@ MESSAGES: dict[str, dict] = {
     # --- limits.py: subscription limit windows ---
     "limits.five_hour": {"en": "5 hours", "ru": "5 часов"},
     "limits.seven_day": {"en": "week", "ru": "неделя"},
+    "limits.hours": {"en": "{n} h", "ru": "{n} ч"},
+    "limits.days": {"en": "{n} d", "ru": "{n} дн."},
     # --- feed.py: turn steps ---
     "feed.edited": {"en": ["edited {n} file", "edited {n} files"],
                     "ru": ["правил {n} файл", "правил {n} файла", "правил {n} файлов"]},

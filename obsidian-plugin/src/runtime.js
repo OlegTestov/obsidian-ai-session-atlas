@@ -165,7 +165,7 @@ class RuntimeMethods {
 
   /**
    * The server's config.json. Without a file, creates one with this vault's folder and Obsidian's
-   * language. With one, changes only what changes by itself (the claude path) and what is passed
+   * language. With one, changes only what changes by itself (the claude and codex paths) and what is passed
    * explicitly (from the settings).
    */
   writeServerConfig(changes = {}) {
@@ -176,6 +176,7 @@ class RuntimeMethods {
     };
     Object.assign(next, changes);
     if (this.shellInfo && this.shellInfo.claude) next.claude_bin = this.shellInfo.claude;
+    if (this.shellInfo && this.shellInfo.codex) next.codex_bin = this.shellInfo.codex;
     if (JSON.stringify(next) === JSON.stringify(current)) return next;
     fsSync.mkdirSync(this.dataDir(), { recursive: true, mode: 0o700 });
     const tmp = this.configPath() + ".tmp";

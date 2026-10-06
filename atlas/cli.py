@@ -38,7 +38,8 @@ def _refresh(conn, args) -> None:
 
 
 def cmd_index(conn, args) -> int:
-    stats = index.index_all(conn, full=args.full)
+    # The server's background pass is this command: it also runs a full pass that is due.
+    stats = index.ensure_indexed(conn) or index.index_all(conn, full=args.full)
     _emit(_envelope(conn, {"command": "index", "stats": stats}))
     return EXIT_OK
 

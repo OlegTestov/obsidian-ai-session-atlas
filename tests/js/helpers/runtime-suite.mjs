@@ -77,7 +77,10 @@ export function defineRuntimeTests(bundle) {
       plugin.settings = { language: "en" };
       plugin.app = { vault: { adapter: { getBasePath: () => vault }, getName: () => "My Vault" } };
       plugin.dataDirOverride = path.join(tmp, "data");
-      plugin.serverEnvExtra = { ATLAS_PROJECTS_ROOT: projects };
+      // Every agent folder points into the temp dir: the server never reads the real ~/.claude or ~/.codex.
+      plugin.serverEnvExtra = { ATLAS_PROJECTS_ROOT: projects, ATLAS_CODEX_HOME: path.join(tmp, "codex"),
+                                ATLAS_CLAUDE_SESSIONS: path.join(tmp, "claude-sessions"),
+                                CLAUDE_CONFIG_DIR: path.join(tmp, "claude"), CODEX_HOME: path.join(tmp, "codex") };
       plugin.atlasPort = () => port;
     });
 

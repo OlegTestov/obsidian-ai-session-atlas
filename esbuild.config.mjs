@@ -62,7 +62,7 @@ export async function build(outdir = OUT) {
     platform: "node",
     target: "es2020",
     external: ["obsidian", "electron", ...builtinModules, ...builtinModules.map((m) => `node:${m}`)],
-    banner: { js: "/* Session Atlas — https://github.com/OlegTestov/obsidian-session-atlas. Bundles xterm.js (MIT); see THIRD-PARTY-NOTICES.md. */" },
+    banner: { js: "/* AI Session Atlas — https://github.com/OlegTestov/obsidian-ai-session-atlas. Bundles xterm.js (MIT); see THIRD-PARTY-NOTICES.md. */" },
     plugins: [embedPayload],
     legalComments: "inline",
     logLevel: "warning",

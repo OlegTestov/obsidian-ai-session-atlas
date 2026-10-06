@@ -8,7 +8,7 @@ import sqlite3
 import subprocess
 from datetime import datetime, timezone
 
-from . import config, db, parse, prompts
+from . import agents, config, db, prompts
 from .messages import msg
 
 EXTRACTOR_VERSION = 1
@@ -161,13 +161,13 @@ def build_payload(conn: sqlite3.Connection, session_id: str,
     """
     row = conn.execute(
         "SELECT source_path, title, started_at, last_activity_at, cwd_last, branch_last, "
-        "human_turns, content_hash FROM sessions WHERE session_id=?", (session_id,)
+        "human_turns, content_hash, agent FROM sessions WHERE session_id=?", (session_id,)
     ).fetchone()
     if row is None:
         raise LookupError(msg("runner.no_session", sid=session_id))
 
     budget = budget_chars(artifact_kind, scale)
-    facts = parse.parse_file(row["source_path"], session_id)
+    facts = agents.parse_session(row["source_path"], session_id, row["agent"])
     files = [r["resolved_path"] for r in conn.execute(
         "SELECT resolved_path FROM session_files WHERE session_id=?", (session_id,))]
     links = [f"{r['kind']}: {r['url']}" for r in conn.execute(

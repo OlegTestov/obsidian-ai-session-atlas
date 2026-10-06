@@ -1,21 +1,25 @@
 // Active: state, server polling and the link to the Obsidian plugin.
 // Classic script: shares one global scope with the other page files.
-/* exported hostHealth, activeUpdated, activeLimits, ACTIVE_FILTERS, PERIODS -- used by other page scripts */
+/* exported hostHealth, activeUpdated, activeLimits, activeCodexLimits, ACTIVE_FILTERS, PERIODS -- used by other page scripts */
 /* exported activeFilter, filterUI, layout, LAYOUT_MAX, LAYOUT_CELLS, layoutUI -- used by other page scripts */
 /* exported fullReplies, SEND_TIMEOUT_MS, MAX_ATTACH, lastSignature, composing -- used by other page scripts */
-/* exported lastRenderAt, fmtShort, tellTabHost, tabFor -- used by other page scripts */
+/* exported lastRenderAt, fmtShort, tellTabHost, tabFor, heldFor, hostHeld -- used by other page scripts */
 // --- Active tab --------------------------------------------------------------
 
 const ACTIVE_POLL_MS = 5000;
 const HOST_SOURCE = "session-atlas-host";
 let activeSessions = [];
+let activeRaw = [];             // sessions as the server sent them; activeSessions adds tab screens
+let hostScreens = new Map();    // PTY proxy PID → screen state of a Codex tab (waiting | busy | idle)
 let hostTabs = new Map();       // PTY proxy PID → terminal tab title
+let hostHeld = new Map();       // PTY proxy PID → title: the tab closed with the plugin, the process runs
 let hostReady = false;          // the plugin answered, so Go to and Close are available
 let hostHealth = null;          // {ok, reason} from the plugin: whether the terminal link works
 let tabsAskedAt = null;         // when the tabs were requested and no answer has come yet
 let activeTimer = null;
 let activeUpdated = null;
 let activeLimits = null;        // subscription limits from the Claude Code status line
+let activeCodexLimits = null;   // Codex limits: from Codex itself or its newest token count
 
 // Active filters: each list allows several values, as in Excel.
 const ACTIVE_FILTERS = [
@@ -107,20 +111,44 @@ window.addEventListener("message", e => {
   if (!d || d.source !== HOST_SOURCE || d.type !== "tabs" || !Array.isArray(d.tabs)) return;
   hostTabs = new Map(d.tabs.filter(t => t && Number.isInteger(t.ptyPid))
     .map(t => [t.ptyPid, String(t.title || "")]));
+  hostScreens = new Map(d.tabs.filter(t => t && Number.isInteger(t.ptyPid) && t.agent === "codex")
+    .map(t => [t.ptyPid, typeof t.screen === "string" ? t.screen : null]));
+  hostHeld = new Map((Array.isArray(d.held) ? d.held : []).filter(t => t && Number.isInteger(t.ptyPid))
+    .map(t => [t.ptyPid, String(t.title || "")]));
+  activeSessions = screenSessions();
   hostReady = true;
   tabsAskedAt = null;
+  // Plugins before Codex launches send no agents: Claude Code only.
+  hostAgents = d.agents && typeof d.agents === "object"
+    ? { claude: d.agents.claude !== false, codex: d.agents.codex === true } : null;
+  if ($("#newsess").open) fillNewSessionAgents();
+  refreshResumeWith();
   // Plugins before 1.5 send no reason: an answer means the link works.
   hostHealth = d.health && typeof d.health === "object"
     ? { ok: !!d.health.ok, reason: typeof d.health.reason === "string" ? d.health.reason : null }
     : { ok: true, reason: null };
   requestDialogs();                      // tabs are known, so the dialogs of waiting sessions can be read
   requestRestorable();                   // and ask what the Obsidian restart closed
+  renderRestoreBanner();                 // tabs closed with the plugin are offered back at once
   renderActive();
 });
+
+// A Codex session whose tab shows a prompt waits for you: only the screen knows it.
+function screenSessions() {
+  return activeRaw.map(s => {
+    const pid = tabFor(s);
+    return withTabScreen(s, pid ? hostScreens.get(pid) : null);
+  });
+}
 
 // The claude process descends from its tab's PTY proxy: look for that PID among the ancestors.
 function tabFor(s) {
   return (s.ancestors || []).find(pid => hostTabs.has(pid)) || null;
+}
+
+/** The held PTY the session runs in: its tab closed with the plugin, Go to brings it back. */
+function heldFor(s) {
+  return (s.ancestors || []).find(pid => hostHeld.has(pid)) || null;
 }
 
 registerView("active", { tab: "#view-active", panel: "#active",
@@ -131,9 +159,12 @@ async function loadActive() {
   window.clearTimeout(activeTimer);
   try {
     // Only detailed cards need the conversation tail: compact ones skip it.
-    const data = await api("/api/active" + (activeMode === "full" && CARD_MESSAGES > 1 ? `?msgs=${CARD_MESSAGES}` : ""));
-    activeSessions = data.sessions || [];
+    // Codex's own usage read is asked for only while Codex cards are shown.
+    const data = await api(AtlasLogic.activeUrl(activeMode === "full" ? CARD_MESSAGES : 1, agentPick.active));
+    activeRaw = data.sessions || [];
+    activeSessions = screenSessions();
     activeLimits = data.limits || null;
+    activeCodexLimits = data.codex_limits || null;
     recentClosed = data.recent_closed || [];
     AtlasLogic.pruneClosedNotes(closedNotes, recentClosed.map(c => c.session_id), Date.now());
     activeUpdated = new Date();

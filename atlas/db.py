@@ -5,11 +5,11 @@ import os
 import re
 import sqlite3
 
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 12   # 12: parked conversations (sessions.continued_*, session_continuations)
 
 # Three tiers, and they must not be mixed up.
 # 1) Edited by hand; cannot be restored from transcripts.
-AUTHORITATIVE = ("user_overrides", "pending_launches", "egress_grants")
+AUTHORITATIVE = ("user_overrides", "pending_launches", "egress_grants", "conversions")
 
 # 2) Restorable but expensive: every row was paid for with a model call. On a schema change,
 # columns are added and the table is kept. Cleared only by an explicit purge-cache.
@@ -19,7 +19,7 @@ EXPENSIVE = ("enrichment", "classification")
 DERIVED = (
     "sources", "sessions", "session_projects", "session_files",
     "session_links", "session_tickets", "session_domains", "fts", "fts_paths", "parse_state",
-    "activity",
+    "activity", "session_continuations",
 )
 
 SCHEMA = """
@@ -72,8 +72,18 @@ CREATE TABLE IF NOT EXISTS sessions (
   sensitivity_rule TEXT,
   records          INTEGER,
   bad_lines        INTEGER,
-  content_hash     TEXT
+  content_hash     TEXT,
+  agent            TEXT NOT NULL DEFAULT 'claude',
+  continued_from   TEXT,
+  continued_in     TEXT
 );
+
+-- A parked conversation goes on in a background job's transcript (atlas/parse.py): the parent's
+-- `continued-in` records. The job's records up to `at` are copies of the parent's.
+CREATE TABLE IF NOT EXISTS session_continuations (
+  session_id TEXT NOT NULL, child_id TEXT NOT NULL, at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_continuations_child ON session_continuations(child_id);
 
 CREATE TABLE IF NOT EXISTS session_projects (
   session_id TEXT NOT NULL, project_id TEXT NOT NULL, role TEXT NOT NULL,
@@ -113,6 +123,7 @@ CREATE TABLE IF NOT EXISTS activity (
 CREATE INDEX IF NOT EXISTS ix_activity_ts ON activity(ts);
 
 CREATE INDEX IF NOT EXISTS ix_sessions_activity ON sessions(last_activity_at DESC);
+CREATE INDEX IF NOT EXISTS ix_sessions_agent    ON sessions(agent);
 CREATE INDEX IF NOT EXISTS ix_projects_project  ON session_projects(project_id);
 CREATE INDEX IF NOT EXISTS ix_files_session     ON session_files(session_id);
 CREATE INDEX IF NOT EXISTS ix_tickets_ticket    ON session_tickets(ticket);
@@ -195,6 +206,17 @@ CREATE TABLE IF NOT EXISTS pending_launches (
   handoff_path      TEXT,
   created_at        TEXT NOT NULL,
   confirmed_at      TEXT
+);
+
+-- AUTHORITATIVE. "Resume with…" wrote this session from another agent's one (atlas/convert.py):
+-- its records up to `at` are copies, so the index skips them. A new table needs no schema bump.
+CREATE TABLE IF NOT EXISTS conversions (
+  session_id        TEXT PRIMARY KEY,
+  source_session_id TEXT NOT NULL,
+  source_agent      TEXT NOT NULL,
+  agent             TEXT NOT NULL,
+  path              TEXT NOT NULL,
+  at                TEXT NOT NULL
 );
 
 -- AUTHORITATIVE. Permission to send data out: one operation, one specific content state.

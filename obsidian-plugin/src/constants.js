@@ -17,6 +17,9 @@ const TAB_CLOSE_SELECTOR = ".workspace-tab-header-inner-close-button";
 const HOST_SOURCE = "session-atlas-host";
 const PTY_WAIT_MS = 1000;
 const SESSIONS_DIR = path.join(os.homedir(), ".claude", "sessions");
+// The agent tab script's registry of tab → session (scripts/agent-registry-lib.zsh, same default path).
+const REGISTRY_FILE = path.join(process.env.XDG_STATE_HOME || path.join(os.homedir(), ".local", "state"),
+                                "obsidian-agent-terminals", "resume.tsv");
 const MAX_SEND_CHARS = 20000;
 const ENTER_DELAY_MS = 150;     // Enter after a paste: otherwise the TUI may take it as part of the paste
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i;
@@ -38,6 +41,7 @@ export {
   HOST_SOURCE,
   PTY_WAIT_MS,
   SESSIONS_DIR,
+  REGISTRY_FILE,
   MAX_SEND_CHARS,
   ENTER_DELAY_MS,
   IMAGE_EXT,

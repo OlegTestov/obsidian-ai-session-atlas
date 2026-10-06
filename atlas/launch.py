@@ -1,22 +1,20 @@
 """New session from the "Active" tab: in which folder and with which first prompt.
 
-The folder must come from the `workdirs` list: the page sends a path, and an arbitrary one is not
-accepted because the command goes to the terminal tab's shell.
+The folder list (`workdirs`) feeds the suggestions; the folder itself is whatever the field holds,
+resolved and checked by `folders.check` (an existing directory), and quoted into the command.
 """
 from __future__ import annotations
 
 import os
-import shlex
 import sqlite3
 import uuid
 
-from . import config
+from . import actions, agents, config, folders
 from .messages import msg
 
 RECENT_LIMIT = 40
 MAX_PROMPT_CHARS = 20000
-# Temporary and system folders are not opened as a new session.
-SKIP_PREFIXES = ("/tmp/", "/private/tmp/", "/var/tmp/", "/private/var/tmp/", "/System/")
+SKIP_PREFIXES = folders.SKIP_PREFIXES
 
 
 def _home() -> str:
@@ -69,19 +67,21 @@ class LaunchError(ValueError):
     """The message is shown to the user as is."""
 
 
-def new_session(conn: sqlite3.Connection, cwd: str, prompt: str) -> dict:
-    if not isinstance(cwd, str) or cwd not in {w["path"] for w in workdirs(conn)}:
-        raise LaunchError(msg("launch.bad_folder"))
+def new_session(conn: sqlite3.Connection, cwd: str, prompt: str, agent: str = agents.CLAUDE) -> dict:
+    if agent not in agents.ALL:
+        raise LaunchError(msg("launch.bad_agent"))
+    try:
+        cwd = folders.check(cwd)
+    except folders.FolderError as exc:
+        raise LaunchError(str(exc)) from None
     if not isinstance(prompt, str):
         raise LaunchError(msg("launch.prompt_not_text"))
     prompt = prompt.replace("\r\n", "\n").strip()
     if len(prompt) > MAX_PROMPT_CHARS:
         raise LaunchError(msg("launch.prompt_too_long"))
-    session_id = str(uuid.uuid4())
-    parts = ["claude", "--session-id", session_id]
-    if prompt:
-        # claude would read a prompt starting with "-" as a flag.
-        parts.append(" " + prompt if prompt.startswith("-") else prompt)
-    command = f"cd {shlex.quote(cwd)} && " + " ".join(shlex.quote(p) for p in parts)
+    # Codex chooses its thread id itself; the tab script records it once the thread starts.
+    session_id = str(uuid.uuid4()) if agent == agents.CLAUDE else None
+    command = actions.agent_command(cwd, agent, session_id, prompt)
     title = (prompt.splitlines()[0][:60] if prompt else "") or label(cwd)
-    return {"session_id": session_id, "cwd": cwd, "command": command, "title": title}
+    return {"session_id": session_id, "cwd": cwd, "command": command, "title": title,
+            "agent": agent}

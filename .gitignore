@@ -9,3 +9,6 @@ node_modules/
 # Build outputs (npm run build); release assets are built by CI.
 /main.js
 /styles.css
+# Playwright (npm run e2e): traces and screenshots of failed specs.
+/test-results/
+/playwright-report/

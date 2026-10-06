@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping with Session Atlas. This file explains how to build, test and submit a change.
+Thanks for helping with AI Session Atlas. This file explains how to build, test and submit a change.
 By taking part you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md). Report security issues
 privately as described in [SECURITY.md](SECURITY.md), not in public issues.
 
@@ -20,6 +20,7 @@ python3 -m pip install pytest      # or inside a virtual environment
 npm run build             # main.js and styles.css in the repository root, next to manifest.json
 npm run lint              # ESLint with the Obsidian recommended rules
 npm test                  # Node tests: plugin, page, translations, release bundle
+npm run e2e               # browser tests
 python3 -m pytest -q      # Python tests
 uvx ruff check atlas tests tools   # Python lint
 ```
@@ -57,6 +58,31 @@ nothing reloads until you run **Reload the plugin**.
   the data folder need a test for the guard, not only for the happy path.
 - **Comments are in English** and explain why, not what.
 
+## Tests never touch your agent data
+
+Tests read and change only temporary folders, never your real `~/.claude` or `~/.codex`:
+
+- Python tests: `tests/conftest.py` gives every test its own data folder (`ATLAS_HOME`) and Codex
+  home (`ATLAS_CODEX_HOME`); the `atlas_env` fixture also points `ATLAS_PROJECTS_ROOT` at a temporary
+  Claude Code projects folder.
+- Node tests that start the server (`tests/js/helpers/runtime-suite.mjs`) set `ATLAS_PROJECTS_ROOT`,
+  `ATLAS_CODEX_HOME`, `ATLAS_CLAUDE_SESSIONS`, `CLAUDE_CONFIG_DIR` and `CODEX_HOME` to folders inside
+  the test's temporary directory.
+- A new test that reads an agent folder sets these variables the same way. A test or probe that
+  deletes, renames or rewrites session data works on a private copy in a temporary folder, never on
+  the originals.
+
+Codex test data is made up as well:
+
+- `cx_*` helpers in `tests/conftest.py` build rollout lines (`cx_meta`, `cx_context`, `cx_user`,
+  `cx_agent`, `cx_exec`, `cx_patch`, `cx_patch_end`, `cx_tokens`, `cx_reasoning`); the
+  `write_rollout` fixture saves them as a rollout in the temporary Codex home, and
+  `write_codex_state` creates a minimal `state_5.sqlite`.
+- `tools/fixtures/codex_screens.json` holds Codex terminal screens (approvals, questions, busy and
+  idle states) captured from codex-cli 0.160.0; the plugin's screen parser is tested against them,
+  as `command_screens.json` and `dialog_screens.json` do for Claude Code. Capture new screens with a
+  harmless prompt in a temporary folder and check that they contain no personal paths or text.
+
 ## Both languages for every UI string
 
 The interface is in English and Russian. Every user-visible string goes through a dictionary, with
@@ -83,7 +109,8 @@ The repository is public. Do not commit:
 - names of employers, clients, colleagues or internal ticket IDs.
 
 Test fixtures use made-up content: `/Users/example`, `~/Code/demo-project`, `ABC-123` and so on.
-Probes against a real Claude Code should use a cheap model; delete the transcripts they create.
+Probes against a real Claude Code or Codex should use a cheap model; delete the transcripts they
+create.
 
 ## Commits and pull requests
 
@@ -92,7 +119,8 @@ Probes against a real Claude Code should use a cheap model; delete the transcrip
 - Add an entry under `## [Unreleased]` in `CHANGELOG.md` for any user-visible change.
 - Describe what changed and how you tested it. For UI changes, say which macOS and Obsidian versions
   you tried.
-- Before you open the pull request, run `npm run lint`, `npm test` and `python3 -m pytest -q`.
+- Before you open the pull request, run `npm run lint`, `npm test`, `npm run e2e` and
+  `python3 -m pytest -q`.
 
 ## Releases
 

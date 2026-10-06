@@ -45,14 +45,28 @@ class GuardMethods {
   }
 
   installCloseGuard(doc) {
-    if (!doc || doc.__sessionAtlasGuard) return;
-    doc.__sessionAtlasGuard = true;
+    // Per plugin instance, not a mark on the document: the listeners go away with the instance on
+    // unload, and a mark left on the document made the next instance skip the install.
+    if (!this.guardedDocs) this.guardedDocs = new WeakSet();
+    if (!doc || this.guardedDocs.has(doc)) return;
+    this.guardedDocs.add(doc);
     // The close button is caught on pointerdown: Obsidian closes the tab before click arrives.
     for (const type of ["pointerdown", "mousedown", "click"]) {
       this.registerDomEvent(doc, type, (event) => this.onCloseButton(event, type === "click"),
                             { capture: true });
     }
     this.registerDomEvent(doc, "auxclick", (event) => this.onMiddleClick(event), { capture: true });
+  }
+
+  /** The main window and every popout open now (a plugin reload finds them already open). */
+  installCloseGuards() {
+    this.installCloseGuard(document);
+    const ws = this.app && this.app.workspace;
+    if (!ws || typeof ws.iterateAllLeaves !== "function") return;
+    ws.iterateAllLeaves((leaf) => {
+      const el = leaf && leaf.view && leaf.view.containerEl;
+      if (el && el.ownerDocument) this.installCloseGuard(el.ownerDocument);
+    });
   }
 
   onCloseButton(event, ask) {
@@ -137,7 +151,7 @@ class GuardMethods {
       const term = state && state.state && state.state[TERMINAL_STATE_KEY];
       if (term && term.profile && term.profile.name) return term.profile.name;
     } catch (error) {
-      console.error("Session Atlas: cannot read the tab state", error);
+      console.error("AI Session Atlas: cannot read the tab state", error);
     }
     return (leaf.view && typeof leaf.view.getDisplayText === "function" && leaf.view.getDisplayText())
       || "Terminal";

@@ -5,7 +5,9 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import vm from "node:vm";
 import { JS, WEB, compileScript, loadPage, pageOrder, readScript } from "./helpers/page.mjs";
+import { FIXTURES, loadSrc } from "./helpers/load-src.mjs";
 
 // Only the scripts with pure logic, in index.html order; page strings come from the dictionaries.
 const LOGIC = new Set(["i18n.js", "markdown.js", "logic.js", "stats-logic.js"]);
@@ -118,6 +120,47 @@ describe("active logic", () => {
   });
 });
 
+// The card's dialog takes what the plugin parsed from real screens: both agents' shapes.
+describe("dialog: the option answered with typed text", () => {
+  const screens = JSON.parse(fs.readFileSync(path.join(FIXTURES, "dialog_screens.json"), "utf8"));
+  const cx = JSON.parse(fs.readFileSync(path.join(FIXTURES, "codex_screens.json"), "utf8"));
+  const claude = (name) => loadSrc("dialog").parseDialog(screens[name]);
+  const codex = (name) => loadSrc("dialog-codex").parseCodexDialog(cx[name]);
+  test("Claude question: «Type something.» keeps its number", () => {
+    assert.deepEqual(json(L.freeTextOption(claude("free_question"))),
+                     json({ n: 3, text: "Type something.", detail: "", freeText: true, selected: false, typed: "" }));
+    assert.equal(L.freeTextOption(claude("question")).n, 3);
+  });
+  test("Claude: «Chat about this» is a plain option, not the text one", () => {
+    const d = claude("free_question");
+    assert.equal(d.options[3].text, "Chat about this");
+    assert.notEqual(L.freeTextOption(d).n, 4);
+  });
+  test("Claude: a permission or several questions at once have none", () => {
+    assert.equal(L.freeTextOption(claude("bash")), null);
+    assert.equal(L.freeTextOption(claude("multi")), null);
+  });
+  test("Claude plan: none (the plan has its own feedback form)", () =>
+    assert.equal(L.freeTextOption(claude("plan")), null));
+  test("Codex approval: the decline that tells Codex what to do", () => {
+    const o = L.freeTextOption(codex("exec"));
+    assert.equal(o.n, 3);
+    assert.equal(o.text, "No, and tell Codex what to do differently");
+  });
+  test("Codex question: «None of the above» is a plain option", () =>
+    assert.equal(L.freeTextOption(codex("question")), null));
+  test("nothing parsed, not answerable: none", () => {
+    assert.equal(L.freeTextOption(null), null);
+    assert.equal(L.freeTextOption({ ...claude("free_question"), answerable: false }), null);
+  });
+  test("typed answer: one line, trimmed; too long or empty is nothing", () => {
+    assert.equal(L.freeAnswerText("  green\n\tplease  "), "green please");
+    assert.equal(L.freeAnswerText("   "), "");
+    assert.equal(L.freeAnswerText("x".repeat(4001)), "");
+    assert.equal(L.freeAnswerText("x".repeat(4000)).length, 4000);
+  });
+});
+
 describe("unanswered prompt and delivery", () => {
   const s = { reply_at: "2026-09-27T10:00:00Z", prompt: "сделай", prompt_at: "2026-09-27T10:05:00Z" };
   test("unanswered prompt from the transcript", () => assert.equal(L.unansweredPrompt(s, null).prompt.text, "сделай"));
@@ -208,7 +251,27 @@ describe("context and limits", () => {
     assert.equal(t.text, "лимиты: 5 часов 42% до 00:36 · неделя 87% до 01.10");
     assert.equal(t.tone, "mid");
   });
-  test("limits: stale data is marked", () => assert.equal(L.limitsText({ ...lim, age_seconds: 7 * 3600 }).stale, true));
+  test("limits: numbers that are not live carry their age", () => {
+    assert.equal(L.limitsText({ ...lim, live: true, age_seconds: 7 * 3600 }).age, null);
+    assert.equal(L.limitsText({ ...lim, live: false, age_seconds: 3 * 3600 + 600 }).age, "3 ч назад");
+    assert.equal(L.limitsText({ ...lim, age_seconds: 25 * 60 }).age, "25 мин назад");
+    assert.equal(L.limitsText({ ...lim, age_seconds: 20 }).age, "только что");
+    assert.equal(L.limitsText({ ...lim, age_seconds: 50 * 3600 }).age, "2 дн назад");
+    assert.equal(L.limitsText({ ...lim, age_seconds: null }).age, null);
+  });
+  test("limits: a spent window says so", () => {
+    const t = L.limitsText({ windows: [{ label: "5 часов", used_percentage: 100, resets_at: "x" },
+                                       { label: "неделя", used_percentage: 68 }] }, () => "17:58");
+    assert.equal(t.text, "лимиты: 5 часов 100%, исчерпан до 17:58 · неделя 68%");
+    assert.ok(t.reached && t.tone === "warn");
+    assert.equal(L.limitsText(lim).reached, false);
+  });
+  test("active poll: asks Codex itself only with Codex shown", () => {
+    assert.equal(L.activeUrl(1, ["claude"]), "/api/active");
+    assert.equal(L.activeUrl(1, ["claude", "codex"]), "/api/active?codex_usage=1");
+    assert.equal(L.activeUrl(6, ["codex"]), "/api/active?msgs=6&codex_usage=1");
+    assert.equal(L.activeUrl(6, ["claude"]), "/api/active?msgs=6");
+  });
   test("limits: 90% is alarming", () => {
     assert.equal(L.limitsText({ windows: [{ label: "неделя", used_percentage: 93 }] }).tone, "warn");
   });
@@ -452,6 +515,65 @@ describe("English: the same functions after switching the language", () => {
   });
 });
 
+// Agent filter: both agents by default, at least one stays ticked, the request names only a narrowed pick.
+describe("agent filter", () => {
+  test("default pick is both agents", () => {
+    assert.equal(json(L.agentSelection(undefined)), '["claude","codex"]');
+    assert.equal(json(L.agentSelection([])), '["claude","codex"]');
+  });
+  test("stored pick: unknown values are dropped, order is fixed", () => {
+    assert.equal(json(L.agentSelection(["codex", "gemini", "codex"])), '["codex"]');
+    assert.equal(json(L.agentSelection(["codex", "claude"])), '["claude","codex"]');
+  });
+  test("stored pick of only unknown values or garbage falls back to both", () => {
+    assert.equal(json(L.agentSelection(["gemini"])), '["claude","codex"]');
+    assert.equal(json(L.agentSelection("codex")), '["claude","codex"]');
+  });
+  test("request parameter: omitted for both, named for one", () => {
+    assert.equal(L.agentParam(["claude", "codex"]), "");
+    assert.equal(L.agentParam(["codex"]), "codex");
+    assert.equal(L.agentParam(["claude"]), "claude");
+  });
+  test("unticking the last agent keeps it", () => {
+    assert.equal(json(L.toggleAgent(["codex"], "codex", false)), '["codex"]');
+    assert.equal(json(L.toggleAgent(["claude", "codex"], "claude", false)), '["codex"]');
+    assert.equal(json(L.toggleAgent(["codex"], "claude", true)), '["claude","codex"]');
+  });
+  const sessions = [{ session_id: "a", agent: "claude" }, { session_id: "b", agent: "codex" },
+                    { session_id: "c" }, { session_id: "d", agent: "gemini" }];
+  const kept = (pick) => sessions.filter((s) => L.agentPasses(s, pick)).map((s) => s.session_id).join("");
+  test("Active: a row without agent counts as Claude Code", () => {
+    assert.equal(L.agentOf({}), "claude");
+    assert.equal(kept(["claude"]), "ac");
+  });
+  test("Active: Codex only", () => assert.equal(kept(["codex"]), "b"));
+  test("Active: both keep everything, an unknown agent too", () => assert.equal(kept(["claude", "codex"]), "abcd"));
+
+  // The page side: the pick per view comes from localStorage through the same migration.
+  const upTo = (name) => pageOrder().slice(0, pageOrder().indexOf(name) + 1);
+  test("page: a stored pick is migrated per view", () => {
+    const saved = JSON.stringify({ search: ["codex", "gemini"], active: [], stats: "junk" });
+    const p = loadPage(upTo("agent-filter.js"), { storage: { "atlas.agents": saved } });
+    assert.equal(p.agentQuery("search"), "codex");
+    assert.ok(p.agentFiltered("search") && !p.agentFiltered("active") && !p.agentFiltered("stats"));
+    assert.equal(p.agentQuery("stats"), "");
+    assert.ok(p.agentPassesView("search", { agent: "codex" }) && !p.agentPassesView("search", {}));
+  });
+  test("page: nothing stored means both agents everywhere", () => {
+    const p = loadPage(upTo("agent-filter.js"), { storage: { "atlas.agents": "{broken" } });
+    assert.ok(["search", "active", "stats"].every((v) => !p.agentFiltered(v) && p.agentQuery(v) === ""));
+  });
+  test("page: agent names in both languages", () => {
+    const p = loadPage(upTo("agent-filter.js"));
+    p.I18N.setLang("ru");
+    assert.ok(p.agentName("claude") === "Claude Code" && p.agentName("codex") === "Codex");
+    assert.equal(p.agentShort({ agent: "codex" }), "Codex");
+    assert.equal(p.agentShort({}), "Claude");
+    assert.equal(p.agentName("gemini"), "gemini");
+    assert.equal(p.I18N.i18n("agent.filter"), "Агент");
+  });
+});
+
 // Page scripts are classic: a same-named function in another file silently replaces the first
 // (a Statistics button once broke search highlighting that way). A top-level name lives in exactly one file.
 describe("shared global scope", () => {
@@ -504,5 +626,45 @@ describe("shared global scope", () => {
     assert.equal(nearBottom(880, 1300, 400), true);          // a few pixels short still counts
     assert.equal(nearBottom(700, 1300, 400), false);         // scrolled up to read
     assert.equal(nearBottom(0, 0, 0), null);                 // hidden tab: no layout to judge
+  });
+});
+
+describe("+ Session: agent choice", () => {
+  test("Codex is offered only when the plugin reports it on", () => {
+    assert.equal(json(L.newSessionAgents(null)), '["claude"]');
+    assert.equal(json(L.newSessionAgents({ codex: false })), '["claude"]');
+    assert.equal(json(L.newSessionAgents({ codex: "yes" })), '["claude"]');
+    assert.equal(json(L.newSessionAgents({ codex: true })), '["claude","codex"]');
+  });
+  test("the remembered agent while it is offered, otherwise Claude Code", () => {
+    assert.equal(L.newSessionAgent(["claude", "codex"], "codex"), "codex");
+    assert.equal(L.newSessionAgent(["claude"], "codex"), "claude");
+    assert.equal(L.newSessionAgent(["claude", "codex"], "gemini"), "claude");
+    assert.equal(L.newSessionAgent(["claude", "codex"], ""), "claude");
+  });
+
+  // The dialog itself: options, the remembered pick and the row hidden when there is no choice.
+  const upTo = (name) => pageOrder().slice(0, pageOrder().indexOf(name) + 1);
+  function dialog(storage, hostAgents) {
+    const p = loadPage(upTo("active-new.js"), { storage });
+    const select = { options: [], value: "", replaceChildren(...o) { this.options = o; } };
+    const row = { hidden: true };
+    p.document.querySelector = (sel) => ({ "#ns-agent": select, "#ns-agent-row": row })[sel];
+    p.document.createElement = () => ({});
+    vm.runInContext(`hostAgents = ${JSON.stringify(hostAgents)}; fillNewSessionAgents();`, p);
+    return { values: select.options.map((o) => o.value), labels: select.options.map((o) => o.textContent),
+             value: select.value, hidden: row.hidden };
+  }
+  test("dialog: Codex on and remembered", () => {
+    assert.deepEqual(dialog({ "atlas.newSessionAgent": "codex" }, { codex: true }),
+                     { values: ["claude", "codex"], labels: ["Claude Code", "Codex"], value: "codex", hidden: false });
+  });
+  test("dialog: Codex off — Claude Code only, no choice shown", () => {
+    assert.deepEqual(dialog({ "atlas.newSessionAgent": "codex" }, { codex: false }),
+                     { values: ["claude"], labels: ["Claude Code"], value: "claude", hidden: true });
+    assert.equal(dialog({}, null).value, "claude");
+  });
+  test("dialog: nothing remembered — Claude Code by default", () => {
+    assert.equal(dialog({}, { codex: true }).value, "claude");
   });
 });

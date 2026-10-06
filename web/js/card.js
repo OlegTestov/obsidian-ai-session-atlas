@@ -120,6 +120,8 @@ function actionBar(s) {
   const bar = el("div", null); bar.id = "bar";
   const resume = el("button", "primary", i18n("card.resume"));
   resume.addEventListener("click", () => showResume(s));
+  // The same conversation in the other agent (resume-with.js): a menu of both, next to Resume.
+  const [withBtn, withMenu] = resumeWithButton(s);
   const fresh = el("button", null, i18n("card.newFromThis"));
   fresh.addEventListener("click", () => startArtifact(s.session_id, "handoff", true));
   const more = el("button", "ghost", "…");
@@ -136,12 +138,13 @@ function actionBar(s) {
     item(i18n("card.handoffOnly"), () => startArtifact(s.session_id, "handoff", false));
     item(i18n("card.detailedSummary"), () => startArtifact(s.session_id, "catalog_summary", false));
   }
-  item(i18n("card.exactFork"), () => showResume(s, true));
+  // Only agents that can fork a session exactly (Claude Code) get the item.
+  if (s.actions && s.actions.fork_command) item(i18n("card.exactFork"), () => showResume(s, true));
   item(i18n("delete.menu"), () => deleteSession(s));
   menu.lastChild.classList.add("danger");
-  more.addEventListener("click", e => { e.stopPropagation(); menu.classList.toggle("hidden"); });
+  more.addEventListener("click", e => { e.stopPropagation(); closeResumeWith(); menu.classList.toggle("hidden"); });
 
-  bar.append(...(llm ? [resume, fresh, more, menu] : [resume, more, menu]));
+  bar.append(...(llm ? [resume, withBtn, fresh, more, menu, withMenu] : [resume, withBtn, more, menu, withMenu]));
   return bar;
 }
 
@@ -164,13 +167,15 @@ async function openCard(id) {
   h3.addEventListener("dblclick", () => renameSession(s));
   frag.appendChild(h3);
   const sub = el("p", "sub");
-  sub.append(document.createTextNode(
-    i18n("card.subUpdated", { kind: s.session_kind, when: ago(s.last_activity_at) })
+  sub.append(agentBadge(s), document.createTextNode(
+    " " + i18n("card.subUpdated", { kind: s.session_kind, when: ago(s.last_activity_at) })
     + (s.title_source === "manual" ? i18n("card.manualName") : "") + "  "));
   const ren = el("button", "ghost", i18n("card.rename"));
   ren.addEventListener("click", () => renameSession(s));
   sub.appendChild(ren);
   frag.appendChild(sub);
+  const lineage = lineageBlock(s);
+  if (lineage) frag.appendChild(lineage);
 
   frag.appendChild(stateBlock(s.state));
   frag.appendChild(summaryBlock(s.summary, s.card_line, s.topic_confidence));

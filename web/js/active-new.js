@@ -1,7 +1,10 @@
-// Active: a new session from a folder in the list and a first prompt, in an Obsidian terminal tab.
+// Active: a new session in a chosen folder (folder-pick.js) with a first prompt, in an Obsidian terminal tab.
 // Classic script: shares one global scope with the other page files.
-/* exported newSessionButton -- used by other page scripts */
+/* exported newSessionButton, fillNewSessionAgents, hostAgents -- used by other page scripts */
 const LAST_DIR_KEY = "atlas.newSessionDir";   // convenience only: where the last session started
+const LAST_AGENT_KEY = "atlas.newSessionAgent";
+// Agents enabled in the plugin (the "tabs" reply); null until the host has answered.
+let hostAgents = null;
 
 function newSessionButton() {
   const b = el("button", "chip newsess", i18n("newsess.button"));
@@ -19,51 +22,47 @@ function rememberDir(path) {
   try { window.localStorage.setItem(LAST_DIR_KEY, path); } catch { /* private window */ }
 }
 
+// The agent choice appears only when there is a choice: Codex is offered when the plugin has it on.
+function fillNewSessionAgents() {
+  const offered = AtlasLogic.newSessionAgents(hostAgents);
+  let remembered = "";
+  try { remembered = window.localStorage.getItem(LAST_AGENT_KEY) || ""; } catch { /* private window */ }
+  const select = $("#ns-agent");
+  select.replaceChildren(...offered.map(a => { const o = el("option", null, agentName(a)); o.value = a; return o; }));
+  select.value = AtlasLogic.newSessionAgent(offered, remembered);
+  $("#ns-agent-row").hidden = offered.length < 2;
+}
+
 async function openNewSession() {
   const dlg = $("#newsess");
-  const select = $("#ns-dir");
   $("#ns-note").textContent = "";
   $("#ns-cmd").textContent = "";
   $("#ns-cmd").classList.add("hidden");
   $("#ns-copy").classList.add("hidden");
   $("#ns-go").disabled = false;
-  select.replaceChildren(el("option", null, i18n("newsess.loadingDirs")));
+  fillNewSessionAgents();
   dlg.showModal();
   $("#ns-prompt").focus();
-  let dirs = [];
-  try { dirs = (await api("/api/workdirs")).workdirs || []; }
-  catch (e) { $("#ns-note").textContent = i18n("newsess.dirsFailed", { msg: e.message }); return; }
-  const groups = [[i18n("newsess.recent"), dirs.filter(d => d.recent)], [i18n("newsess.other"), dirs.filter(d => !d.recent)]];
-  select.replaceChildren();
-  groups.forEach(([name, list]) => {
-    if (!list.length) return;
-    const g = el("optgroup");
-    g.label = name;
-    list.forEach(d => {
-      const o = el("option", null, d.label + (d.sessions ? ` · ${d.sessions}` : ""));
-      o.value = d.path;
-      g.appendChild(o);
-    });
-    select.appendChild(g);
-  });
-  const last = rememberedDir();
-  if (last && dirs.some(d => d.path === last)) select.value = last;
+  try { await folderPickOpen(rememberedDir()); }
+  catch (e) { $("#ns-note").textContent = i18n("newsess.dirsFailed", { msg: e.message }); }
 }
 
 async function launchNewSession() {
-  const cwd = $("#ns-dir").value;
+  const cwd = folderPickValue().trim();
   const prompt = $("#ns-prompt").value;
-  if (!cwd) return;
+  const agent = AtlasLogic.newSessionAgent(AtlasLogic.newSessionAgents(hostAgents), $("#ns-agent").value);
+  if (!cwd) { $("#ns-note").textContent = i18n("newsess.noFolder"); folderPickFocus(); return; }
   $("#ns-go").disabled = true;
   $("#ns-note").textContent = i18n("newsess.preparing");
   let r;
-  try { r = await api("/api/new-session", { cwd, prompt }); }
+  try { r = await api("/api/new-session", { cwd, prompt, agent }); }
   catch (e) {
     $("#ns-note").textContent = i18n("newsess.notStarted", { msg: e.message });
     $("#ns-go").disabled = false;
     return;
   }
-  rememberDir(cwd);
+  rememberDir(r.cwd);
+  try { window.localStorage.setItem(LAST_AGENT_KEY, agent); } catch { /* private window */ }
   if (tellHost("new-session", { session_id: r.session_id, command: r.command, cwd: r.cwd,
                                 title: r.title })) {
     $("#ns-prompt").value = "";
@@ -83,6 +82,6 @@ async function launchNewSession() {
 $("#ns-go").addEventListener("click", launchNewSession);
 $("#ns-close").addEventListener("click", () => $("#newsess").close());
 $("#ns-copy").addEventListener("click", () => navigator.clipboard.writeText($("#ns-cmd").textContent));
-$("#ns-prompt").addEventListener("keydown", e => {
+["#ns-prompt", "#ns-dir"].forEach(sel => $(sel).addEventListener("keydown", e => {
   if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); launchNewSession(); }
-});
+}));

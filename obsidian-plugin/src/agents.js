@@ -10,6 +10,8 @@ import { AGENT_VIEW_TYPE } from "./constants";
 const SCRIPT_NAME = "agent-resume-terminal.zsh";
 const AGENTS = { claude: "Claude Code", codex: "Codex" };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+// A Claude Code background job, as `claude attach` takes it (the first 8 hex digits of its session).
+const JOB_ID = /^[0-9a-f]{8}$/;
 const AND = Symbol("&&");
 const CODEX_ICON =
   '<g fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">'
@@ -65,24 +67,41 @@ function shellWords(text) {
 }
 
 /**
+ * A first prompt the agent reads as a prompt only: the catalog puts a space before a "-x" and
+ * before a single word (a Codex or Claude subcommand such as "resume" or "update").
+ */
+function plainPrompt(text) {
+  if (typeof text !== "string" || !text.trim()) return false;
+  return text.startsWith(" ") || (!text.startsWith("-") && text.trim().split(/\s+/).length >= 2);
+}
+
+/**
  * Catalog command → tab start. The catalog sends exactly these:
  *   cd '<folder>' && claude --resume <id> [--fork-session]
  *   cd '<folder>' && claude --session-id <id> ['<first prompt>']
- * {cwd, mode: resume | resume-fork | new, sessionId, prompt} or null.
+ *   cd '<folder>' && claude attach <job id>          (a session running in a background job)
+ *   cd '<folder>' && codex resume <id>
+ *   cd '<folder>' && codex ['<first prompt>']      (Codex picks the thread id itself)
+ * {agent, cwd, mode: resume | resume-fork | new | attach, sessionId (the job id for attach), prompt} or null.
  */
 function parseLaunch(command) {
   const w = shellWords(String(command || ""));
-  if (!w || w.length < 5 || w[0] !== "cd" || typeof w[1] !== "string" || !w[1].startsWith("/")
-      || w[2] !== AND || w[3] !== "claude" || w.slice(4).some((x) => typeof x !== "string")) return null;
-  const [flag, id, ...rest] = w.slice(4);
+  if (!w || w.length < 4 || w[0] !== "cd" || typeof w[1] !== "string" || !w[1].startsWith("/")
+      || w[2] !== AND || !AGENTS[w[3]] || w.slice(4).some((x) => typeof x !== "string")) return null;
+  const args = w.slice(4);
+  const start = (mode, id, prompt) => ({ agent: w[3], cwd: w[1], mode, sessionId: id, prompt: prompt || "" });
+  if (w[3] === "codex") {
+    if (args.length === 0) return start("new", "");
+    if (args.length === 1 && plainPrompt(args[0])) return start("new", "", args[0]);
+    return args.length === 2 && args[0] === "resume" && UUID.test(args[1]) ? start("resume", args[1]) : null;
+  }
+  const [flag, id, ...rest] = args;
+  if (flag === "attach") return rest.length === 0 && JOB_ID.test(id || "") ? start("attach", id) : null;
   if (!UUID.test(id || "")) return null;
-  if (flag === "--resume" && rest.length === 0) return { cwd: w[1], mode: "resume", sessionId: id, prompt: "" };
-  if (flag === "--resume" && rest.length === 1 && rest[0] === "--fork-session") {
-    return { cwd: w[1], mode: "resume-fork", sessionId: id, prompt: "" };
-  }
-  if (flag === "--session-id" && rest.length <= 1) {
-    return { cwd: w[1], mode: "new", sessionId: id, prompt: rest[0] || "" };
-  }
+  if (flag === "--resume" && rest.length === 0) return start("resume", id);
+  if (flag === "--resume" && rest.length === 1 && rest[0] === "--fork-session") return start("resume-fork", id);
+  if (flag === "--session-id" && rest.length === 0) return start("new", id);
+  if (flag === "--session-id" && rest.length === 1 && plainPrompt(rest[0])) return start("new", id, rest[0]);
   return null;
 }
 
@@ -90,7 +109,8 @@ function parseLaunch(command) {
 function agentArgs(scriptPath, kind, instance, seed) {
   const parts = ["exec", shellQuote(scriptPath), kind, instance];
   if (seed) {
-    parts.push(seed.mode, seed.sessionId);
+    // A new Codex thread has no id yet: an empty word keeps the prompt in its place.
+    parts.push(seed.mode, seed.sessionId ? shellQuote(seed.sessionId) : "''");
     if (seed.prompt) parts.push(shellQuote(seed.prompt));
   }
   // -l -i: the user's profile is needed, otherwise claude is not on PATH.

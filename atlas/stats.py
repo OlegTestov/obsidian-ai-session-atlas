@@ -3,6 +3,8 @@
 Counted by replies, not sessions: a session started before the period contributes only the part
 that falls within it. A reply copied by a resumed session counts once.
 Subagents count toward tokens and cost, but not time (see atlas/activity.py).
+Claude replies carry their cost from the index; Codex replies are priced here (atlas/openai_costs.py).
+`agents` narrows every number, the previous period included, to sessions of those agents.
 """
 from __future__ import annotations
 
@@ -11,6 +13,8 @@ import time
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 
+from . import openai_costs
+from .agents import CODEX
 from .messages import msg
 
 PERIODS = {"today": None, "7d": 7, "30d": 30, "90d": 90, "all": None}
@@ -39,18 +43,28 @@ WITH d AS (
   SELECT a.key, MIN(a.session_id) AS sid, MIN(a.ts) AS ts, a.kind,
          MAX(a.active_s) AS act, MAX(a.model) AS model,
          MAX(a.input) AS inp, MAX(a.output) AS out, MAX(a.cache_read) AS cr,
-         MAX(a.cache_write) AS cw, MAX(a.cost) AS cost, MAX(a.tools) AS tools
+         MAX(a.cache_write) AS cw, MAX(a.cost) AS cost, MAX(a.tools) AS tools,
+         MAX(s.agent) AS agent
     FROM activity a JOIN sessions s ON s.session_id = a.session_id
-   WHERE a.ts >= :since AND a.ts < :until AND (:auto OR s.session_kind = 'interactive')
+   WHERE a.ts >= :since AND a.ts < :until AND (:auto OR s.session_kind = 'interactive'){agents}
    GROUP BY a.key)
 SELECT d.*, strftime('%Y-%m-%d %H', d.ts, 'localtime') AS lh,
        CAST(strftime('%w', d.ts, 'localtime') AS INTEGER) AS wd
   FROM d"""
 
 
-def _rows(conn: sqlite3.Connection, since: datetime | None, until: datetime, auto: bool):
-    return conn.execute(_ROWS, {"since": _utc(since), "until": _utc(until) or "9",
-                                "auto": 1 if auto else 0}).fetchall()
+def _rows(conn: sqlite3.Connection, since: datetime | None, until: datetime, auto: bool,
+          agents: list[str] | None = None) -> list[dict]:
+    params = {"since": _utc(since), "until": _utc(until) or "9", "auto": 1 if auto else 0}
+    where = ""
+    if agents:
+        params.update({f"ag{i}": a for i, a in enumerate(agents)})
+        where = f" AND s.agent IN ({','.join(f':ag{i}' for i in range(len(agents)))})"
+    rows = [dict(r) for r in conn.execute(_ROWS.format(agents=where), params)]
+    for r in rows:
+        if r["agent"] == CODEX and r["kind"] == "a":
+            r["cost"] = openai_costs.reply_cost(r["model"], r["inp"], r["cr"], r["cw"], r["out"])
+    return rows
 
 
 def wall_seconds(rows) -> float:
@@ -106,6 +120,8 @@ def _totals(rows) -> dict:
             unknown.add(r["model"] or "?")
         else:
             t["cost"] += r["cost"]
+            t["priced"] += 1
+    # One formula for both agents: cached ÷ all input (fresh + cache writes + cached).
     fresh = t["inp"] + t["cw"] + t["cr"]
     return {
         "sessions": len(sessions), "prompts": t["prompts"], "answers": t["answers"],
@@ -113,7 +129,8 @@ def _totals(rows) -> dict:
                    "total": t["inp"] + t["cw"] + t["cr"] + t["out"]},
         "cache_hit": (t["cr"] / fresh) if fresh else None,
         "active_s": round(t["active_s"]), "wall_s": round(wall_seconds(rows)),
-        "cost": round(t["cost"], 2),
+        # No priced reply at all is "unknown", not $0 (a Codex-only period with unpriced models).
+        "cost": round(t["cost"], 2) if t["priced"] or not unknown else None,
         "unpriced_models": sorted(unknown),
     }
 
@@ -161,7 +178,8 @@ def _breakdowns(conn: sqlite3.Connection, rows) -> dict:
              WHERE s.session_id IN ({marks})""", chunk):
             names[r["session_id"]] = r
     by = {"project": defaultdict(Counter), "domain": defaultdict(Counter), "topic": defaultdict(Counter),
-          "model": defaultdict(Counter), "session": defaultdict(Counter)}
+          "model": defaultdict(Counter), "session": defaultdict(Counter), "agent": defaultdict(Counter)}
+    agent_sessions: dict[str, set] = defaultdict(set)
     calls = {"tools": Counter(), "skills": Counter(), "agents": Counter()}
     hours = [0.0] * 24
     week = [[0.0] * 24 for _ in range(7)]
@@ -172,12 +190,14 @@ def _breakdowns(conn: sqlite3.Connection, rows) -> dict:
         keys = {"project": (meta["project"] if meta else None) or "—",
                 "domain": (meta["domain"] if meta else None) or "—",
                 "topic": (meta["topic"] if meta else None) or msg("stats.no_topic"),
-                "session": r["sid"]}
+                "session": r["sid"], "agent": r["agent"]}
+        agent_sessions[r["agent"]].add(r["sid"])
         if r["kind"] == "a":
             keys["model"] = _short_model(r["model"])
         for dim, key in keys.items():
             c = by[dim][key]
             c["cost"] += cost
+            c["priced"] += r["kind"] == "a" and r["cost"] is not None
             c["active_s"] += act
             c["tokens"] += tokens
             c["prompts"] += r["kind"] == "p"
@@ -193,7 +213,9 @@ def _breakdowns(conn: sqlite3.Connection, rows) -> dict:
 
     def top(dim, n=TOP, key="cost"):
         items = sorted(by[dim].items(), key=lambda kv: -kv[1][key])[:n]
-        return [{"name": k, "cost": round(v["cost"], 2), "active_s": round(v["active_s"]),
+        # A row whose replies all lack a price shows "—", not $0.
+        return [{"name": k, "cost": round(v["cost"], 2) if v["priced"] or not v["answers"] else None,
+                 "active_s": round(v["active_s"]),
                  "tokens": v["tokens"], "prompts": v["prompts"], "answers": v["answers"]}
                 for k, v in items]
 
@@ -211,6 +233,8 @@ def _breakdowns(conn: sqlite3.Connection, rows) -> dict:
     return {
         "projects": top("project"), "domains": top("domain"), "topics": top("topic"),
         "models": top("model"),
+        "by_agent": [dict(item, sessions=len(agent_sessions[item["name"]]))
+                     for item in top("agent")],
         "sessions": sessions,
         **{panel: [{"name": k, "count": v} for k, v in c.most_common(15)]
            for panel, c in calls.items()},
@@ -229,18 +253,19 @@ def _chunks(seq, n):
 
 
 def summary(conn: sqlite3.Connection, period: str = "7d", automation: bool = False,
-            now: datetime | None = None) -> dict:
+            now: datetime | None = None, agents: list[str] | None = None) -> dict:
+    """`agents`: claude and/or codex (atlas.agents.parse_filter); None means every agent."""
     period = period if period in PERIODS else "7d"
     started = time.monotonic()
     since, until = window(period, now)
-    rows = _rows(conn, since, until, automation)
+    rows = _rows(conn, since, until, automation, agents)
     out = {"period": period, "since": since.isoformat() if since else None,
-           "until": until.isoformat(), "automation": automation,
+           "until": until.isoformat(), "automation": automation, "agent_filter": agents,
            "totals": _totals(rows), "series": _series(rows, since, until)}
     out.update(_breakdowns(conn, rows))
     # The previous span of equal length, for "more / less than usual" comparison.
     if since is not None:
-        prev = _rows(conn, since - (until - since), since, automation)
+        prev = _rows(conn, since - (until - since), since, automation, agents)
         out["previous"] = _totals(prev)
     out["took_ms"] = round((time.monotonic() - started) * 1000)
     return out

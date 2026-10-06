@@ -6,6 +6,7 @@ const dialogs = new Map();            // session id → {dialog, reason}
 const dialogAnswers = new Map();      // nonce → session id
 const dialogNotes = new Map();        // session id → {note, cls}
 const DIALOG_TIMEOUT_MS = 6000;
+const CHAT_OPTION = "Chat about this";
 
 const isWaitingSession = s => (s.activity || s.status) === "waiting";
 
@@ -18,6 +19,7 @@ function requestDialogs() {
     if (pid) tellTabHost("read-dialog", { ptyPid: pid, claudePid: s.pid, sessionId: s.session_id });
   });
   [...dialogs.keys()].forEach(sid => { if (!waiting.has(sid)) dialogs.delete(sid); });
+  [...freeModes.keys()].forEach(sid => { if (!waiting.has(sid)) { freeModes.delete(sid); freeDrafts.delete(sid); } });
 }
 
 // Plugin messages about dialogs. true means the message is handled here.
@@ -32,6 +34,8 @@ function handleDialogMessage(d) {
     dialogAnswers.delete(d.nonce);
     if (d.ok) {
       dialogs.delete(sid);
+      freeModes.delete(sid);              // a failed answer keeps the typed text for another try
+      freeDrafts.delete(sid);
       dialogNotes.set(sid, { note: i18n("active.answerSent"), cls: "ok" });
       window.setTimeout(() => { dialogNotes.delete(sid); loadActive(); }, 1500);
     } else {
@@ -86,7 +90,7 @@ function dialogBlock(s, pid, full) {
     box.appendChild(el("div", "q", got.reason || i18n("active.dialogNotRead")));
     return box;
   }
-  if (d.kind === "plan") return planBlock(s, pid, d, full, busy, note, box);
+  if (d.kind === "plan" && agentControls(s).plan) return planBlock(s, pid, d, full, busy, note, box);
   if (d.kind === "panel") {
     // Command panel (/usage, /effort…). If its answer is already in the card, the close button is there too.
     box.appendChild(el("div", "t", i18n("active.panelOpen", { title: d.title })));
@@ -101,30 +105,44 @@ function dialogBlock(s, pid, full) {
   }
   const head = el("div", "t", d.kind === "permission" ? i18n("active.permission", { title: d.title }) : d.title);
   box.appendChild(head);
-  if (d.details.length) {
+  const details = Array.isArray(d.details) ? d.details : [];   // Codex choices may have none
+  if (details.length) {
     // Compact: the first line (command or path); without it "Yes" is pressed blind.
-    const pre = el("pre", "det" + (full ? "" : " short"), full ? d.details.join("\n") : d.details[0]);
-    pre.title = d.details.join("\n");
+    const pre = el("pre", "det" + (full ? "" : " short"), full ? details.join("\n") : details[0]);
+    pre.title = details.join("\n");
     box.appendChild(pre);
   }
   if (d.question && full) box.appendChild(el("div", "q", d.question));
-  if (!d.answerable) {
+  if (!d.answerable || !Array.isArray(d.options)) {
     box.appendChild(el("div", "q dim", d.reason || i18n("active.dialogTabOnly")));
     return box;
   }
   const opts = el("div", "opts");
+  const free = AtlasLogic.freeTextOption(d);
+  if (free) box.classList.add("with-free");
   d.options.forEach((o, i) => {
+    if (free && o.n === free.n) {
+      opts.appendChild(freeButton(s, d, o, full, busy));
+      return;
+    }
+    const chat = d.agent !== "codex" && o.text === CHAT_OPTION;
+    const text = chat ? i18n("active.chatOption") : o.text;
     // Only a long label shrinks: "1. Yes" and "3. No" are always fully visible.
-    const cls = [i === 0 ? "primary" : "", o.text.length > 18 ? "long" : ""].join(" ").trim();
-    const b = el("button", cls || null, `${o.n}. ${o.text}`);
+    const cls = [i === 0 ? "primary" : "", text.length > 18 ? "long" : ""].join(" ").trim();
+    const b = el("button", cls || null, `${o.n}. ${text}`);
     b.type = "button";
-    b.title = (o.detail ? o.detail + " · " : "") + i18n("active.pressesKey", { n: o.n });
+    b.title = (chat ? i18n("active.chatOptionHint") + " · " : o.detail ? o.detail + " · " : "")
+      + i18n("active.pressesKey", { n: o.n });
     b.disabled = busy;
     b.addEventListener("click", () => answerDialogOption(s, pid, o));
     opts.appendChild(b);
     if (o.detail && full) opts.appendChild(el("span", "od", o.detail));
   });
   box.appendChild(opts);
+  // Compact cards have no reply field: the typed answer gets its own field in the dialog.
+  if (free && !full && freeModes.get(s.session_id) === free.n && !busy) {
+    box.appendChild(freeField(s, pid, free, "planfb freefb"));
+  }
   if (note) box.appendChild(el("div", "note " + (note.cls || ""), note.note));
   return box;
 }

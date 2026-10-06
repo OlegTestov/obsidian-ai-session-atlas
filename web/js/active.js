@@ -23,7 +23,7 @@ function renderActive(skipKey, force) {
   arrangeActive(activeSessions);              // bring back hidden cards that have a new message
   const arranged = arrangeActive(activeSessions.filter(s => passes(s)));
   const shown = arranged.visible;
-  const any = ACTIVE_FILTERS.some(({ key }) => activeFilter[key].size);
+  const any = ACTIVE_FILTERS.some(({ key }) => activeFilter[key].size) || agentFiltered("active");
   // Short, on one line: "11 · 09:08 · 5h 35% · wk 73% · terminal ● · ?"; the full text is in tooltips.
   const sep = () => document.createTextNode(" · ");
   // The total is already on the "Active N" tab; here only what the filters keep.
@@ -56,15 +56,40 @@ function renderActive(skipKey, force) {
   };
   const lim = AtlasLogic.limitsText(activeLimits, when);
   const short = { five_hour: i18n("active.limit.fiveHour"), seven_day: i18n("active.limit.week") };
-  const limSpan = el("span", "limits " + (lim ? lim.tone : "none"), lim
-    ? activeLimits.windows.map(w => `${short[w.key] || w.label} ${Math.round(w.used_percentage)}%`).join(" · ")
-      + (lim.stale ? i18n("active.limitsStale") : "")
-    : i18n("active.limitsNone"));
+  // A spent window names its reset; numbers that are not live end with their age.
+  const windows = (l, shown) => l.windows.map(w => {
+    const label = short[w.key] || w.label;
+    return w.used_percentage >= 100 ? i18n("active.limitReached", { label, until: w.resets_at
+      ? i18n("logic.limits.until", { when: when(w.resets_at) }) : "" }) : `${label} ${Math.round(w.used_percentage)}%`;
+  }).join(" · ") + (shown.age ? i18n("active.limitsAge", { age: shown.age }) : "");
+  const stamp = iso => {
+    const d = new Date(iso);
+    const time = d.toLocaleTimeString(I18N.locale(), { hour: "2-digit", minute: "2-digit" });
+    return d.toDateString() === new Date().toDateString() ? time
+      : d.toLocaleDateString(I18N.locale(), { day: "2-digit", month: "2-digit" }) + " " + time;
+  };
   // Cut the "limits: " prefix from logic.js: the tooltip has its own full one.
-  limSpan.title = lim ? i18n("active.limitsHint", { limits: lim.text.replace(/^[^:]*: /, "") })
-    : i18n("active.limitsSetup", { snippet: "\"statusLine\": {\"type\": \"command\", \"command\": "
-      + "\"python3.11 ~/Code/session-atlas/tools/statusline.py\"}" });
-  summary.append(sep(), limSpan);
+  const hintLimits = l => l.text.replace(/^[^:]*: /, "");
+  // Each agent has its own subscription: Codex limits get their own span, named when both show.
+  const codexLim = agentPick.active.includes("codex") ? AtlasLogic.limitsText(activeCodexLimits, when) : null;
+  if (agentPick.active.includes("claude")) {
+    const text = lim ? windows(activeLimits, lim) : i18n("active.limitsNone");
+    const limSpan = el("span", "limits " + (lim ? lim.tone : "none"),
+      codexLim ? i18n("active.limitsClaude", { limits: text }) : text);
+    limSpan.title = lim ? i18n("active.limitsHint", { limits: hintLimits(lim) })
+        + (lim.age && activeLimits.captured_at ? i18n("active.limitsAsOf", { time: stamp(activeLimits.captured_at) }) : "")
+      : i18n("active.limitsSetup", { snippet: "\"statusLine\": {\"type\": \"command\", \"command\": "
+        + "\"python3.11 ~/Code/session-atlas/tools/statusline.py\"}" });
+    summary.append(sep(), limSpan);
+  }
+  if (codexLim) {
+    const codexSpan = el("span", "limits " + codexLim.tone,
+      i18n("active.limitsCodex", { limits: windows(activeCodexLimits, codexLim) }));
+    const at = activeCodexLimits.captured_at ? stamp(activeCodexLimits.captured_at) : "?";
+    codexSpan.title = i18n(activeCodexLimits.source === "live" ? "active.limitsCodexLive" : "active.limitsCodexRun",
+                           { limits: hintLimits(codexLim), time: at });
+    summary.append(sep(), codexSpan);
+  }
   const link = AtlasLogic.terminalStatus(EMBEDDED, hostHealth, tabsAskedAt, Date.now());
   const status = el("span", "link " + (link.ok === false ? "warn" : link.ok ? "ok" : ""), i18n("active.terminal"));
   status.appendChild(el("span", "tdot", "●"));
@@ -83,6 +108,8 @@ function renderActive(skipKey, force) {
   document.querySelectorAll(".mode button").forEach(b =>
     b.setAttribute("aria-pressed", String(b.dataset.mode === activeMode)));
   const closed = () => [closedSection()].filter(Boolean);
+  // An empty grid is not the cards of the last signature: clearing a filter must draw them again.
+  if (!activeSessions.length || !shown.length) lastSignature = "";
   if (!activeSessions.length) {
     grid.replaceChildren(el("p", "empty", i18n("active.noSessions")), ...closed());
     return;
@@ -99,11 +126,11 @@ function renderActive(skipKey, force) {
   // Plan feedback is being typed: the field is not recreated, otherwise focus and caret are lost.
   if (document.activeElement && document.activeElement.matches("#active-grid .planfb textarea")) return;
   // Nothing changed: leave the DOM alone entirely, so the text scroll does not reset.
-  const signature = JSON.stringify([shown, activeMode, layout, hostReady, [...hostTabs.keys()],
+  const signature = JSON.stringify([shown, activeMode, layout, hostReady, [...hostTabs.keys()], [...hostHeld.keys()],
     [...justSent].map(([sid, sent]) => [sid, AtlasLogic.deliveryState(
       activeSessions.find(x => x.session_id === sid) || {}, sent, Date.now())]), [...dialogs], [...dialogNotes], [...dialogAnswers.values()], [...stopNotes], [...commandOutputs], feedSid, pinnedCards, hiddenCards,
     [...fullReplies.keys()], [...attachments].map(([k, v]) => [k, v.length]),
-    recentClosed, closedOpen, [...closedNotes], [...planForms],
+    recentClosed, agentPick.active, closedOpen, [...closedNotes], [...planForms], [...freeModes],
     [...planTexts].map(([k, v]) => [k, v.name, (v.text || "").length])]);
   if (!force && signature === lastSignature && Date.now() - lastRenderAt < RERENDER_EVERY_MS) return;
   lastSignature = signature;
@@ -120,6 +147,9 @@ function renderActive(skipKey, force) {
     const txt = c.querySelector(".reply .txt:not(.now)");
     return [c.dataset.id, txt ? txt.scrollTop : 0];
   }));
+  // A long dialog scrolls inside itself: the reader's place in it survives the redraw too.
+  const dialogTops = new Map([...grid.querySelectorAll(".acard > .dialog")].map(d =>
+    [d.parentElement.dataset.id, d.scrollTop]));
   // Focus and caret in the reply field survive a redraw: otherwise after sending the card
   // does not update until you click outside the field.
   const focused = document.activeElement && document.activeElement.tagName === "TEXTAREA"
@@ -141,6 +171,8 @@ function renderActive(skipKey, force) {
   grid.querySelectorAll(".acard").forEach(c => {
     const txt = c.querySelector(".reply .txt:not(.now)");
     if (txt && inner.get(c.dataset.id)) txt.scrollTop = inner.get(c.dataset.id);
+    const dialog = c.querySelector(":scope > .dialog");
+    if (dialog && dialogTops.get(c.dataset.id)) dialog.scrollTop = dialogTops.get(c.dataset.id);
   });
   applySelection();                  // keyboard selection survives a redraw
 }

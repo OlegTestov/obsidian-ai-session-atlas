@@ -1,6 +1,7 @@
 // Startup: after the functions of both tabs are declared.
 // Classic script: shares one global scope with the other page files.
 buildFilters();
+$("#search-agent").appendChild(agentFilter("search", () => loadList(), { named: true }));
 readHash();
 refreshLayoutButton();
 setView(state.view);

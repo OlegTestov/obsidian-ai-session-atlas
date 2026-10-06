@@ -2,12 +2,12 @@
 // Classic script: shares one global scope with the other page files.
 /* exported passes, parseLayout, buildFilters -- used by other page scripts */
 function passes(s, except) {
-  return AtlasLogic.passes(s, activeFilter, except);
+  return (except === "agent" || agentPassesView("active", s)) && AtlasLogic.passes(s, activeFilter, except);
 }
 
 // The count next to a value: how many sessions it yields with the other selected filters.
 function optionsFor(key) {
-  return AtlasLogic.filterOptions(activeSessions, activeFilter, key);
+  return AtlasLogic.filterOptions(activeSessions.filter(s => agentPassesView("active", s)), activeFilter, key);
 }
 
 // Short so the bar fits one line: "Domain" or "Domain · 2"; the selection goes into the tooltip.
@@ -154,6 +154,7 @@ function onLayoutChange() {
 }
 
 function closeFilters(except) {
+  closeAgentFilters(except);
   if (layoutUI && except !== layoutUI) {
     layoutUI.pop.classList.add("hidden");
     layoutUI.btn.setAttribute("aria-expanded", "false");
@@ -207,6 +208,15 @@ function buildFilters() {
     bar.appendChild(wrap);
     filterUI[f.key] = { btn, pop, list, search };
   });
+  // The agent list counts live sessions under the other filters, like the lists above.
+  bar.appendChild(agentFilter("active", () => onFilterChange("agent"), { counts: () => {
+    const n = {};
+    activeSessions.filter(s => passes(s, "agent")).forEach(s => {
+      const a = AtlasLogic.agentOf(s);
+      n[a] = (n[a] || 0) + 1;
+    });
+    return n;
+  } }));
   const mode = el("div", "mode");
   mode.setAttribute("role", "group");
   mode.setAttribute("aria-label", i18n("active.viewAria"));
@@ -228,6 +238,7 @@ function buildFilters() {
   reset.id = "active-reset";
   reset.addEventListener("click", () => {
     ACTIVE_FILTERS.forEach(({ key }) => activeFilter[key].clear());
+    resetAgents("active");
     closeFilters();
     onFilterChange();
   });
@@ -255,7 +266,8 @@ function refreshFilterButtons(skipKey) {
       ui.list.scrollTop = top;
     }
   });
-  const any = ACTIVE_FILTERS.some(({ key }) => activeFilter[key].size);
+  refreshAgentButton("active");
+  const any = ACTIVE_FILTERS.some(({ key }) => activeFilter[key].size) || agentFiltered("active");
   $("#active-reset").classList.toggle("hidden", !any);
 }
 

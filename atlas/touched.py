@@ -13,6 +13,8 @@ import glob
 import json
 import os
 
+from . import codex_feed, codex_parse
+
 TOOL_MARK = b'"tool_use"'
 MAX_DIFF_LINES = 4000
 _cache: dict[str, tuple] = {}         # path -> (inode, bytes read, {file: counters}, cwd)
@@ -111,6 +113,8 @@ def session_files(path: str | None) -> dict:
     """{cwd, files: [...]}: changed files first, newest first; then read-only ones."""
     if not path:
         return {"cwd": None, "files": []}
+    if codex_parse.session_id_of(path):
+        return codex_feed.session_files(path)
     merged: dict[str, dict] = {}
     main, cwd = _scan(path)
     folder = os.path.join(path[:-len(".jsonl")], "subagents")

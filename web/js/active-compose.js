@@ -42,8 +42,12 @@ function onEdge(area, dir) {
   return dir === "up" ? !before.includes("\n") : !after.includes("\n");
 }
 
-/** Reply field behaviour. Returns the hint dropdown, which the caller places next to the field. */
-function enhanceComposer(area, sid, submit) {
+/**
+ * Reply field behaviour. Returns the hint dropdown, which the caller places next to the field.
+ * opts.commands === false: no slash-command hints (the list is Claude Code's).
+ */
+function enhanceComposer(area, sid, submit, opts) {
+  const hints = !opts || opts.commands !== false;
   const pop = el("div", "suggest hidden");
   pop.setAttribute("role", "listbox");
   let items = [];
@@ -75,6 +79,7 @@ function enhanceComposer(area, sid, submit) {
     area.setSelectionRange(area.value.length, area.value.length);
   };
   const suggest = async () => {
+    if (!hints) return;
     const text = area.value;
     const list = await ensureCommands();
     if (area.value !== text) return;           // typing continued while the list loaded

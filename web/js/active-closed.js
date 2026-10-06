@@ -20,7 +20,7 @@ async function continueClosed(c) {
       return;
     }
     tellHost("resume", { session_id: c.session_id, cwd: a.resume_cwd, command: a.resume_command,
-                         title: c.title || card.title || "Claude" });
+                         title: c.title || card.title || agentShort(card) });
     window.setTimeout(loadActive, 4000);
   } catch (e) {
     closedNotes.set(c.session_id, { text: i18n("closed.failed", { msg: e.message }), pending: false, at: Date.now() });
@@ -54,7 +54,7 @@ function closedRow(c) {
 
 /** Section at the bottom of Active; null when nothing closed in the last hours. */
 function closedSection() {
-  const list = recentClosed;
+  const list = recentClosed.filter(c => agentPassesView("active", c));
   if (!list.length) return null;
   const sec = el("section", "asec closed" + (closedOpen ? "" : " folded"));
   const h = el("h3");

@@ -1,4 +1,4 @@
-// The Session Atlas server is down: a banner on top instead of empty cards, with Start inside Obsidian.
+// The AI Session Atlas server is down: a banner on top instead of empty cards, with Start inside Obsidian.
 // Classic script: shares one global scope with the other page files.
 let serverDown = false;
 let serverRaising = false;

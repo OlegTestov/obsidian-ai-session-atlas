@@ -42,7 +42,7 @@ def build(out: str) -> None:
                    cwd=ROOT, stdout=subprocess.DEVNULL)
 
 
-def install(vault: str, enable: bool = True, dev: bool = False) -> dict:
+def install(vault: str, enable: bool = True, dev: bool = False, port: int | None = None) -> dict:
     target = os.path.join(vault, ".obsidian", "plugins", PLUGIN_ID)
     os.makedirs(target, exist_ok=True)
     with tempfile.TemporaryDirectory() as out:
@@ -53,7 +53,9 @@ def install(vault: str, enable: bool = True, dev: bool = False) -> dict:
     for marker in (HOT_RELOAD_MARKER, DEV_MARKER):
         path = os.path.join(target, marker)
         if dev:
-            open(path, "w").close()
+            # The dev marker may name a port: a second test Obsidian next to the test vault's.
+            with open(path, "w") as fh:
+                fh.write(str(port) if port and marker == DEV_MARKER else "")
         elif os.path.exists(path):
             os.remove(path)
     # Agent tab scripts go where saved tabs and the Claude Code hook expect them.
@@ -84,11 +86,12 @@ def install(vault: str, enable: bool = True, dev: bool = False) -> dict:
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Install the Session Atlas plugin into Obsidian")
+    parser = argparse.ArgumentParser(description="Install the AI Session Atlas plugin into Obsidian")
     parser.add_argument("--vault", default=DEFAULT_VAULT)
     parser.add_argument("--no-enable", action="store_true")
     parser.add_argument("--dev", action="store_true",
                         help="test vault: reload on every build, own port 8788 and data folder")
+    parser.add_argument("--port", type=int, help="with --dev: the server port instead of 8788")
     parser.add_argument("--bundle-to", help="only build main.js into this file (for tests)")
     args = parser.parse_args(argv)
     if args.bundle_to:
@@ -98,13 +101,15 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if not args.vault or not os.path.isdir(os.path.join(args.vault, ".obsidian")):
         parser.error("specify a vault: --vault PATH or the ATLAS_DEV_VAULT variable (a folder with .obsidian)")
-    result = install(args.vault, enable=not args.no_enable, dev=args.dev)
+    if args.port and not (args.dev and 1024 < args.port < 65536):
+        parser.error("--port needs --dev and a port above 1024")
+    result = install(args.vault, enable=not args.no_enable, dev=args.dev, port=args.port)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     if args.dev:
         print("\nThe test vault's plugin picks up the build by itself within a couple of seconds.", file=sys.stderr)
     else:
         print("\nStaged. A running Obsidian keeps the loaded version until you run "
-              "«Session Atlas: Reload the plugin» or restart Obsidian.", file=sys.stderr)
+              "«AI Session Atlas: Reload the plugin» or restart Obsidian.", file=sys.stderr)
     return 0
 
 

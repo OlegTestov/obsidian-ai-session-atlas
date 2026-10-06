@@ -29,7 +29,8 @@ def test_statusline_saves_limits_and_prints_a_line(tmp_path):
     assert out.stdout.startswith("Opus 5.5 · 5ч 42%") and "нед 87% до" in out.stdout
     captured_at = json.loads((tmp_path / "rate-limits.json").read_text())["captured_at"]
     got = limits.read_limits(str(tmp_path), now=captured_at + 5)
-    assert got["age_seconds"] == 5
+    assert got["age_seconds"] == 5 and got["live"] is True and got["source"] == "statusline"
+    assert limits.read_limits(str(tmp_path), now=captured_at + limits.LIVE_FOR + 1)["live"] is False
     assert [(w["key"], w["used_percentage"]) for w in got["windows"]] == [("five_hour", 41.6), ("seven_day", 87.2)]
     assert got["windows"][0]["resets_at"].startswith("2026-")
     assert got["windows"][1]["resets_at"] == "2026-10-01T00:00:00+00:00"

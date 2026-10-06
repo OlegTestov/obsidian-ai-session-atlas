@@ -12,12 +12,12 @@ import os
 import sqlite3
 from datetime import datetime, timezone
 
-from . import activity, resolve
+from . import actions, activity, codex_parse, resolve
 from .parse import SessionFacts, facts_state, parse_file, parse_tail
 
 META_TURN = -2        # title, tickets, paths from file history
 SUBAGENT_TURN = -1    # subagent texts: change only together with their files
-STATE_VERSION = 3     # bump on any parser change: old states get discarded
+STATE_VERSION = 4     # bump on any parser change: old states get discarded
 TAIL_SIG_BYTES = 4096
 
 
@@ -34,7 +34,7 @@ def tail_sig(path: str, offset: int) -> str:
 
 def purge(conn: sqlite3.Connection, session_id: str, keep_text: bool = False) -> None:
     for table in ("sessions", "session_projects", "session_domains",
-                  "session_tickets", "session_files", "session_links"):
+                  "session_tickets", "session_files", "session_links", "session_continuations"):
         conn.execute(f"DELETE FROM {table} WHERE session_id=?", (session_id,))
     if not keep_text:
         conn.execute("DELETE FROM fts WHERE session_id=?", (session_id,))
@@ -49,7 +49,8 @@ def _write_meta(conn, session_id: str, path: str, st, sig: str, facts: SessionFa
     projects, workspace_kind = resolve.resolve_projects(facts.cwds, [r for _, r in resolved_files])
     domains = resolve.resolve_domains(facts.cwds, [r for _, r in resolved_files])
     sensitivity = resolve.resolve_sensitivity(facts.cwds, [r for _, r in resolved_files])
-    kind = resolve.session_kind(facts.entrypoint, facts.human_turns)
+    kind = resolve.session_kind(facts.entrypoint, facts.human_turns, facts.spawned,
+                                continued=bool(facts.continued_from and facts.last_activity_at))
     title, title_source = resolve.fallback_title(
         facts.title, [facts.first_user_text] if facts.first_user_text else [], facts.last_prompt,
         [facts.first_assistant_text] if facts.first_assistant_text else [], session_id)
@@ -58,8 +59,9 @@ def _write_meta(conn, session_id: str, path: str, st, sig: str, facts: SessionFa
              workspace_kind, started_at, last_activity_at, human_turns, machine_turns,
              subagent_turns, cost_usd, lines_added, lines_removed, models, entrypoint,
              version, cwd_last, cwds, branch_last, last_prompt, leaf_uuid,
-             sensitivity_rule, records, bad_lines, content_hash)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+             sensitivity_rule, records, bad_lines, content_hash, agent, continued_from,
+             continued_in)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
         (session_id, path, title, title_source, kind, workspace_kind,
          facts.started_at, facts.last_activity_at, facts.human_turns, facts.machine_turns,
          facts.subagent_turns, facts.cost_usd, facts.lines_added, facts.lines_removed,
@@ -67,8 +69,11 @@ def _write_meta(conn, session_id: str, path: str, st, sig: str, facts: SessionFa
          facts.cwds[-1] if facts.cwds else None, json.dumps(facts.cwds, ensure_ascii=False),
          facts.branches[-1] if facts.branches else None,
          facts.last_prompt, facts.leaf_uuid, sensitivity, facts.records, facts.bad_lines,
-         hashlib.sha256(sig.encode()).hexdigest()[:32]),
+         hashlib.sha256(sig.encode()).hexdigest()[:32], facts.agent, facts.continued_from,
+         facts.continued_in),
     )
+    conn.executemany("INSERT INTO session_continuations VALUES (?,?,?)",
+                     [(session_id, child, at) for child, at in facts.continuations])
     conn.executemany("INSERT OR IGNORE INTO session_projects VALUES (?,?,?)",
                      [(session_id, pid, role) for pid, role in projects])
     conn.executemany("INSERT OR IGNORE INTO session_domains VALUES (?,?)",
@@ -146,9 +151,37 @@ def _resolved(facts: SessionFacts) -> list[tuple[str, str]]:
             for raw in facts.raw_files]
 
 
+def continuation_of(conn, session_id: str) -> tuple[str | None, str | None]:
+    """(parent, hand-over time) if this transcript is a parked conversation's background job, or
+    (source, conversion time) if "Resume with…" copied it from another agent's session."""
+    row = conn.execute("SELECT source_session_id AS session_id, at FROM conversions WHERE session_id=?",
+                       (session_id,)).fetchone() or \
+        conn.execute("SELECT session_id, at FROM session_continuations WHERE child_id=? "
+                     "ORDER BY at DESC LIMIT 1", (session_id,)).fetchone()
+    return (row["session_id"], row["at"]) if row else (None, None)
+
+
+def _converted(conn, session_id: str, facts: SessionFacts) -> None:
+    """A converted session nobody has typed in yet holds only copies: it dates from the conversion
+    and, until its agent names it, carries the source's title."""
+    row = conn.execute(
+        "SELECT COALESCE(u.title, s.title) AS title FROM conversions c "
+        "LEFT JOIN sessions s ON s.session_id = c.source_session_id "
+        "LEFT JOIN user_overrides u ON u.session_id = c.source_session_id "
+        "WHERE c.session_id=?", (session_id,)).fetchone()
+    if row is None:
+        return
+    if facts.last_activity_at is None and facts.copied_until:
+        facts.started_at = facts.last_activity_at = facts.copied_until
+    if not facts.title and row["title"]:
+        facts.title, facts.title_source = row["title"], "converted"
+
+
 def store_full(conn, path: str, st, sig: str, subagents: list[str], sub_sig: str) -> str:
     session_id = os.path.splitext(os.path.basename(path))[0]
-    facts = parse_file(path, session_id)
+    parent, handed_over = continuation_of(conn, session_id)
+    facts = parse_file(path, session_id, continued_from=parent, copied_until=handed_over)
+    _converted(conn, session_id, facts)
     sub_commands: list[str] = []
     sub_paths: list[str] = []
     sub_rows: dict = {}
@@ -177,6 +210,26 @@ def store_full(conn, path: str, st, sig: str, subagents: list[str], sub_sig: str
     _write_turns(conn, session_id, facts)
     _save_state(conn, session_id, path, st, sub_sig, facts)
     _record_source(conn, path, session_id, st, sig, facts)
+    return session_id
+
+
+def store_codex(conn, path: str, st, sig: str, title: str | None = None) -> str:
+    """A Codex rollout is reread in full on any change: the largest is ~25 MB, a pass is ~0.2 s."""
+    parent, converted_at = continuation_of(conn, codex_parse.session_id_of(path) or "")
+    facts = codex_parse.parse_file(path, title=title, continued_from=parent, copied_until=converted_at)
+    session_id = facts.session_id
+    _converted(conn, session_id, facts)
+    if not session_id:
+        raise ValueError("no thread id in the rollout name or its session_meta")
+    resolved = _resolved(facts)
+    purge(conn, session_id)
+    activity.store(conn, session_id, facts.activity)
+    title = _write_meta(conn, session_id, path, st, sig, facts, resolved)
+    _write_meta_row(conn, session_id, title, facts, resolved)
+    _write_turns(conn, session_id, facts)
+    _record_source(conn, path, session_id, st, sig, facts)
+    # "New from this one" for Codex: the thread's id is known only now (atlas/actions.py).
+    actions.link_codex_launch(conn, session_id, facts.first_user_text)
     return session_id
 
 

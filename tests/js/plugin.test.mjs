@@ -46,6 +46,7 @@ class FakeBase {
   async saveData(data) { this.stored = data; }
 }
 const modals = [];
+const menus = [];
 const notices = [];
 const noticeObjects = [];
 const lastNotice = () => noticeObjects[noticeObjects.length - 1];
@@ -84,14 +85,34 @@ const stubs = {
       close() { this.onClose(); }
     },
     Notice: class {
-      constructor(msg) {
+      constructor(msg, duration) {
         this.msg = msg;
+        this.duration = duration;
+        this.hidden = false;
         notices.push(msg);
-        this.noticeEl = { listeners: [], addEventListener(type, fn) { this.listeners.push(fn); } };
+        const control = (tag, opts) => ({ tag, ...opts, attrs: {}, listeners: [],
+          setAttribute(k, v) { this.attrs[k] = v; },
+          addEventListener(type, fn) { this.listeners.push(fn); } });
+        this.containerEl = { listeners: [], classes: [], children: [], isConnected: true,
+          addEventListener(type, fn) { this.listeners.push(fn); },
+          addClass(c) { this.classes.push(c); },
+          createEl(tag, opts) { const el = control(tag, opts); this.children.push(el); return el; } };
         noticeObjects.push(this);
       }
+      hide() { this.hidden = true; this.containerEl.isConnected = false; }
     },
     PluginSettingTab: class { constructor(app, plugin) { this.app = app; this.plugin = plugin; } },
+    Menu: class {
+      constructor() { this.items = []; menus.push(this); }
+      addItem(fn) {
+        const item = { setTitle(t) { this.title = t; return this; }, setIcon(i) { this.icon = i; return this; },
+                       setDisabled(d) { this.disabled = d; return this; }, onClick(f) { this.click = f; return this; } };
+        fn(item);
+        this.items.push(item);
+        return this;
+      }
+      showAtMouseEvent(e) { this.shownAt = e; }
+    },
     addIcon: () => {},
     getLanguage: () => obsidianLanguage,
     TFile: class { constructor(path) { this.path = path; } },
@@ -524,17 +545,81 @@ describe("dialog answers", () => {
     const text = "Yes, and always allow access to /tmp/claude-501 from this project";
     expectReply(await press({ option: 2, text }), "answered", false, []);
   });
-  it("question: options without Type something and Chat about this", async () => {
+  it("question: the text field and Chat about this are options too", async () => {
     screen = screens.question;
     const seen = await ask();
     assert.equal(seen.dialog.kind, "question");
     assert.equal(seen.dialog.title, "Colour");
     assert.equal(seen.dialog.question, "Which colour do you prefer?");
-    assert.equal(seen.dialog.options.map((o) => o.text).join("|"), "Red|Blue");
+    assert.equal(seen.dialog.options.map((o) => o.text).join("|"), "Red|Blue|Type something.|Chat about this");
     assert.equal(seen.dialog.options[1].detail, "Cool, calm, serene");
+    assert.deepEqual(seen.dialog.options[2], { n: 3, text: "Type something.", detail: "", freeText: true,
+                                               selected: false, typed: "" });
+    assert.ok(!seen.dialog.options[3].freeText);
   });
   it("question: Blue is digit 2", async () =>
     expectReply(await press({ option: 2, text: "Blue" }), "answered", true, ["2"]));
+  it("question: Chat about this is its digit, at once", async () =>
+    expectReply(await press({ option: 4, text: "Chat about this" }), "answered", true, ["4"]));
+  it("question: the text field's digit alone is refused (it only moves the cursor)", async () =>
+    expectReply(await press({ option: 3, text: "Type something." }), "answered", false, []));
+
+  // Own answer, real screens of a fresh session: the question drawn at the top, empty rows below.
+  const own = "green please";
+  const freeText = async (reactions, expectOk, extra) => {
+    screen = screens.free_question;
+    onType = (chunk) => { if (reactions[chunk] !== undefined) screen = reactions[chunk]; };
+    const r = await exchange(dialogMsg("answer-dialog", Object.assign({ option: 3, text: "Type something.",
+                                                                        feedback: own }, extra)),
+                             expectOk ? 400 : 3500);
+    onType = null;
+    return r;
+  };
+  it("own answer: the screens parse (fresh session, field selected, text typed)", async () => {
+    screen = screens.free_question;
+    const q = (await ask()).dialog;
+    assert.equal(q.title, "Preference");
+    assert.equal(q.question, "Which color do you prefer?");
+    assert.equal(q.options.map((o) => `${o.n}.${o.text}`).join("|"), "1.Red|2.Blue|3.Type something.|4.Chat about this");
+    assert.match(q.options[0].detail, /^A warm, energetic color/);
+    screen = screens.free_selected;
+    const sel = (await ask()).dialog.options[2];
+    assert.deepEqual([sel.freeText, sel.selected, sel.typed], [true, true, ""]);
+    screen = screens.free_typed;
+    const typed = (await ask()).dialog.options[2];
+    assert.deepEqual([typed.text, typed.selected, typed.typed], ["Type something.", true, own]);
+  });
+  it("own answer: the answered and declined screens are not dialogs", async () => {
+    for (const name of ["free_answered", "chat_declined"]) {
+      screen = screens[name];
+      assert.equal((await ask()).dialog, null, name);
+    }
+  });
+  it("own answer: digit, field selected, text, screen check, Enter", async () =>
+    expectReply(await freeText({ 3: screens.free_selected, [own]: screens.free_typed }, true), null, true,
+                ["3", own, "\r"]));
+  it("own answer: the field did not take the cursor, nothing typed", async () =>
+    expectReply(await freeText({}, false), null, false, ["3"]));
+  it("own answer: other text on screen, Enter is not pressed", async () =>
+    expectReply(await freeText({ 3: screens.free_selected, [own]: screens.free_selected }, false), null, false,
+                ["3", own]));
+  it("own answer: the option moved to another number, refused", async () =>
+    expectReply(await freeText({}, false, { option: 2 }), null, false, []));
+  it("own answer through a plain option label: refused", async () =>
+    expectReply(await freeText({}, false, { text: "Red" }), null, false, []));
+  it("own answer: text already typed in the tab, refused", async () => {
+    const r = await (async () => {
+      onType = null;
+      screen = screens.free_typed;
+      return exchange(dialogMsg("answer-dialog", { option: 3, text: "Type something.", feedback: own }), 400);
+    })();
+    expectReply(r, null, false, []);
+  });
+  it("own answer: the dialog became a plan, refused", async () =>
+    expectReply(await freeText({ 3: screens.plan_selected }, false), null, false, ["3"]));
+  it("own answer: line breaks become one line", async () =>
+    expectReply(await freeText({ 3: screens.free_selected, [own]: screens.free_typed }, true,
+                               { feedback: "green\n  please" }), null, true, ["3", own, "\r"]));
   it("several questions: answered only in the tab", async () => {
     screen = screens.multi;
     const seen = await ask();
@@ -743,7 +828,7 @@ describe("notifications", () => {
   });
   it("clicking the notification opens the session's tab", async () => {
     workspace.active = null;
-    lastNotice().noticeEl.listeners.forEach((fn) => fn());
+    lastNotice().containerEl.listeners.forEach((fn) => fn());
     await settle();
     assert.equal(workspace.active, leafA);
   });
@@ -791,7 +876,7 @@ describe("notifications", () => {
     await busyThenIdle();
     assert.equal(systemNotes.length, 1);
     assert.match(systemNotes[0].body, /Сессия a/);
-    assert.doesNotMatch(systemNotes[0].body, /^Session Atlas:/);
+    assert.doesNotMatch(systemNotes[0].body, /^AI Session Atlas:/);
   });
   it("clicking the macOS notification: the window and the session's tab", async () => {
     workspace.active = null;
@@ -823,6 +908,84 @@ describe("notifications", () => {
     }
     assert.equal(systemNotes.length, 2);
     assert.equal(notices.length, 1);
+  });
+
+  // How long a notice stays, one notice per session, a stack of at most five, and stale ones go.
+  const shown = () => noticeObjects.filter((n) => !n.hidden);
+  const resetNotices = () => {
+    noticeObjects.forEach((n) => n.hide());
+    noticeObjects.length = 0;
+    plugin.openNotices = new Map();
+  };
+  it("default: the notice hides after 10 seconds", async () => {
+    resetNotices();
+    await busyThenIdle();
+    assert.equal(lastNotice().duration, 10000);
+  });
+  it("30 s, 1 min and sticky: Obsidian gets 30000, 60000 and 0", async () => {
+    for (const [hold, ms] of [["30", 30000], ["60", 60000], ["sticky", 0], ["bogus", 10000]]) {
+      plugin.settings.noticeHold = hold;
+      await busyThenIdle();
+      assert.equal(lastNotice().duration, ms, hold);
+    }
+    plugin.settings.noticeHold = "sticky";
+  });
+  it("a close button: it hides the notice and does not open the tab", async () => {
+    resetNotices();
+    await busyThenIdle();
+    const notice = lastNotice();
+    assert.ok(notice.containerEl.classes.includes("session-atlas-notice"));
+    const close = notice.containerEl.children.find((c) => c.cls === "session-atlas-notice-close");
+    assert.ok(close && close.attrs["aria-label"], "close button with a label");
+    workspace.active = null;
+    let stopped = false;
+    close.listeners.forEach((fn) => fn({ stopPropagation: () => { stopped = true; } }));
+    await settle();
+    assert.ok(stopped, "the click does not reach the notice");
+    assert.ok(notice.hidden);
+    assert.equal(workspace.active, null);
+    assert.equal(plugin.openNotices.size, 0);
+  });
+  it("the same session again: the new notice replaces the old one", async () => {
+    resetNotices();
+    await busyThenIdle();                  // "finished and waits for you"
+    await poll([ses("a", "waiting", { ancestors: [5001] })]);   // then a dialog, with no work between
+    assert.equal(noticeObjects.length, 2);
+    assert.equal(shown().length, 1);
+    assert.equal(shown()[0], lastNotice());
+  });
+  it("the session works again: its sticky notice goes", async () => {
+    resetNotices();
+    await busyThenIdle();
+    await poll([ses("a", "busy", { ancestors: [5001] })]);
+    assert.equal(shown().length, 0);
+  });
+  it("the session closed: its sticky notice goes", async () => {
+    resetNotices();
+    await busyThenIdle();
+    await poll([]);
+    assert.equal(shown().length, 0);
+  });
+  it("sticky notices stack, one per session, at most five: the oldest goes", async () => {
+    resetNotices();
+    const ids = ["s1", "s2", "s3", "s4", "s5", "s6", "s7"];
+    await poll(ids.map((id) => ses(id, "busy")));
+    await poll(ids.map((id) => ses(id, "idle")));
+    assert.equal(noticeObjects.length, 7);
+    assert.equal(shown().length, 5);
+    assert.deepEqual(shown().map((n) => n.msg.match(/Сессия (s\d)/)[1]), ["s3", "s4", "s5", "s6", "s7"]);
+  });
+  it("a notice clicked away does not count toward the five", async () => {
+    resetNotices();
+    await poll([ses("x1", "busy"), ses("x2", "busy")]);
+    await poll([ses("x1", "idle"), ses("x2", "idle")]);
+    lastNotice().hide();                   // x2 clicked: Obsidian hides a clicked notice by itself
+    const ids = ["y1", "y2", "y3", "y4"];
+    await poll([ses("x1", "idle"), ses("x2", "idle"), ...ids.map((id) => ses(id, "busy"))]);
+    await poll([ses("x1", "idle"), ses("x2", "idle"), ...ids.map((id) => ses(id, "idle"))]);
+    assert.equal(shown().length, 5, "x1 and four new ones");
+    assert.match(shown()[0].msg, /Сессия x1/);
+    plugin.settings.noticeHold = undefined;
   });
 });
 
@@ -957,14 +1120,14 @@ describe("plugin load", () => {
     layoutReady();
     assert.equal(intervals.length, 1);
   });
-  it("tab title: Session Atlas (3)", () => {
+  it("tab title: AI Session Atlas (3)", () => {
     view = views["session-atlas"]({}, fresh);
     fresh.waitingCount = 3;
-    assert.equal(view.getDisplayText(), "Session Atlas (3)");
+    assert.equal(view.getDisplayText(), "AI Session Atlas (3)");
   });
-  it("no waiting sessions: plain Session Atlas", () => {
+  it("no waiting sessions: plain AI Session Atlas", () => {
     fresh.waitingCount = 0;
-    assert.equal(view.getDisplayText(), "Session Atlas");
+    assert.equal(view.getDisplayText(), "AI Session Atlas");
   });
 });
 
@@ -976,7 +1139,8 @@ describe("catalog command parsing", () => {
   const P = agents.parseLaunch;
   it("resume", () => {
     assert.deepEqual(P(`cd '/Users/u/Library/Mobile Documents/iCloud~md~obsidian' && claude --resume ${ID}`),
-                     { cwd: "/Users/u/Library/Mobile Documents/iCloud~md~obsidian", mode: "resume", sessionId: ID, prompt: "" });
+                     { agent: "claude", cwd: "/Users/u/Library/Mobile Documents/iCloud~md~obsidian", mode: "resume",
+                       sessionId: ID, prompt: "" });
   });
   it("fork", () => {
     assert.equal(P(`cd /x && claude --resume ${ID} --fork-session`).mode, "resume-fork");
@@ -993,7 +1157,8 @@ describe("catalog command parsing", () => {
   for (const bad of [`cd /x && claude --resume ${ID}; rm -rf ~`, `cd /x && claude --resume ${ID} && rm x`,
                      `cd /x && claude --resume $(id)`, `cd x && claude --resume ${ID}`,
                      `cd /x && claude --resume 1`, `cd /x && claude --resume ${ID} --dangerously-skip-permissions`,
-                     `cd /x && codex resume ${ID}`, `cd /x '&&' claude --resume ${ID}`,
+                     `cd /x && codex resume ${ID} --yolo`, `cd /x && codex fork ${ID}`,
+                     `cd /x && codex --resume ${ID}`, `cd /x '&&' claude --resume ${ID}`,
                      `cd '/x && claude --resume ${ID}`, `cd /x && claude --session-id ${ID} "a$b"`,
                      `cd /x;id && claude --resume ${ID}`, `cd /x|id && claude --resume ${ID}`]) {
     it(`rejects a foreign command: ${bad}`, () => {
@@ -1022,6 +1187,7 @@ describe("agent tabs", () => {
     fs.writeFileSync(scriptPath, "#!/bin/zsh\n");
     agentPlugin.settings = { language: "ru" };
     agentPlugin.dataDirOverride = path.join(vault, "no-runtime");   // no extracted build: the vault copy is used
+    agentPlugin.registryFile = path.join(vault, "no-registry.tsv"); // never the real tab registry
     agentPlugin.app = {
       plugins: { enabledPlugins: new Set() },                      // own terminal: Terminal is not needed
       vault: { configDir: "config", adapter: { getBasePath: () => vault } },
@@ -1046,6 +1212,33 @@ describe("agent tabs", () => {
     assert.match(w[3], /^claude-/);
     assert.equal(w[4], "resume");
     assert.equal(w[5], ID);
+  });
+  it("catalog: Resume of a session whose tab is in the layout (even not loaded yet) shows that tab", async () => {
+    const registry = path.join(vault, "resume.tsv");
+    fs.writeFileSync(registry, `claude\tclaude-other-1\tsome-other-session\t/w\t1\nclaude\tclaude-old-1\t${ID}\t/w\t2\n`);
+    const deferred = { getViewState: () => ({ type: "session-atlas-terminal", state: { instance: "claude-old-1" } }) };
+    const other = { getViewState: () => ({ type: "session-atlas-terminal", state: { instance: "claude-other-1" } }) };
+    let revealed = null;
+    const ws = agentPlugin.app.workspace;
+    agentPlugin.registryFile = registry;
+    agentPlugin.app.workspace = Object.assign({}, ws, { iterateAllLeaves: (fn) => [other, deferred].forEach(fn),
+                                                        revealLeaf: (leaf) => { revealed = leaf; } });
+    const before = viewStates.length;
+    try {
+      await agentPlugin.openCommandInTerminal(`cd '/Users/u/Code/p' && claude --resume ${ID}`, "/Users/u/Code/p", "Demo");
+      assert.equal(revealed, deferred);
+      assert.equal(viewStates.length, before, "no second tab");
+      // A fork is a new session: it always gets its own tab.
+      await agentPlugin.openCommandInTerminal(`cd '/Users/u/Code/p' && claude --resume ${ID} --fork-session`, "/p", "Fork");
+      assert.equal(viewStates.length, before + 1);
+      // No tab of this session in the layout: a new one.
+      fs.writeFileSync(registry, "");
+      await agentPlugin.openCommandInTerminal(`cd '/Users/u/Code/p' && claude --resume ${ID}`, "/Users/u/Code/p", "Demo");
+      assert.equal(viewStates.length, before + 2);
+    } finally {
+      agentPlugin.app.workspace = ws;
+      agentPlugin.registryFile = path.join(vault, "no-registry.tsv");
+    }
   });
   it("catalog: an unrecognized command opens in the tab as is", async () => {
     const before = viewStates.length;
@@ -1155,7 +1348,7 @@ describe("close guard", () => {
     guard.confirmClose(aLeaf);
     const shown = lastModal();
     shown.close();
-    assert.equal(shown.title, "Close the Session Atlas tab?");
+    assert.equal(shown.title, "Close the AI Session Atlas tab?");
     assert.equal(shown.keepLabel, "Keep open");
   });
 });
@@ -1471,5 +1664,674 @@ describe("plugin reload keeps agents in background tabs", () => {
 
   it("no workspace API yet: nothing happens", () => {
     assert.deepEqual(keepHeldTabs({}), []);
+  });
+});
+
+// --- Codex in the plugin's own tabs: the screens are live codex-cli 0.160.0 snapshots ---
+
+const cx = readJson("codex_screens.json");
+const codexSrc = loadSrc("dialog-codex");
+const claudeDialog = loadSrc("dialog");
+const CODEX_ID = "019a0000-0000-7000-8000-000000000001";
+
+describe("Codex screens", () => {
+  const states = { idle: "idle", idle_draft: "idle", idle_after_turn: "idle", interrupted: "idle", esc_idle: "idle",
+                   status: "idle", busy: "busy", busy_queued: "busy", exec: "waiting", exec_moved: "waiting",
+                   exec_long: "waiting", edit: "waiting", question: "waiting", question_multi: "waiting",
+                   plan_implement: "waiting", rate_limit: "waiting" };
+  it("every captured screen is in the test", () => {
+    assert.deepEqual(Object.keys(cx).sort(), Object.keys(states).sort());
+  });
+  for (const [name, state] of Object.entries(states)) {
+    it(`${name}: ${state}`, () => assert.equal(codexSrc.codexScreenState(cx[name]), state));
+  }
+  const P = codexSrc.parseCodexDialog;
+  it("command approval: kind, question, details, options without key hints", () => {
+    const d = P(cx.exec);
+    assert.equal(d.kind, "permission");
+    assert.equal(d.title, "Shell command");
+    assert.equal(d.question, "Would you like to run the following command?");
+    assert.deepEqual(d.details, ["Environment: local", "Reason: Do you want to create hello.txt in this folder?",
+                                 "$ touch hello.txt"]);
+    assert.deepEqual(d.options.map((o) => [o.n, o.text, o.key]), [
+      [1, "Yes, proceed", "y"], [2, "Yes, and don't ask again for commands that start with `touch`", "p"],
+      [3, "No, and tell Codex what to do differently", "esc"]]);
+    assert.deepEqual(d.feedback, { n: 3, label: "No, and tell Codex what to do differently", selected: false,
+                                   typed: "" });
+    assert.ok(d.answerable);
+  });
+  it("the highlight moved: the same options", () => {
+    assert.deepEqual(P(cx.exec_moved).options, P(cx.exec).options);
+  });
+  it("a long command: the wrapped option label is one line", () => {
+    const o = P(cx.exec_long).options[1];
+    assert.match(o.text, /^Yes, and don't ask again for commands that start with `mkdir -p build\/output\/reports/);
+    assert.match(o.text, /the report\\n' > build\/output\/reports\/summary-of-the-current-folder-contents\.txt/);
+    assert.equal(o.key, "p");
+    assert.equal(P(cx.exec_long).options.length, 3);
+  });
+  it("edit approval: kind edit, the destination", () => {
+    const d = P(cx.edit);
+    assert.equal(d.kind, "edit");
+    assert.equal(d.question, "Would you like to make the following edits?");
+    assert.ok(d.details.includes("/tmp/probe/work/hello.txt"));
+    assert.equal(d.options[1].text, "Yes, and don't ask again for these files");
+  });
+  it("question: the description column apart from the label", () => {
+    const d = P(cx.question);
+    assert.equal(d.kind, "question");
+    assert.equal(d.question, "Which format should the notes file use?");
+    assert.deepEqual(d.options.map((o) => o.text), ["Markdown (Recommended)", "Plain text", "None of the above"]);
+    assert.equal(d.options[0].detail, "Readable in Obsidian and on GitHub.");
+    assert.equal(d.feedback, null);
+  });
+  it("two questions: answered only in the tab", () => {
+    const d = P(cx.question_multi);
+    assert.equal(d.answerable, false);
+    assert.equal(d.reason, "dialog.multi");
+  });
+  it("plan prompt: a choice; the plan's own numbered list is not taken for options", () => {
+    const d = P(cx.plan_implement);
+    assert.equal(d.kind, "choice");
+    assert.equal(d.title, "Implement this plan?");
+    assert.deepEqual(d.options.map((o) => o.text), ["Yes, implement this plan", "Yes, clear context and implement",
+                                                    "No, stay in Plan mode"]);
+  });
+  it("model switch prompt: title and question", () => {
+    const d = P(cx.rate_limit);
+    assert.equal(d.title, "Approaching rate limits");
+    assert.equal(d.question, "Switch to gpt-6-luna for lower credit usage?");
+    assert.equal(d.options[1].text, "Keep current model");
+  });
+  it("no footer, no dialog: the same options without the hint line are text", () => {
+    assert.equal(P(cx.exec.map((l) => l.replace(/Press enter to confirm or esc to cancel/, ""))), null);
+  });
+  it("composer text and /status output", () => {
+    assert.equal(codexSrc.composerText(cx.idle_draft), "a draft I have not sent yet");
+    const out = codexSrc.extractCodexCommandOutput(cx.status, "/status");
+    assert.match(out.text, /^>_ OpenAI Codex/);
+    assert.match(out.text, /Collaboration mode: {2}Default/);
+    assert.doesNotMatch(out.text, /›|Ask Codex/);
+  });
+  it("Claude Code screens are not Codex dialogs, and Codex screens are not Claude ones", () => {
+    const claude = { ...readJson("dialog_screens.json"), ...readJson("command_screens.json") };
+    for (const [name, lines] of Object.entries(claude)) {
+      assert.equal(P(lines), null, `Claude ${name}`);
+    }
+    for (const [name, lines] of Object.entries(cx)) {
+      assert.equal(claudeDialog.parseDialog(lines), null, `Codex ${name}`);
+      const out = claudeDialog.extractCommandOutput(lines, "");
+      assert.ok(!out || !out.panel, `Codex ${name} as a Claude panel`);
+    }
+  });
+});
+
+describe("Codex tab: answers, reply, stop", () => {
+  let cscreen = cx.idle;
+  let ids = [CODEX_ID];
+  const codexLeaf = {
+    view: {
+      state: { kind: "codex" },
+      emulator: {
+        pseudoterminal: Promise.resolve({ shell: Promise.resolve({
+          pid: 6003, stdin: { write: (chunk) => { typed.push(chunk); if (onType) onType(chunk); } } }) }),
+        terminal: { get rows() { return cscreen.length; },
+                    buffer: { active: { baseY: 0, getLine: (i) => ({ translateToString: () => cscreen[i] }) } } },
+      },
+      getDisplayText: () => "Codex",
+    },
+    detach() {},
+  };
+  const base = { ptyPid: 6003, claudePid: 7101, sessionId: CODEX_ID, nonce: "x" };
+  const send = (type, extra, wait = 50) => exchange(msg(Object.assign({ type }, base, extra)), wait);
+  const on = (lines, fn) => { cscreen = lines; return fn(); };
+  const withComposer = (text) => cx.interrupted.map((l) => (l.startsWith("› Ask Codex") ? "› " + text : l));
+  before(() => {
+    leaves = [typingLeaf, codexLeaf, leafB];
+    parents[7101] = 6003;
+    parents[6003] = 900;
+    plugin.parentPid = (pid) => parents[pid] || 0;
+    plugin.processName = (pid) => (pid === 7101 ? "codex" : "zsh");
+    plugin.codexSessionIds = (pid) => (pid === 7101 ? ids : []);
+  });
+
+  it("read: the approval in the card's shape", async () => {
+    const r = await on(cx.exec, () => send("read-dialog"));
+    assert.equal(r.reply.type, "dialog");
+    assert.equal(r.reply.dialog.kind, "permission");
+    assert.equal(r.reply.dialog.options[0].text, "Yes, proceed");
+  });
+  it("read: two questions carry a translated reason", async () => {
+    const r = await on(cx.question_multi, () => send("read-dialog"));
+    assert.match(r.reply.dialog.reason, /^(Несколько вопросов разом|Several questions at once)/);
+  });
+  it("read: an idle composer has no dialog", async () => {
+    const r = await on(cx.idle, () => send("read-dialog"));
+    assert.equal(r.reply.dialog, null);
+    assert.match(r.reply.reason, /диалога нет/);
+  });
+  it("approve: one digit, no Enter", async () =>
+    expectReply(await on(cx.exec, () => send("answer-dialog", { option: 1, text: "Yes, proceed" })),
+                "answered", true, ["1"]));
+  it("decline: its digit", async () =>
+    expectReply(await on(cx.exec, () => send("answer-dialog",
+      { option: 3, text: "No, and tell Codex what to do differently" })), "answered", true, ["3"]));
+  it("the dialog changed before the press: refused", async () =>
+    expectReply(await on(cx.edit, () => send("answer-dialog",
+      { option: 2, text: "Yes, and don't ask again for commands that start with `touch`" })), "answered", false, []));
+  it("question: the option's digit", async () =>
+    expectReply(await on(cx.question, () => send("answer-dialog", { option: 2, text: "Plain text" })),
+                "answered", true, ["2"]));
+  it("two questions: refused", async () =>
+    expectReply(await on(cx.question_multi, () => send("answer-dialog", { option: 1, text: "Markdown (Recommended)" })),
+                "answered", false, []));
+  it("idle: no dialog to answer", async () =>
+    expectReply(await on(cx.idle, () => send("answer-dialog", { option: 1, text: "Yes, proceed" })),
+                "answered", false, []));
+  it("another session in the process: refused", async () =>
+    expectReply(await on(cx.exec, () => send("answer-dialog", { option: 1, text: "Yes, proceed",
+                                                                 sessionId: "019a0000-0000-7000-8000-00000000000f" })),
+                "answered", false, []));
+  it("the process is not Codex: refused", async () => {
+    plugin.processName = () => "zsh";
+    const r = await on(cx.exec, () => send("answer-dialog", { option: 1, text: "Yes, proceed" }));
+    plugin.processName = (pid) => (pid === 7101 ? "codex" : "zsh");
+    expectReply(r, "answered", false, []);
+  });
+
+  // "No, and tell Codex what to do differently": decline, then the text in the composer, then Enter.
+  const tell = "Use printf instead of echo and keep the file in this folder";
+  const feedback = async (reactions, ok, extra) => {
+    cscreen = cx.exec;
+    onType = (chunk) => { if (reactions[chunk] !== undefined) cscreen = reactions[chunk]; };
+    const r = await send("answer-dialog", Object.assign({ option: 3, text: "No, and tell Codex what to do differently",
+                                                          feedback: tell }, extra), ok ? 700 : 3500);
+    onType = null;
+    return r;
+  };
+  it("feedback: decline, the composer, the text, Enter", async () =>
+    expectReply(await feedback({ 3: cx.interrupted, [tell]: withComposer(tell) }, true), null, true, ["3", tell, "\r"]));
+  it("feedback: the dialog did not close, nothing typed", async () =>
+    expectReply(await feedback({}, false), null, false, ["3"]));
+  it("feedback: other text in the composer, Enter not pressed", async () =>
+    expectReply(await feedback({ 3: cx.interrupted, [tell]: withComposer("something else") }, false), null, false,
+                ["3", tell]));
+  it("feedback through an approving option: refused", async () =>
+    expectReply(await feedback({}, false, { option: 1, text: "Yes, proceed" }), null, false, []));
+
+  it("reply when idle: text, then Enter", async () =>
+    expectReply(await on(cx.idle, () => send("send-text", { text: "list the files" }, 400)), null, true,
+                ["list the files", "\r"]));
+  it("reply while busy: Codex queues it", async () =>
+    expectReply(await on(cx.busy, () => send("send-text", { text: "also check b.md" }, 400)), null, true,
+                ["also check b.md", "\r"]));
+  it("reply during an approval: refused", async () =>
+    expectReply(await on(cx.exec, () => send("send-text", { text: "y" }, 400)), null, false, []));
+  it("reply on an unknown screen: refused", async () => {
+    const r = await on(["", "Some full-screen view", ""], () => send("send-text", { text: "hello" }, 400));
+    expectReply(r, null, false, []);
+    assert.match(r.reply.reason, /экран Codex|Codex screen/);
+  });
+  it("/status: the output from the screen", async () => {
+    cscreen = cx.status;
+    const before = replies.length;
+    await send("send-text", { text: "/status", nonce: "cx-status" }, 2100);
+    const out = replies.slice(before).find((x) => x.msg.type === "command-output");
+    assert.ok(out, "no command-output");
+    assert.match(out.msg.text, /Collaboration mode/);
+  });
+  it("a Claude-only command is not read from a Codex screen", async () => {
+    cscreen = cx.idle;
+    const before = replies.length;
+    await send("send-text", { text: "/context", nonce: "cx-ctx" }, 2100);
+    assert.equal(replies.slice(before).find((x) => x.msg.type === "command-output"), undefined);
+  });
+
+  it("stop while busy: one Esc", async () =>
+    expectReply(await on(cx.busy, () => send("interrupt")), "stopped", true, ["\x1b"]));
+  it("stop in an approval: one Esc", async () =>
+    expectReply(await on(cx.edit, () => send("interrupt")), "stopped", true, ["\x1b"]));
+  it("stop when idle: refused (Esc edits the last message, Ctrl-C would quit)", async () =>
+    expectReply(await on(cx.idle, () => send("interrupt")), "stopped", false, []));
+
+  it("tab list: a Codex tab carries its screen state", async () => {
+    cscreen = cx.question;
+    const before = replies.length;
+    plugin.handleMessage(msg({ type: "list-tabs" }));
+    await settle(300);
+    const tabs = replies.slice(before).find((x) => x.msg.type === "tabs").msg.tabs;
+    assert.deepEqual(tabs.find((t) => t.ptyPid === 6003), { ptyPid: 6003, title: "Codex", agent: "codex",
+                                                            screen: "waiting" });
+    assert.equal(tabs.find((t) => t.ptyPid === 6001).agent, undefined);
+  });
+
+  it("notification: the server sees busy, the tab shows an approval", async () => {
+    const codexSession = (activity) => ({ session_id: CODEX_ID, title: "Codex probe", agent: "codex",
+                                          activity, status: activity, ancestors: [7101, 6003] });
+    plugin.settings = { notify: true };
+    plugin.lastActivity = null;
+    cscreen = cx.busy;
+    plugin.fetchActive = async () => ({ sessions: [codexSession("busy")] });
+    await plugin.pollActive();
+    notices.length = 0;
+    cscreen = cx.exec;
+    await plugin.pollActive();
+    assert.equal(notices.length, 1);
+    assert.match(notices[0], /Codex probe/);
+    assert.match(notices[0], /диалоге/);
+    assert.equal(plugin.stored.openSessions[0].agent, "codex");
+  });
+  it("notification: a session not marked codex keeps the server's status", async () => {
+    notices.length = 0;
+    plugin.fetchActive = async () => ({ sessions: [{ session_id: "c1", activity: "busy", ancestors: [6003] }] });
+    await plugin.pollActive();
+    assert.equal(plugin.lastActivity.get("c1"), "busy");
+  });
+});
+
+describe("Codex resume from the catalog and after a restart", () => {
+  const ID = "019a1026-ef90-7e02-8a9d-3472664a8e96";
+  const SCRIPT = path.join(SRC, "..", "scripts", "agent-resume-terminal.zsh");
+  it("parsed: codex resume <id>", () => {
+    assert.deepEqual(agents.parseLaunch(`cd '/Users/u/Code/p' && codex resume ${ID}`),
+                     { agent: "codex", cwd: "/Users/u/Code/p", mode: "resume", sessionId: ID, prompt: "" });
+  });
+  it("opens a Codex tab with the resume start", async () => {
+    const p = new SessionAtlasPlugin();
+    const states = [];
+    p.agentScriptPath = () => SCRIPT;
+    p.app = { vault: { configDir: "c", adapter: { getBasePath: () => TMP } },
+              workspace: { getLeaf: () => ({ setViewState: async (st) => states.push(st) }), revealLeaf() {} } };
+    p.settings = { language: "en" };
+    await p.openCommandInTerminal(`cd '/Users/u/Code/p' && codex resume ${ID}`, "/Users/u/Code/p", "Probe");
+    const w = agents.shellWords(states[0].state.command);
+    assert.equal(states[0].state.kind, "codex");
+    assert.deepEqual(w.slice(2, 3).concat(w.slice(4)), ["codex", "resume", ID]);
+  });
+
+  // The tab script with a stand-in codex: the start is recorded, so the tab gets it back later.
+  const run = (dir, instance, ...seed) => {
+    const work = path.join(dir, "work");
+    const r = require("node:child_process").spawnSync("zsh", [SCRIPT, "codex", instance, ...seed], {
+      cwd: work, timeout: 20000, encoding: "utf8",
+      env: { PATH: `${path.join(dir, "bin")}:/usr/bin:/bin`, HOME: dir, PWD: work, CALLS: path.join(dir, "calls"),
+             OBS_AGENT_TERMINAL_STATE_DIR: path.join(dir, "state"), OBS_AGENT_TERMINAL_NO_SHELL: "1",
+             OBS_AGENT_TERMINAL_CODEX_SESSIONS_DIR: path.join(dir, "sessions"),
+             OBS_AGENT_TERMINAL_ARGS_DIR: path.join(dir, "args") } });
+    assert.equal(r.status, 0, r.stderr);
+    return fs.readFileSync(path.join(dir, "calls"), "utf8").trim().split("\n").pop();
+  };
+  it("script: a seed resumes the session and the registry keeps it", () => {
+    const dir = fs.mkdtempSync(path.join(TMP, "codex-script-"));
+    const work = path.join(dir, "work");
+    fs.mkdirSync(work);
+    fs.mkdirSync(path.join(dir, "bin"));
+    fs.writeFileSync(path.join(dir, "bin", "codex"), '#!/bin/zsh\nprint -r -- "$*" >> "$CALLS"\n', { mode: 0o755 });
+    fs.mkdirSync(path.join(dir, "sessions", "2026", "10", "03"), { recursive: true });
+    fs.writeFileSync(path.join(dir, "sessions", "2026", "10", "03", `rollout-2026-10-03T17-40-56-${ID}.jsonl`),
+                     JSON.stringify({ timestamp: "t", type: "session_meta", payload: { id: ID, cwd: work } }) + "\n");
+    assert.equal(run(dir, "codex-1", "resume", ID), `resume ${ID}`);
+    // After a restart the tab runs without a seed, or with another one: the registry wins.
+    assert.equal(run(dir, "codex-1"), `resume ${ID}`);
+    assert.equal(run(dir, "codex-1", "resume", "019a0000-0000-7000-8000-00000000000f"), `resume ${ID}`);
+  });
+});
+
+describe("Codex new sessions from the catalog", () => {
+  const ID = "6e4043ad-81c1-49a2-87f4-47c469933cf3";
+  const P = agents.parseLaunch;
+  // Strings exactly as shlex.quote prints them on the server (atlas/actions.py agent_command).
+  it("codex with a handoff prompt: a new thread without an id", () => {
+    assert.deepEqual(P(`cd '/Users/u/it'"'"'s' && codex 'Read /h/launch-019e0000-0123456789ab.md and continue the work.'`),
+                     { agent: "codex", cwd: "/Users/u/it's", mode: "new", sessionId: "",
+                       prompt: "Read /h/launch-019e0000-0123456789ab.md and continue the work." });
+  });
+  it("bare codex and guarded one-word or flag-like prompts", () => {
+    assert.deepEqual(P("cd /x && codex"), { agent: "codex", cwd: "/x", mode: "new", sessionId: "", prompt: "" });
+    assert.equal(P("cd /x && codex ' resume'").prompt, " resume");
+    assert.equal(P("cd /x && codex ' --yolo'").prompt, " --yolo");
+    assert.equal(P(`cd /x && claude --session-id ${ID} ' update'`).prompt, " update");
+  });
+  for (const bad of ["cd /x && codex resume", "cd /x && codex exec", "cd /x && codex --yolo",
+                     "cd /x && codex '--yolo now'", "cd /x && codex -m o3 'do it'", "cd /x && codex 'a b' 'c d'",
+                     "cd /x && codex 'do it' --yolo", "cd /x && codex ''", "cd /x && codex '   '",
+                     "cd /x && codex 'a b'; id", "cd /x && codex \"a $(id)\"", "cd x && codex 'a b'",
+                     `cd /x && codex fork ${ID}`, `cd /x && codex resume ${ID} 'a b'`,
+                     `cd /x && claude --session-id ${ID} update`, `cd /x && claude --session-id ${ID} '-v x'`,
+                     `cd /x && claude 'a b'`, "cd /x && claude"]) {
+    it(`rejects: ${bad}`, () => assert.equal(P(bad), null));
+  }
+  it("tab arguments: an empty id keeps the prompt in its place", () => {
+    const args = agents.agentArgs("/s/a.zsh", "codex", "codex-x-1", { mode: "new", sessionId: "", prompt: "it's $HOME" });
+    assert.deepEqual(agents.shellWords(args[3]), ["exec", "/s/a.zsh", "codex", "codex-x-1", "new", "", "it's $HOME"]);
+    const bare = agents.agentArgs("/s/a.zsh", "codex", "codex-x-2", { mode: "new", sessionId: "", prompt: "" });
+    assert.deepEqual(agents.shellWords(bare[3]), ["exec", "/s/a.zsh", "codex", "codex-x-2", "new", ""]);
+  });
+  it("opens a Codex tab with the new start and the prompt", async () => {
+    const p = new SessionAtlasPlugin();
+    const states = [];
+    p.agentScriptPath = () => path.join(SRC, "..", "scripts", "agent-resume-terminal.zsh");
+    p.app = { vault: { configDir: "c", adapter: { getBasePath: () => TMP } },
+              workspace: { getLeaf: () => ({ setViewState: async (st) => states.push(st) }), revealLeaf() {} } };
+    p.settings = { language: "en" };
+    await p.openCommandInTerminal("cd '/Users/u/Code/p' && codex 'сделай отчёт'", "/Users/u/Code/p", "Probe");
+    assert.equal(states[0].state.kind, "codex");
+    assert.equal(states[0].state.cwd, "/Users/u/Code/p");
+    assert.deepEqual(agents.shellWords(states[0].state.command).slice(4), ["new", "", "сделай отчёт"]);
+  });
+  it("the tabs reply tells the page which agents are on", async () => {
+    const p = new SessionAtlasPlugin();
+    p.terminalReport = async () => ({ tabs: [], health: { ok: true } });
+    const sent = [];
+    const target = { postMessage: (msg, origin) => sent.push([msg, origin]) };
+    p.settings = { agents: { codex: true } };
+    await p.replyTabs(target);
+    p.settings = { agents: { claude: true } };
+    await p.replyTabs(target);
+    assert.deepEqual(sent.map(([m]) => m.agents), [{ claude: true, codex: true }, { claude: true, codex: false }]);
+    assert.ok(sent.every(([m, origin]) => m.type === "tabs" && m.source === "session-atlas-host" && origin === p.atlasOrigin()));
+  });
+});
+
+describe("Resume with: the converted session opens in the target agent's tab", () => {
+  // Commands exactly as atlas/convert.py returns them (actions.resume_command, shlex.quote).
+  const CODEX_ID = "01a10ad8-a38c-7395-aae0-0f2def2075ab";       // a UUID v7 the server made
+  const CLAUDE_ID = "9ceb5b95-bc2e-42d9-be43-aaa4eba3fcd7";
+  const CWD = "/Users/u/it's work";
+  const Q = `'/Users/u/it'"'"'s work'`;
+  const P = agents.parseLaunch;
+  it("parsed as the target agent's ordinary resume", () => {
+    assert.deepEqual(P(`cd ${Q} && codex resume ${CODEX_ID}`),
+                     { agent: "codex", cwd: CWD, mode: "resume", sessionId: CODEX_ID, prompt: "" });
+    assert.deepEqual(P(`cd ${Q} && claude --resume ${CLAUDE_ID}`),
+                     { agent: "claude", cwd: CWD, mode: "resume", sessionId: CLAUDE_ID, prompt: "" });
+  });
+  for (const bad of [`cd /x && codex --resume ${CODEX_ID}`, `cd /x && claude resume ${CLAUDE_ID}`,
+                     `cd /x && codex resume ${CODEX_ID.toUpperCase()}`, `cd /x && codex resume ${CODEX_ID}; id`]) {
+    it(`rejects: ${bad}`, () => assert.equal(P(bad), null));
+  }
+  for (const [agent, command, id] of [["codex", `cd ${Q} && codex resume ${CODEX_ID}`, CODEX_ID],
+                                      ["claude", `cd ${Q} && claude --resume ${CLAUDE_ID}`, CLAUDE_ID]]) {
+    it(`opens a ${agent} tab through the tab script with the resume start`, async () => {
+      const p = new SessionAtlasPlugin();
+      const states = [];
+      p.agentScriptPath = () => path.join(SRC, "..", "scripts", "agent-resume-terminal.zsh");
+      p.app = { vault: { configDir: "c", adapter: { getBasePath: () => TMP } },
+                workspace: { getLeaf: () => ({ setViewState: async (st) => states.push(st) }), revealLeaf() {} } };
+      p.settings = { language: "en", agents: { claude: true, codex: true } };
+      await p.openCommandInTerminal(command, CWD, "Lighthouse lamp");
+      assert.equal(states.length, 1);
+      assert.equal(states[0].state.kind, agent);
+      assert.equal(states[0].state.cwd, CWD);
+      assert.equal(states[0].state.title, "Lighthouse lamp");
+      const w = agents.shellWords(states[0].state.command);
+      assert.equal(w[2], agent);
+      assert.deepEqual(w.slice(4), ["resume", id]);
+    });
+  }
+});
+
+
+// --- the close guard after a plugin reload ---
+
+describe("close guard survives a plugin reload", () => {
+  const GUARD_EVENTS = ["auxclick", "click", "mousedown", "pointerdown"];
+  const guardedOn = (p, doc) => (p.domEvents || []).filter((e) => e.target === doc).map((e) => e.type).sort();
+
+  it("the next plugin copy guards the same document again (disable/enable, hot reload)", () => {
+    const doc = {};
+    const before = new SessionAtlasPlugin();
+    before.installCloseGuard(doc);
+    // Unloading removed the first copy's listeners; the second copy must put its own.
+    const after = new SessionAtlasPlugin();
+    after.installCloseGuard(doc);
+    assert.deepEqual(guardedOn(after, doc), GUARD_EVENTS);
+  });
+  it("one copy installs once per document", () => {
+    const doc = {};
+    const p = new SessionAtlasPlugin();
+    p.installCloseGuard(doc);
+    p.installCloseGuard(doc);
+    assert.deepEqual(guardedOn(p, doc), GUARD_EVENTS);
+  });
+  it("popout windows already open at load are guarded too", () => {
+    const popout = {};
+    const p = new SessionAtlasPlugin();
+    p.app = { workspace: { iterateAllLeaves: (fn) => [{ view: { containerEl: { ownerDocument: popout } } }, {}].forEach(fn) } };
+    p.installCloseGuards();
+    assert.deepEqual(guardedOn(p, popout), GUARD_EVENTS);
+  });
+  it("a tab opened after the guard was installed asks before closing", () => {
+    const p = new SessionAtlasPlugin();
+    const header = {};
+    const later = [];
+    p.settings = { language: "en" };
+    p.pendingCloseConfirms = new WeakSet();
+    p.app = { workspace: { iterateAllLeaves: (fn) => later.forEach(fn) } };
+    p.installCloseGuard({});
+    later.push({ tabHeaderEl: header, view: { getViewType: () => "session-atlas-terminal", getDisplayText: () => "New" },
+                 getViewState: () => ({}), detach() { this.detached = true; } });
+    const count = modals.length;
+    const target = { closest: (sel) => (sel === ".workspace-tab-header-inner-close-button" ? { closest: () => header } : header) };
+    const click = { target, preventDefault() {}, stopPropagation() {}, stopImmediatePropagation() {} };
+    p.onCloseButton(click, true);
+    assert.equal(modals.length, count + 1);
+    modals[modals.length - 1].close();
+    assert.ok(!later[0].detached);
+  });
+});
+
+// --- copying from the agent terminal ---
+
+describe("terminal copy", () => {
+  const copy = loadSrc("term-copy");
+  const key = (extra) => Object.assign({ type: "keydown", metaKey: true, key: "c", code: "KeyC" }, extra);
+
+  it("⌘C copies, also on a Cyrillic layout; other keys do not", () => {
+    assert.ok(copy.isCopyKey(key()));
+    assert.ok(copy.isCopyKey(key({ key: "с" })), "Russian layout: the key is «с», its place is KeyC");
+    assert.ok(copy.isCopyKey(key({ key: "C" })));
+    assert.ok(!copy.isCopyKey(key({ metaKey: false })));
+    assert.ok(!copy.isCopyKey(key({ type: "keyup" })));
+    assert.ok(!copy.isCopyKey(key({ shiftKey: true })));
+    assert.ok(!copy.isCopyKey(key({ ctrlKey: true })), "Ctrl+C belongs to the program");
+    assert.ok(!copy.isCopyKey(key({ key: "v", code: "KeyV" })));
+    assert.ok(!copy.isCopyKey(key({ key: "j", code: "KeyC" })), "a Latin layout goes by the letter");
+  });
+
+  // ⌘C or Edit → Copy while the keyboard is not in the terminal arrives as the page's "copy" event.
+  it("a page-wide Copy takes the active agent tab's selection, never a text field's", () => {
+    const leaf = {};
+    const term = (sel) => ({ hasSelection: () => !!sel, getSelection: () => sel });
+    const ev = (target) => ({ clipboardData: {}, target });
+    const body = { tagName: "BODY", classList: { contains: () => false } };
+    const helper = { tagName: "TEXTAREA", classList: { contains: (c) => c === "xterm-helper-textarea" } };
+    const field = { tagName: "INPUT", classList: { contains: () => false } };
+    const editable = { tagName: "DIV", isContentEditable: true, classList: { contains: () => false } };
+    assert.ok(copy.copyTarget(ev(body), leaf, leaf, term("abc")));
+    assert.ok(copy.copyTarget(ev(helper), leaf, leaf, term("abc")), "the terminal's own input field");
+    assert.ok(!copy.copyTarget(ev(body), leaf, {}, term("abc")), "another tab is active");
+    assert.ok(!copy.copyTarget(ev(body), leaf, leaf, term("")), "nothing selected: the page copies as usual");
+    assert.ok(!copy.copyTarget(ev(field), leaf, leaf, term("abc")), "a text field copies its own text");
+    assert.ok(!copy.copyTarget(ev(editable), leaf, leaf, term("abc")), "a note being edited copies its own text");
+    assert.ok(!copy.copyTarget({ target: body }, leaf, leaf, term("abc")), "no clipboard data to fill");
+  });
+
+  // xterm inside Obsidian believes it runs in Node (process.title), not on macOS, so its own ⌥ rule is off.
+  it("⌥ or Shift held selects although the program holds the mouse; ⌥ does not make a block", () => {
+    const service = { shouldForceSelection: (e) => !!e.shiftKey && false, shouldColumnSelect: (e) => !!e.altKey };
+    const term = { _core: { _selectionService: service } };
+    assert.equal(copy.selectWithModifier(term), true);
+    assert.equal(service.shouldForceSelection({ altKey: true }), true);
+    assert.equal(service.shouldForceSelection({ shiftKey: true }), true);
+    assert.equal(service.shouldForceSelection({}), false);
+    assert.equal(service.shouldColumnSelect({ altKey: true }), false);
+    assert.equal(copy.selectWithModifier({}), false, "no hook: reported, not thrown");
+  });
+
+  it("copying writes the selection to the clipboard; nothing selected, nothing written", async () => {
+    const written = [];
+    const realNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+    Object.defineProperty(globalThis, "navigator", { configurable: true,
+      value: { clipboard: { writeText: async (t) => { written.push(t); } } } });
+    try {
+      assert.equal(copy.copySelection({ hasSelection: () => true, getSelection: () => "picked text" }), true);
+      assert.equal(copy.copySelection({ hasSelection: () => false, getSelection: () => "" }), false);
+      await settle(10);
+    } finally {
+      if (realNavigator) Object.defineProperty(globalThis, "navigator", realNavigator);
+      else delete globalThis.navigator;
+    }
+    assert.deepEqual(written, ["picked text"]);
+  });
+
+  it("the async clipboard refused: the hidden field and copy command take over", async () => {
+    const realNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+    Object.defineProperty(globalThis, "navigator", { configurable: true,
+      value: { clipboard: { writeText: async () => { throw new Error("denied"); } } } });
+    const area = { removed: false, select() {}, remove() { this.removed = true; } };
+    const commands = [];
+    const doc = { createElement: () => area, body: { appendChild() {} },
+                  execCommand: (c) => { commands.push([c, area.value]); return true; } };
+    try {
+      assert.equal(await copy.writeClipboard("fallback text", doc), true);
+    } finally {
+      if (realNavigator) Object.defineProperty(globalThis, "navigator", realNavigator);
+      else delete globalThis.navigator;
+    }
+    assert.deepEqual(commands, [["copy", "fallback text"]]);
+    assert.ok(area.removed);
+  });
+
+  it("the right-click menu: Copy only with a selection, Paste always", () => {
+    const tv = new AgentTerminalView({}, alone);
+    let prevented = false;
+    const event = { preventDefault: () => { prevented = true; } };
+    const menu = tv.showMenu(event, { hasSelection: () => false });
+    assert.ok(prevented, "the native menu is replaced");
+    assert.deepEqual(menu.items.map((i) => [i.title, i.disabled]), [["Copy", true], ["Paste", false]]);
+    assert.equal(menu.shownAt, event);
+    const withSelection = tv.showMenu(event, { hasSelection: () => true });
+    assert.equal(withSelection.items[0].disabled, false);
+  });
+});
+
+// --- processes held when the plugin is turned off and on ---
+
+describe("tabs closed with the plugin: the agents are offered back", () => {
+  const held = loadSrc("held");
+  const reg = () => getGlobal("window").__sessionAtlasPtys || new Map();
+  const fakePty = (pid) => ({ pid, killed: false, exited: false, kill() { this.killed = true; },
+                              onData() {}, onExit() {} });
+  const agentLeaf = (instance) => ({ getViewState: () => ({ type: "session-atlas-terminal", state: { instance } }) });
+  let layout = [];
+  const opened = [];
+  const hp = new SessionAtlasPlugin();
+  hp.settings = { language: "en", openSessions: [] };
+  hp.app = { workspace: {
+    iterateAllLeaves: (fn) => layout.forEach(fn),
+    getLeavesOfType: () => [],
+    getLeaf: () => ({ setViewState: async (st) => { opened.push(st); } }),
+    revealLeaf() {}, setActiveLeaf() {},
+  } };
+  const delays = [];
+  const win = getGlobal("window");
+  const realSetTimeout = win.setTimeout;
+  before(() => { win.setTimeout = (fn, ms) => { delays.push(ms); return realSetTimeout(() => {}, 0); }; });
+  after(() => {
+    win.setTimeout = realSetTimeout;
+    for (const key of ["claude-h1", "claude-h2", "claude-h3", "claude-h4"]) reg().delete(key);
+  });
+
+  it("a tab closed by the unload holds its process for the reclaim time", () => {
+    const pty = fakePty(7101);
+    held.holdForReclaim("claude-h1", pty, { kind: "claude", instance: "claude-h1", title: "Fix the build", command: "x" });
+    assert.equal(delays.pop(), held.RECLAIM_MS);
+    assert.equal(reg().get("claude-h1").held, true);
+    assert.equal(pty.killed, false);
+  });
+  it("no tab in the layout: offered and held for the answer, not the two minutes", () => {
+    const tabs = hp.heldTabs();
+    assert.deepEqual(tabs.map((t) => [t.ptyPid, t.title, t.agent]), [[7101, "Fix the build", "claude"]]);
+    assert.equal(delays.pop(), held.OFFER_HOLD_MS);
+    hp.heldTabs();
+    assert.equal(delays.length, 0, "an open offer is not restarted on every poll");
+  });
+  // Updating from a version before 2.2 (or toggling it): its unload left {pty, timer} entries only.
+  it("an entry left by an older version is offered too, as its kind, and held past its old timer", () => {
+    const old = { pty: fakePty(7105), timer: 12345 };
+    reg().set("codex-h5", old);
+    reg().set("pty-h6", { pty: fakePty(7106), timer: null });          // attached to a live tab: not held
+    const tabs = hp.heldTabs().filter((t) => [7105, 7106].includes(t.ptyPid));
+    assert.deepEqual(tabs.map((t) => [t.ptyPid, t.title, t.agent]), [[7105, "Codex", "codex"]]);
+    assert.equal(old.held, true);
+    assert.deepEqual(old.state, { kind: "codex", instance: "codex-h5", title: "Codex" });
+    assert.ok(delays.includes(held.OFFER_HOLD_MS));
+    delays.length = 0;
+    reg().delete("codex-h5");
+    reg().delete("pty-h6");
+  });
+  it("a held process whose tab is still in the layout (quiet reload) is not offered", () => {
+    held.holdForReclaim("claude-h2", fakePty(7102), { kind: "claude", instance: "claude-h2", title: "Background" });
+    delays.length = 0;
+    layout = [agentLeaf("claude-h2")];
+    assert.deepEqual(held.keepHeldTabs(hp.app.workspace), ["claude-h2"]);
+    assert.deepEqual(hp.heldTabs().map((t) => t.ptyPid), [7101]);
+    layout = [];
+  });
+  it("the page gets the held tabs with the terminal tabs", async () => {
+    const out = [];
+    hp.terminalReport = async () => ({ tabs: [], health: { ok: true, reason: null } });
+    await hp.replyTabs({ postMessage: (m) => out.push(m) });
+    assert.deepEqual(out[0].held.map((h) => h.ptyPid).sort(), [7101, 7102]);
+  });
+  it("a notice offers them once, not on every poll", () => {
+    noticeObjects.length = 0;
+    hp.heldNoticed = new Set();
+    hp.offerHeldTabs();
+    hp.offerHeldTabs();
+    assert.equal(noticeObjects.length, 1);
+    assert.match(noticeObjects[0].msg, /tabs: 2/);
+  });
+  it("a held session counts as open: an Obsidian restart offers it back", async () => {
+    hp.terminalTabs = async () => [];
+    await hp.trackOpenSessions([{ session_id: "s-held", title: "Fix the build", ancestors: [9, 7101] },
+                                { session_id: "s-elsewhere", title: "iTerm", ancestors: [9] }]);
+    assert.deepEqual(hp.settings.openSessions.map((x) => x.session_id), ["s-held"]);
+  });
+  it("Go to on its card opens a tab on the same process", async () => {
+    opened.length = 0;
+    await hp.actOnTab("focus-tab", 7101, "Fix the build");
+    assert.equal(opened.length, 1);
+    assert.equal(opened[0].type, "session-atlas-terminal");
+    assert.equal(opened[0].state.instance, "claude-h1");
+    assert.equal(opened[0].state.command, "x");
+    assert.equal(reg().get("claude-h1").pty.killed, false);
+  });
+  it("the banner's Bring back: only held pids from the catalog", async () => {
+    opened.length = 0;
+    hp.handleMessage({ origin: EVIL, source: frame, data: { source: "session-atlas", type: "reattach-held", ptyPids: [7102] } });
+    hp.handleMessage({ origin: good.origin, source: frame, data: { source: "session-atlas", type: "reattach-held", ptyPids: ["7102", 1] } });
+    await settle(20);
+    assert.equal(opened.length, 0);
+    hp.handleMessage({ origin: good.origin, source: frame, data: { source: "session-atlas", type: "reattach-held", ptyPids: [7102, 4242] } });
+    await settle(20);
+    assert.deepEqual(opened.map((o) => o.state.instance), ["claude-h2"]);
+  });
+  it("End: the held process ends; an attached one is not touched", () => {
+    const attached = fakePty(7104);
+    reg().set("claude-h4", { pty: attached, timer: null, held: false });
+    const pty = fakePty(7103);
+    held.holdForReclaim("claude-h3", pty, { kind: "codex", instance: "claude-h3", title: "Codex" });
+    assert.equal(hp.releaseHeldTabs([7103, 7104]), 1);
+    assert.equal(held.releaseHeld("claude-h4"), false, "a process in a tab is the tab's to end");
+    assert.equal(pty.killed, true);
+    assert.equal(attached.killed, false);
+    assert.ok(!reg().has("claude-h3"));
+  });
+  it("a held process that exited by itself is forgotten", () => {
+    reg().get("claude-h1").pty.exited = true;
+    assert.ok(!hp.heldTabs().some((t) => t.ptyPid === 7101));
+    assert.ok(!reg().has("claude-h1"));
   });
 });

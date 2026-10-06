@@ -1,4 +1,4 @@
-"""New session from "Active": folder only from the list, prompt escaped for the shell."""
+"""New session from "Active": an existing folder, prompt escaped for the shell."""
 from __future__ import annotations
 
 import os
@@ -66,10 +66,12 @@ def test_hidden_folders_are_not_offered(atlas_env, write_session, home):
     assert str(hidden) not in [d["path"] for d in launch.workdirs(conn)]
 
 
-def test_folder_outside_the_list_is_refused(atlas_env, write_session, home):
+def test_a_folder_that_is_not_one_is_refused(atlas_env, write_session, home):
     conn = _indexed(atlas_env, write_session, str(home / "Code" / "alpha"))
-    with pytest.raises(launch.LaunchError):
-        launch.new_session(conn, "/etc", "привет")
+    (home / "Code" / "file.txt").write_text("x")
+    for cwd in (str(home / "Code" / "file.txt"), str(home / "Code" / "gone"), "Code/alpha"):
+        with pytest.raises(launch.LaunchError):
+            launch.new_session(conn, cwd, "привет")
     with pytest.raises(launch.LaunchError):
         launch.new_session(conn, str(home / "Code" / "alpha") + "/..", "привет")
 

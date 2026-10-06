@@ -116,7 +116,7 @@ function spawnPty({ file, args = [], cwd, env, cols = 80, rows = 24 }) {
       try { process.kill(-child.pid, signal); } catch { /* the group is gone */ }
     },
     onData(fn) { sink = fn; },
-    onExit(fn) { exitSink = fn; if (exited) fn(exitCode); },
+    onExit(fn) { exitSink = fn; if (exited && typeof fn === "function") fn(exitCode); },
     recent() { return recent; },
     get exited() { return exited; },
     tty: findTty,

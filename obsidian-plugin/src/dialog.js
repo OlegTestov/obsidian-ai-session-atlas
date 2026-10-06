@@ -4,10 +4,13 @@
 
 const RULE = /^\s*─{8,}\s*$/;
 const FOOTER = /Esc to cancel/;
-const OPTION = /^(\s*)(?:❯\s*)?(\d{1,2})\.\s+(\S.*?)\s*$/;
-// These options wait for typed text: a digit from the card cannot choose them.
-const NEEDS_TEXT = /^(Type something|Chat about this)/;
+const OPTION = /^(\s*)(❯\s*)?(\d{1,2})\.\s+(\S.*?)\s*$/;
 const MAX_DETAIL_LINES = 12;
+// A question's last answer above the separator is a text field: its digit only puts the cursor
+// there, typed text replaces the label in the option line and Enter sends it (checked on the CLI).
+// "Chat about this" below the separator is an ordinary option: it declines the question at once.
+const FREE_TEXT_LABEL = "Type something.";
+const CHAT = /^Chat about this/;
 
 // The plan-mode exit dialog has no "Esc to cancel" footer, but the plan file path sits at the
 // bottom. The last option is an input field: the digit only puts the cursor in it, the text is
@@ -70,8 +73,10 @@ function parseDialog(lines) {
   const rows = lines.map((l) => String(l || "").replace(/\s+$/, ""));
   const plan = parsePlanDialog(rows);
   if (plan) return plan;
+  let end = rows.length;                       // a fresh session draws at the top, empty lines below
+  while (end > 0 && !rows[end - 1].trim()) end--;
   let footer = -1;
-  for (let i = rows.length - 1; i >= 0 && rows.length - i <= 6; i--) {
+  for (let i = end - 1; i >= 0 && end - i <= 6; i--) {
     if (FOOTER.test(rows[i])) { footer = i; break; }
   }
   if (footer < 0) return null;
@@ -79,7 +84,7 @@ function parseDialog(lines) {
   let first = -1;
   for (let i = footer - 1; i >= 0 && footer - i <= 40; i--) {
     const m = OPTION.exec(rows[i]);
-    if (m && m[2] === "1") { first = i; break; }
+    if (m && m[3] === "1") { first = i; break; }
   }
   if (first < 0) return null;
   let start = -1;
@@ -89,12 +94,17 @@ function parseDialog(lines) {
   if (start < 0) return null;
 
   const options = [];
+  let beforeRule = -1;                         // the option the separator rule follows
   for (let i = first; i < footer; i++) {
     const row = rows[i];
-    if (!row.trim() || RULE.test(row)) continue;
+    if (!row.trim()) continue;
+    if (RULE.test(row)) {
+      if (options.length && beforeRule < 0) beforeRule = options.length - 1;
+      continue;
+    }
     const m = OPTION.exec(row);
-    if (m && Number(m[2]) === options.length + 1) {
-      options.push({ n: Number(m[2]), text: m[3], detail: "" });
+    if (m && Number(m[3]) === options.length + 1) {
+      options.push({ n: Number(m[3]), text: m[4], detail: "", selected: !!m[2] });
     } else if (options.length) {
       const last = options[options.length - 1];
       last.detail = (last.detail ? last.detail + " " : "") + row.trim();
@@ -122,7 +132,15 @@ function parseDialog(lines) {
   if (kind === "permission") {
     options.forEach((o) => { if (o.detail) { o.text += " " + o.detail; o.detail = ""; } });
   }
-  const choices = options.filter((o) => !NEEDS_TEXT.test(o.text));
+  // The text field: its label, or whatever was typed over it, right above "─── Chat about this".
+  const chat = beforeRule >= 0 && options[beforeRule + 1] && CHAT.test(options[beforeRule + 1].text);
+  const free = kind !== "question" ? null
+    : chat ? options[beforeRule] : options.find((o) => o.text === FREE_TEXT_LABEL);
+  const choices = options.map((o) => {
+    if (o !== free) return { n: o.n, text: o.text, detail: o.detail };
+    const typed = o.text === FREE_TEXT_LABEL ? "" : [o.text, o.detail].filter(Boolean).join(" ");
+    return { n: o.n, text: FREE_TEXT_LABEL, detail: "", freeText: true, selected: o.selected, typed };
+  });
   // Several questions at once: digits toggle checkboxes and tabs instead of answering.
   const multi = !!tabs && (/Submit/.test(tabs) || (tabs.match(/[☐☒✔]/g) || []).length > 1);
   return {
@@ -136,11 +154,22 @@ function parseDialog(lines) {
   };
 }
 
-/** Whether the option under this number is unchanged; checked before the key press in case the screen changed. */
+/**
+ * Whether the option under this number is unchanged; checked before the key press in case the screen
+ * changed. A text field is never pressed alone: its digit only moves the cursor into it.
+ */
 function sameOption(dialog, n, text) {
   if (!dialog || !dialog.answerable) return false;
   const option = dialog.options.find((o) => o.n === n);
-  return !!option && option.text === text;
+  return !!option && !option.freeText && option.text === text;
+}
+
+/** Where typed text goes: the plan's feedback line or a question's text field. {n, label, selected, typed} or null. */
+function textField(dialog) {
+  if (!dialog || !dialog.answerable) return null;
+  if (dialog.kind === "plan") return dialog.feedback || null;
+  const o = dialog.kind === "question" ? dialog.options.find((x) => x.freeText) : null;
+  return o ? { n: o.n, label: o.text, selected: o.selected, typed: o.typed } : null;
 }
 
 const PANEL_RULE = /^\s*▔{8,}\s*$/;
@@ -193,4 +222,4 @@ function extractCommandOutput(lines, command) {
 /** Typed text vs. the screen: the field wraps long text, and spaces at the wrap points get lost. */
 const squash = (text) => String(text || "").replace(/\s+/g, "");
 
-export { parseDialog, sameOption, extractCommandOutput, squash, FEEDBACK_LABEL };
+export { parseDialog, sameOption, textField, extractCommandOutput, squash, FEEDBACK_LABEL, FREE_TEXT_LABEL };

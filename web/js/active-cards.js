@@ -34,6 +34,7 @@ function activeCard(s) {
   if (tasks && full) card.appendChild(tasksLine(tasks));
 
   const tags = el("div", "tags");
+  tags.appendChild(agentBadge(s));
   if (tasks && !full) {                  // compact view has no room for a separate line: the label goes into the tags
     const pill = el("span", "pill task" + (tasks.finished ? " done" : ""),
                     (tasks.current ? "▶ " : "") + i18n("active.tasksPill", { count: tasks.count }));
@@ -62,12 +63,16 @@ function activeCard(s) {
     : i18nN("active.turns", s.human_turns);
   // Now ≈ is Claude Code's last total plus later replies priced by tokens; otherwise as of a date.
   const cost = AtlasLogic.costText(s, iso => fmtShort(iso).split(",")[0]);
-  const costHint = (s.cost_usd != null
+  const claudeCost = () => (s.cost_usd != null
       ? i18n("active.costRecorded", { cost: s.cost_usd.toFixed(2), at: s.cost_recorded_at
           ? i18n("active.costRecordedAt", { date: fmtDateTime(s.cost_recorded_at) }) : "" })
       : i18n("active.costNotRecorded"))
     + (s.cost_now != null ? i18n("active.costNow", { cost: s.cost_now.toFixed(2) }) : "")
     + (s.cost_partial ? i18n("active.costPartial") : "");
+  // Codex records no total: only the estimate from the thread's token count, if the price is known.
+  const costHint = AtlasLogic.agentOf(s) !== "codex" ? claudeCost()
+    : s.cost_now != null ? i18n("active.costCodex", { cost: s.cost_now.toFixed(2) })
+    : i18n("active.costCodexNone");
 
   const pid = tabFor(s);
   const go = el("button", "primary", i18n("active.go"));
@@ -78,6 +83,16 @@ function activeCard(s) {
   if (!pid) go.title = close.title = hostReady
     ? (s.host_app ? i18n("active.notInTabApp", { app: s.host_app }) : i18n("active.notInTab"))
     : i18n("active.buttonsInObsidian");
+  const heldPid = pid ? null : heldFor(s);
+  if (heldPid) {
+    // The tab closed with the plugin but the agent runs: Go to opens a tab on the same process.
+    go.disabled = false;
+    go.title = i18n("active.heldGoHint");
+    go.addEventListener("click", () => {
+      tellTabHost("focus-tab", { ptyPid: heldPid });
+      window.setTimeout(loadActive, 1500);
+    });
+  }
   if (pid) {
     go.addEventListener("click", () => tellTabHost("focus-tab", { ptyPid: pid }));
     close.addEventListener("click", () => {
@@ -95,16 +110,21 @@ function activeCard(s) {
     if (stopFull) head.appendChild(stopFull);
     head.appendChild(feedButton(s, true));
     head.appendChild(hideButton(s, true));
-    head.append(canMove(s, pid) ? moveButton(s, true) : go, close);
+    head.append(canMove(s, pid || heldPid) ? moveButton(s, true) : go, close);
     const parts = AtlasLogic.infoParts(s, ago, shortStart);
     const info = infoLine("info", [...parts.when, ...parts.nums], parts.context);
     info.title = `${whenHint}. ${turns} · ${cost}. ${costHint}`;
+    // The dialog sits right on the reply field, so it rises with the field as it grows.
     const dialog = dialogBlock(s, pid, true);
     card.append(info);
-    if (dialog) card.appendChild(dialog);
     const cmdOut = commandOutputBlock(s, pid);
     if (cmdOut) card.appendChild(cmdOut);
-    card.append(messagesBlock(s), answerForm(s, pid));
+    card.appendChild(messagesBlock(s));
+    if (dialog) {
+      card.classList.add("has-dialog");
+      card.appendChild(dialog);
+    }
+    card.appendChild(freeAnswerForm(s, pid) || answerForm(s, pid));
     return card;
   }
   const parts = AtlasLogic.infoParts(s, ago, shortStart);
@@ -117,7 +137,7 @@ function activeCard(s) {
   if (stopCompact) foot.appendChild(stopCompact);
   foot.appendChild(feedButton(s, false));
   foot.appendChild(hideButton(s, false));
-  foot.append(canMove(s, pid) ? moveButton(s, false) : go, close);
+  foot.append(canMove(s, pid || heldPid) ? moveButton(s, false) : go, close);
   card.append(when, nums);
   const dialog = dialogBlock(s, pid, false);
   if (dialog) {
@@ -193,7 +213,7 @@ function promptBlock(p, s) {
   const delivery = p.sent ? AtlasLogic.deliveryState(s, p, Date.now()) : null;
   const who = el("div", "who" + (delivery === "lost" ? " bad" : ""), i18n("active.you", { ago: ago(p.at),
     state: delivery ? DELIVERY_TEXT[delivery]
-      : p.interrupted ? i18n("active.interrupted") : i18n("active.awaitingClaude") }));
+      : p.interrupted ? i18n("active.interrupted") : i18n("active.awaitingReply") }));
   if (delivery === "lost") who.title = i18n("active.lostHint");
   box.appendChild(who);
   const body = el("div", "txt md");
@@ -215,15 +235,15 @@ function messagesBlock(s) {
   if (!earlier.length) return latest;
   const box = el("div", "amsgs");
   box.dataset.sid = s.session_id;
-  earlier.forEach(m => box.appendChild(historyMessage(m)));
+  earlier.forEach(m => box.appendChild(historyMessage(m, s)));
   box.appendChild(latest);
   return box;
 }
 
-function historyMessage(m) {
+function historyMessage(m, s) {
   const mine = m.role === "you";
   const box = el("div", "reply hmsg" + (mine ? " mine" : ""));
-  box.appendChild(el("div", "who", mine ? i18n("active.youWas", { ago: ago(m.at) }) : `Claude, ${ago(m.at)}`));
+  box.appendChild(el("div", "who", mine ? i18n("active.youWas", { ago: ago(m.at) }) : `${agentShort(s)}, ${ago(m.at)}`));
   const body = el("div", "txt md");
   if (!mine && m.len > (m.text || "").length) body.appendChild(el("p", "cutmark", i18n("active.replyStartAbove")));
   if (m.text) body.appendChild(renderMarkdown(m.text));
@@ -233,7 +253,7 @@ function historyMessage(m) {
   return box;
 }
 
-// Tail of Claude's last reply: a question to you is usually at the end, the start reports the work.
+// Tail of the agent's last reply: a question to you is usually at the end, the start reports the work.
 function replyBlock(s) {
   const mine = unansweredPrompt(s);
   if (mine) {
@@ -247,7 +267,7 @@ function replyBlock(s) {
     return box;
   }
   const box = el("div", "reply");
-  const who = el("div", "who", `Claude, ${ago(s.reply_at)}`);
+  const who = el("div", "who", `${agentShort(s)}, ${ago(s.reply_at)}`);
   const full = fullReplies.get(s.session_id);
   const cut = s.reply_len > (s.reply_tail || "").length;
   if (cut) {
@@ -426,10 +446,11 @@ function answerForm(s, pid) {
   clip.addEventListener("click", () => picker.click());
   picker.addEventListener("change", () => { attachImages(sid, [...picker.files]); picker.value = ""; });
 
+  const controls = agentControls(s);
   const submit = () => {
     const text = area.value;
     // "/effort" and "/model" without an argument would open a slider in the tab, so buttons pick here.
-    if (argChoices(text)) { chooser.show(text); return; }
+    if (controls.commands && argChoices(text)) { chooser.show(text); return; }
     const images = (attachments.get(sid) || []).map(a => a.path);
     if ((!text.trim() && !images.length) || send.disabled) return;
     const nonce = Math.random().toString(36).slice(2);
@@ -446,10 +467,12 @@ function answerForm(s, pid) {
   };
   send.addEventListener("click", submit);
   // Enter sends, Shift+Enter adds a line break; "/" shows command hints, ↑ walks the history.
-  const suggest = enhanceComposer(area, sid, submit);
+  const suggest = enhanceComposer(area, sid, submit, controls);
   const chooser = argChooser(area, submit);
-  area.addEventListener("input", () => chooser.show(area.value));
-  chooser.show(area.value);
+  if (controls.commands) {
+    area.addEventListener("input", () => chooser.show(area.value));
+    chooser.show(area.value);
+  }
   const row = el("div", "row2");
   row.append(clip, area, send, picker);
   form.append(suggest, chooser.row, thumbs, row, note);

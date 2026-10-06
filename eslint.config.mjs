@@ -41,8 +41,21 @@ export default defineConfig([
     languageOptions: { globals: { ...globals.node } },
   },
   {
+    // Playwright specs: Node, plus callbacks that run inside the page (page.evaluate).
+    files: ["tests/e2e/**/*.mjs"],
+    languageOptions: { globals: { ...globals.node, ...globals.browser } },
+    rules: { "no-restricted-globals": "off" },
+  },
+  {
+    // The live Obsidian harness: a Node program that drives Obsidian from outside and reports to the console.
+    files: ["tools/live/**/*.mjs"],
+    languageOptions: { globals: { ...globals.node, ...globals.browser, app: "readonly" } },
+    rules: { "no-console": "off", "obsidianmd/rule-custom-message": "off", "no-restricted-globals": "off",
+             "obsidianmd/hardcoded-config-path": "off" },   // it builds a test vault from outside Obsidian
+  },
+  {
     // Tests and build scripts run in Node, not in an Obsidian window: popout-window rules do not apply.
-    files: ["tests/js/**/*.{js,mjs,cjs}", "*.mjs"],
+    files: ["tests/js/**/*.{js,mjs,cjs}", "tests/e2e/**/*.mjs", "*.mjs", "tools/live/**/*.mjs"],
     rules: {
       "obsidianmd/no-global-this": "off",
       "obsidianmd/prefer-window-timers": "off",

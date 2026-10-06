@@ -1,10 +1,11 @@
 // Plugin settings: environment checks, language, agents, catalog, AI, notifications, file explorer.
 import { PluginSettingTab, Setting } from "obsidian";
 import { renderStatus, renderCatalog, renderAi, renderAdvanced } from "./settings-server";
+import { NOTICE_HOLDS, DEFAULT_NOTICE_HOLD } from "./notify";
 
 const DEFAULT_SETTINGS = { notify: true, systemNotify: true, explorerClicks: false, language: "en",
                            agents: {}, agentArgs: { claude: "", codex: "" }, terminalFontSize: 13,
-                           cardMessages: 10 };
+                           cardMessages: 10, noticeHold: DEFAULT_NOTICE_HOLD };
 
 class AtlasSettingTab extends PluginSettingTab {
   constructor(app, plugin) {
@@ -32,7 +33,7 @@ class AtlasSettingTab extends PluginSettingTab {
   display() {
     const t = (k) => this.plugin.t(k);
     this.containerEl.empty();
-    renderStatus(this).catch((error) => console.error("Session Atlas: environment checks failed", error));
+    renderStatus(this).catch((error) => console.error("AI Session Atlas: environment checks failed", error));
     new Setting(this.containerEl)
       .setName(t("settings.language"))
       .setDesc(t("settings.language.desc"))
@@ -95,6 +96,19 @@ class AtlasSettingTab extends PluginSettingTab {
     renderAi(this);
     new Setting(this.containerEl).setName(t("settings.otherHeading")).setHeading();
     this.toggle("notify", "settings.notify", "settings.notify.desc");
+    new Setting(this.containerEl)
+      .setName(t("settings.noticeHold"))
+      .setDesc(t("settings.noticeHold.desc"))
+      .addDropdown((dropdown) => {
+        for (const hold of NOTICE_HOLDS) dropdown.addOption(hold, t(`settings.noticeHold.${hold}`));
+        dropdown
+          .setValue(NOTICE_HOLDS.includes(this.plugin.settings.noticeHold)
+            ? this.plugin.settings.noticeHold : DEFAULT_NOTICE_HOLD)
+          .onChange(async (value) => {
+            this.plugin.settings.noticeHold = value;
+            await this.save();
+          });
+      });
     this.toggle("systemNotify", "settings.systemNotify", "settings.systemNotify.desc");
     this.toggle("explorerClicks", "settings.explorer", "settings.explorer.desc");
     renderAdvanced(this);

@@ -190,6 +190,8 @@ function query() {
   if (state.scope !== "prompts") p.set("scope", state.scope);
   if (state.q && state.order !== "date") p.set("order", state.order);
   if (state.since) p.set("since", new Date(Date.now() - state.since * 864e5).toISOString());
+  const agent = agentQuery("search");
+  if (agent) p.set("agent", agent);
   return p.toString();
 }
 
@@ -222,6 +224,8 @@ function renderChips(countText) {
     () => { state.automation = false; $("#automation").checked = false; });
   if (state.scope === "all") add(i18n("search.chipScope"), i18n("search.chipWholeIndex"),
     () => { state.scope = "prompts"; $("#scope").checked = false; });
+  if (agentFiltered("search")) add(i18n("search.chipAgent"), agentPick.search.map(agentName).join(", "),
+    () => resetAgents("search"));
 
   if (box.childElementCount) {
     const reset = el("button", "chip", i18n("search.resetAll"));
@@ -231,6 +235,7 @@ function renderChips(countText) {
       document.querySelectorAll("#domains input").forEach(c => { c.checked = false; });
       $("#q").value = ""; $("#since").value = "";
       $("#automation").checked = false; $("#scope").checked = false;
+      resetAgents("search");
       refillDependentFilters(); loadList();
     });
     box.appendChild(reset);

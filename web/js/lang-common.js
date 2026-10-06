@@ -29,17 +29,17 @@
       "common.errorWord": "error",
       "common.failed": "failed: {msg}",
       "common.saveFailed": "Could not save: {msg}",
-      "common.serverNoAnswer": "Session Atlas server is not responding",
+      "common.serverNoAnswer": "AI Session Atlas server is not responding",
       "common.badResponse": "could not parse the response",
       "common.timeUnknown": "time unknown",
       "common.justNow": "just now",
       "common.minAgo": "{n} min ago",
       "common.hoursAgo": "{n} h ago",
       "common.daysAgo": "{n} d ago",
-      "common.serverDown": "Session Atlas server is not responding — showing the last loaded data.",
+      "common.serverDown": "AI Session Atlas server is not responding — showing the last loaded data.",
       "common.raise": "Start",
       "common.raising": "starting…",
-      "common.obsidianNoAnswer": "Obsidian did not respond — turn the Session Atlas plugin off and on",
+      "common.obsidianNoAnswer": "Obsidian did not respond — turn the AI Session Atlas plugin off and on",
       "common.raiseFailed": "did not start: {reason} — in a terminal: atlas ensure",
 
       // --- search ---
@@ -54,6 +54,7 @@
       "search.topic": "Topic",
       "search.period": "Period",
       "search.other": "Other",
+      "search.filters": "Filters",
       "search.all": "all",
       "search.sinceAll": "all time",
       "search.sinceWeek": "week",
@@ -84,6 +85,7 @@
       "search.chipView": "view",
       "search.chipWithBackground": "with background runs",
       "search.chipScope": "scope",
+      "search.chipAgent": "agent",
       "search.chipWholeIndex": "whole index",
       "search.resetAll": "clear all",
       "search.sessions": ["{n} session", "{n} sessions"],
@@ -124,7 +126,7 @@
       "card.pick": "Pick a session on the left",
       "delete.menu": "Delete session…",
       "delete.title": "Delete “{title}”?",
-      "delete.note": "Deletes the session from this computer for good ({size}): not to the Trash, it cannot be undone. Claude Code will no longer be able to resume it.",
+      "delete.note": "Deletes the session from this computer for good ({size}): not to the Trash, it cannot be undone. It can no longer be resumed.",
       "delete.confirm": "Delete permanently",
       "delete.running": "This session is running. Stop it or close its tab, then delete.",
       "delete.done": "Session deleted.",
@@ -135,6 +137,7 @@
       "delete.kind.tasks": "Tasks",
       "delete.kind.todos": "To-do lists",
       "delete.kind.handoff": "Handoffs",
+      "delete.kind.rollout": "Codex transcript",
       "delete.files": ["{n} file", "{n} files"],
       "delete.history": ["{n} prompt from the input history (↑)", "{n} prompts from the input history (↑)"],
       "delete.catalog": "Catalog data: search index, topic, summaries, your edits",
@@ -199,7 +202,6 @@
       // --- actions ---
       "actions.noCwd": "The session's working folder no longer exists — there is nothing to build the command from.",
       "actions.forkNote": "An exact fork carries the whole context without compression. ",
-      "actions.openingTab": "opening a terminal tab in Obsidian…",
       "actions.resumeSession": "Resume session",
       "actions.openInObsidian": "Open as a tab in Obsidian",
       "actions.openInTerminal": "Open in terminal",
@@ -226,6 +228,7 @@
       "actions.newTabTitle": "new from {id}",
       "actions.nsTitle": "New session",
       "actions.nsDir": "Folder",
+      "actions.nsAgent": "Agent",
       "actions.nsPrompt": "First prompt",
       "actions.nsPlaceholder": "What should it do? Can be left empty. ⌘Enter — start",
       "actions.nsGo": "Start",
@@ -234,8 +237,8 @@
       // --- help ---
       "help.gotIt": "Got it",
       "help.whatH": "What this is",
-      "help.whatP": "A list of all your conversations with Claude Code. It reads the files Claude Code itself "
-        + "writes to disk and changes nothing in them. Use it to find an old conversation and continue "
+      "help.whatP": "A list of all your conversations with Claude Code and Codex. It reads the files the agents themselves "
+        + "write to disk and changes nothing in them. Use it to find an old conversation and continue "
         + "it without retelling everything.",
       "help.findH": "Finding what you need",
       "help.find1": "Search looks through your messages. ⌘K — cursor to search, Esc — clear.",
@@ -252,7 +255,7 @@
       "help.find8": "Background runs (hooks, the nightly agent) are hidden — there are hundreds of them, and "
         + "they are not your conversations.",
       "help.activeH": "The “Active” tab",
-      "help.active1": "All Claude Code sessions running right now, except background runs. The one with the "
+      "help.active1": "All Claude Code and Codex sessions running right now, except background runs. The one with the "
         + "freshest message is on top; updates every 5 seconds.",
       "help.active2": "On top — “Waiting for you”, below — “Working”. “● working” — the agent is doing "
         + "something; “working in background” (dashed border) — the turn is over, but a background command, "
@@ -333,17 +336,17 @@
       "common.errorWord": "ошибка",
       "common.failed": "не вышло: {msg}",
       "common.saveFailed": "Не удалось сохранить: {msg}",
-      "common.serverNoAnswer": "сервер Session Atlas не отвечает",
+      "common.serverNoAnswer": "сервер AI Session Atlas не отвечает",
       "common.badResponse": "ответ не разобрался",
       "common.timeUnknown": "время неизвестно",
       "common.justNow": "только что",
       "common.minAgo": "{n} мин назад",
       "common.hoursAgo": "{n} ч назад",
       "common.daysAgo": "{n} дн назад",
-      "common.serverDown": "Сервер Session Atlas не отвечает — на экране последние данные.",
+      "common.serverDown": "Сервер AI Session Atlas не отвечает — на экране последние данные.",
       "common.raise": "Поднять",
       "common.raising": "поднимаю…",
-      "common.obsidianNoAnswer": "Obsidian не ответил — выключи и включи плагин Session Atlas",
+      "common.obsidianNoAnswer": "Obsidian не ответил — выключи и включи плагин AI Session Atlas",
       "common.raiseFailed": "не поднялся: {reason} — в терминале: atlas ensure",
 
       // --- search ---
@@ -358,6 +361,7 @@
       "search.topic": "Тема",
       "search.period": "Период",
       "search.other": "Прочее",
+      "search.filters": "Фильтры",
       "search.all": "все",
       "search.sinceAll": "всё время",
       "search.sinceWeek": "неделя",
@@ -388,6 +392,7 @@
       "search.chipView": "вид",
       "search.chipWithBackground": "с фоновыми",
       "search.chipScope": "область",
+      "search.chipAgent": "агент",
       "search.chipWholeIndex": "весь индекс",
       "search.resetAll": "сбросить всё",
       "search.sessions": ["{n} сессия", "{n} сессии", "{n} сессий"],
@@ -430,7 +435,7 @@
       "card.pick": "Выбери сессию слева",
       "delete.menu": "Удалить сессию…",
       "delete.title": "Удалить «{title}»?",
-      "delete.note": "Сессия удаляется с компьютера насовсем ({size}): не в Корзину, отменить нельзя. Claude Code больше не сможет её восстановить.",
+      "delete.note": "Сессия удаляется с компьютера насовсем ({size}): не в Корзину, отменить нельзя. Восстановить её будет нельзя.",
       "delete.confirm": "Удалить навсегда",
       "delete.running": "Сессия запущена. Останови её или закрой вкладку, потом удаляй.",
       "delete.done": "Сессия удалена.",
@@ -439,6 +444,7 @@
       "delete.kind.file_history": "История правок файлов",
       "delete.kind.session_env": "Окружение сессии",
       "delete.kind.tasks": "Задачи",
+      "delete.kind.rollout": "Транскрипт Codex",
       "delete.kind.todos": "Списки дел",
       "delete.kind.handoff": "Хендоффы",
       "delete.files": ["{n} файл", "{n} файла", "{n} файлов"],
@@ -505,7 +511,6 @@
       // --- actions ---
       "actions.noCwd": "Рабочая папка сессии не существует — команду собрать не из чего.",
       "actions.forkNote": "Точный форк тащит весь контекст без сжатия. ",
-      "actions.openingTab": "открываю вкладку терминала в Obsidian…",
       "actions.resumeSession": "Восстановить сессию",
       "actions.openInObsidian": "Открыть вкладкой в Obsidian",
       "actions.openInTerminal": "Открыть в терминале",
@@ -532,6 +537,7 @@
       "actions.newTabTitle": "новая на основе {id}",
       "actions.nsTitle": "Новая сессия",
       "actions.nsDir": "Папка",
+      "actions.nsAgent": "Агент",
       "actions.nsPrompt": "Первый запрос",
       "actions.nsPlaceholder": "Что сделать? Можно оставить пустым. ⌘Enter — запустить",
       "actions.nsGo": "Запустить",
@@ -540,8 +546,8 @@
       // --- help ---
       "help.gotIt": "Понятно",
       "help.whatH": "Что это",
-      "help.whatP": "Список всех твоих разговоров с Claude Code. Он читает файлы, которые Claude Code сам "
-        + "пишет на диск, и ничего в них не меняет. Нужен, чтобы найти старый разговор и "
+      "help.whatP": "Список всех твоих разговоров с Claude Code и Codex. Он читает файлы, которые агенты сами "
+        + "пишут на диск, и ничего в них не меняет. Нужен, чтобы найти старый разговор и "
         + "продолжить его — не пересказывая всё заново.",
       "help.findH": "Как найти нужное",
       "help.find1": "Поиск ищет по твоим сообщениям. ⌘K — курсор в поиск, Esc — очистить.",
@@ -556,7 +562,7 @@
       "help.find7": "Над списком видно, какие фильтры стоят сейчас. Крестик снимает один, «сбросить всё» — сразу все.",
       "help.find8": "Фоновые прогоны (хуки, ночной агент) спрятаны — их сотни, и это не твои разговоры.",
       "help.activeH": "Вкладка «Активные»",
-      "help.active1": "Все запущенные сейчас сессии Claude Code, кроме фоновых прогонов. Сверху — с самым свежим "
+      "help.active1": "Все запущенные сейчас сессии Claude Code и Codex, кроме фоновых прогонов. Сверху — с самым свежим "
         + "сообщением, обновляется каждые 5 секунд.",
       "help.active2": "Сверху — «Ждут тебя», снизу — «Работают». «● работает» — агент что-то делает; "
         + "«работает в фоне» (пунктирная рамка) — ход закончен, но сессию разбудит фоновая команда, "

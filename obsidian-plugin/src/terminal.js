@@ -4,11 +4,14 @@ import * as childProcess from "child_process";
 import * as fsSync from "fs";
 import * as path from "path";
 import { parseLaunch } from "./agents";
+import { attachedSessionState } from "./attach";
+import { codexScreenState } from "./dialog-codex";
 import {
   PTY_WAIT_MS,
   AGENT_VIEW_TYPE,
   TERMINAL_VIEW_TYPE,
   SESSIONS_DIR,
+  REGISTRY_FILE,
   IMAGE_EXT,
   MAX_IMAGES,
 } from "./constants";
@@ -122,6 +125,47 @@ class TerminalMethods {
     }
   }
 
+  /**
+   * The agent's state right before input. Claude Code: its process file. Codex keeps no such file:
+   * the session id comes from the rollout file the process holds open, the status from the screen.
+   */
+  readAgentState(pid, leaf) {
+    // A tab attached to a background job: the job's file holds the session and its status.
+    const claude = this.readSessionState(pid) || attachedSessionState(pid, SESSIONS_DIR);
+    if (claude) return Object.assign({ agent: "claude", sessionIds: [claude.sessionId] }, claude);
+    if (this.processName(pid) !== "codex") return null;
+    const ids = this.codexSessionIds(pid);
+    if (!ids.length) return null;
+    return { agent: "codex", sessionIds: ids, sessionId: ids[0], status: codexScreenState(this.screenLines(leaf)) };
+  }
+
+  /** The executable's base name: "codex" for the native binary, also when npm's wrapper started it. */
+  processName(pid) {
+    try {
+      const out = childProcess.execFileSync("ps", ["-o", "comm=", "-p", String(pid)],
+                                            { encoding: "utf8", timeout: 2000 });
+      return path.basename(out.trim());
+    } catch {
+      return "";
+    }
+  }
+
+  /** Thread ids of the rollouts the Codex process has open (rollout-<time>-<id>.jsonl). */
+  codexSessionIds(pid) {
+    try {
+      const out = childProcess.execFileSync("/usr/sbin/lsof", ["-a", "-p", String(pid), "-Fn"],
+                                            { encoding: "utf8", timeout: 3000 });
+      const ids = [];
+      for (const line of out.split("\n")) {
+        const m = /^n.*\/rollout-[^/]*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/.exec(line);
+        if (m && !ids.includes(m[1])) ids.push(m[1]);
+      }
+      return ids;
+    } catch {
+      return [];
+    }
+  }
+
   isDescendant(pid, ancestor) {
     let current = pid;
     for (let i = 0; i < 32 && current > 1; i++) {
@@ -147,7 +191,10 @@ class TerminalMethods {
    */
   async openCommandInTerminal(command, cwd, label) {
     const launch = parseLaunch(command);
-    if (launch && (await this.openAgent("claude", { cwd: launch.cwd, seed: launch, label }))) return;
+    // The session already has a tab, maybe one Obsidian brought back but has not loaded yet: show it.
+    // A second tab would start a second process on the same conversation once both are open.
+    if (launch && launch.mode === "resume" && this.revealSessionTab(launch.sessionId)) return;
+    if (launch && (await this.openAgent(launch.agent, { cwd: launch.cwd, seed: launch, label }))) return;
     try {
       const leaf = this.app.workspace.getLeaf("tab");
       await leaf.setViewState({
@@ -163,10 +210,46 @@ class TerminalMethods {
     }
   }
 
+  /** The layout's agent tab (loaded or not) whose registry entry is this session; revealed if found. */
+  revealSessionTab(sessionId) {
+    const workspace = this.app && this.app.workspace;
+    if (!workspace || typeof workspace.iterateAllLeaves !== "function") return false;
+    const instances = tabInstancesOf(readRegistry(this.registryFile || REGISTRY_FILE), sessionId);
+    if (!instances.size) return false;
+    let found = null;
+    workspace.iterateAllLeaves((leaf) => {
+      const state = !found && leaf.getViewState && leaf.getViewState();
+      if (state && state.type === AGENT_VIEW_TYPE && state.state && instances.has(state.state.instance)) found = leaf;
+    });
+    if (!found) return false;
+    workspace.revealLeaf(found);
+    return true;
+  }
+
   getVaultPath() {
     const adapter = this.app.vault.adapter;
     return typeof adapter.getBasePath === "function" ? adapter.getBasePath() : "";
   }
+}
+
+/** The tab script's registry (agent-registry-lib.zsh): kind, instance, session id, vault, time per line. */
+function readRegistry(file) {
+  try {
+    return fsSync.readFileSync(file, "utf8");
+  } catch {
+    return "";
+  }
+}
+
+/** Tab instances whose recorded session is this one (instance ids are random: no folder check). */
+function tabInstancesOf(registry, sessionId) {
+  const out = new Set();
+  if (!sessionId) return out;
+  for (const line of String(registry).split("\n")) {
+    const [, instance, session] = line.split("\t");
+    if (instance && session === sessionId) out.add(instance);
+  }
+  return out;
 }
 
 /**
@@ -178,4 +261,4 @@ function cleanInput(text) {
   return String(text).replace(/\r\n?/g, "\n").replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");
 }
 
-export { TerminalMethods, cleanInput };
+export { TerminalMethods, cleanInput, tabInstancesOf };

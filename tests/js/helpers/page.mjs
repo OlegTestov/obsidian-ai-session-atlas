@@ -56,8 +56,9 @@ function domStub() {
 /**
  * Runs page scripts in one vm context and returns the context (the page's `window`).
  * files: script names under web/js, in load order (default: everything index.html loads).
+ * storage: what localStorage holds at page load, {key: string}.
  */
-export function loadPage(files = pageOrder()) {
+export function loadPage(files = pageOrder(), { storage = {} } = {}) {
   const noop = () => 0;
   const ctx = vm.createContext({
     URL,
@@ -67,7 +68,7 @@ export function loadPage(files = pageOrder()) {
     location: { search: "", hash: "", pathname: "/", href: "http://127.0.0.1/" },
     navigator: { language: "en", clipboard: { writeText: () => Promise.resolve() } },
     document: domStub(),
-    localStorage: { getItem: () => null, setItem: noop, removeItem: noop },
+    localStorage: { getItem: (k) => (k in storage ? storage[k] : null), setItem: noop, removeItem: noop },
     history: { replaceState: noop, pushState: noop },
     addEventListener: noop,
     removeEventListener: noop,

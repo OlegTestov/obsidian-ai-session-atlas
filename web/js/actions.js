@@ -1,6 +1,6 @@
 // Session actions (restore, handoff, description) and help.
 // Classic script: shares one global scope with the other page files.
-/* exported showResume, startArtifact, buildHelp, deleteSession -- used by other page scripts */
+/* exported showResume, startArtifact, buildHelp, deleteSession, closeAfterHandOff -- used by other page scripts */
 // --- actions ---------------------------------------------------------------
 
 function modal(title, note, body, okLabel, onOk) {
@@ -18,6 +18,11 @@ function modal(title, note, body, okLabel, onOk) {
   $("#modal").showModal();
 }
 
+// The tab opens in Obsidian and takes the focus; a failure arrives as Obsidian's own notice.
+function closeAfterHandOff() {
+  if ($("#modal").open) $("#modal").close();
+}
+
 function showResume(s, fork) {
   const a = s.actions || {};
   const command = fork ? a.fork_command : a.resume_command;
@@ -31,7 +36,7 @@ function showResume(s, fork) {
     ? () => {
         tellHost("resume", { session_id:s.session_id, cwd:a.resume_cwd, command,
                              title:s.title || s.session_id });
-        $("#m-note").textContent = i18n("actions.openingTab");
+        closeAfterHandOff();
       }
     : async () => {
         try {
@@ -108,7 +113,7 @@ async function launch(id) {
       i18n("actions.openInObsidian"), () => {
         tellHost("new-session", { session_id:r.new_session_id, command:r.command, cwd:r.cwd,
                                   title:i18n("actions.newTabTitle", { id: id.slice(0, 8) }) });
-        $("#m-note").textContent = i18n("actions.openingTab");
+        closeAfterHandOff();
       });
     return;
   }
@@ -158,6 +163,7 @@ function buildHelp() {
   h(i18n("help.whichH"));
   table([
     [i18n("card.resume"), i18n("help.whichResume")],
+    [i18n("rw.button"), i18n("help.whichResumeWith")],
     [i18n("card.newFromThis"), i18n("help.whichNew")],
     [i18n("help.whichHandoffBtn"), i18n("help.whichHandoff")],
     [i18n("help.whichSummaryBtn"), i18n("help.whichSummary")],
@@ -174,7 +180,8 @@ function buildHelp() {
 // Deleting a session: first the list of what disappears, then one explicit confirmation.
 const DELETE_KINDS = [["transcript", "delete.kind.transcript"], ["subagents", "delete.kind.subagents"],
   ["file_history", "delete.kind.file_history"], ["session_env", "delete.kind.session_env"],
-  ["tasks", "delete.kind.tasks"], ["todos", "delete.kind.todos"], ["handoff", "delete.kind.handoff"]];
+  ["tasks", "delete.kind.tasks"], ["todos", "delete.kind.todos"], ["rollout", "delete.kind.rollout"],
+  ["handoff", "delete.kind.handoff"]];
 
 function sizeText(bytes) {
   if (bytes < 1024) return i18n("delete.bytes", { n: bytes });
@@ -197,6 +204,8 @@ async function deleteSession(s) {
   });
   if (plan.history_lines) lines.push("• " + i18nN("delete.history", plan.history_lines));
   if (plan.indexed) lines.push("• " + i18n("delete.catalog"));
+  // Server notes come in the page language: for Codex, that its app may still list the thread.
+  (plan.notes || []).forEach(n => lines.push(n));
   modal(title, i18n("delete.note", { size: sizeText(plan.bytes) }), lines.join("\n"),
     i18n("delete.confirm"), async () => {
       $("#m-ok").disabled = true;

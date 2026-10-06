@@ -366,6 +366,7 @@ def test_menu_hidden_rule_matches_id_specificity():
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     html = page_source(here)
     assert "#menu.hidden{display:none}" in html
+    assert "#rw-menu.hidden{display:none}" in html                # the "Resume with…" menu too
     # And there is exactly one close listener, not one per card opening.
     assert html.count('document.addEventListener("click"') == 1
 

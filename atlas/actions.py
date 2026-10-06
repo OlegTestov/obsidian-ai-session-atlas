@@ -44,21 +44,54 @@ def resume_cwd(conn: sqlite3.Connection, session_id: str) -> str | None:
     return row["cwd_last"] if row["cwd_last"] and os.path.isdir(row["cwd_last"]) else None
 
 
-def resume_command(cwd: str | None, session_id: str, fork: bool = False) -> str | None:
+def resume_command(cwd: str | None, session_id: str, fork: bool = False,
+                   agent: str | None = None) -> str | None:
     """Every argument is POSIX-quoted: cd '<cwd>' breaks on an apostrophe in the path."""
     if not cwd or not valid_session_id(session_id):
         return None
-    parts = ["claude", "--resume", session_id] + (["--fork-session"] if fork else [])
+    if agent == "codex":
+        if fork:
+            return None                      # no fork command for Codex threads yet
+        parts = ["codex", "resume", session_id]
+    else:
+        parts = ["claude", "--resume", session_id] + (["--fork-session"] if fork else [])
     return f"cd {shlex.quote(cwd)} && " + " ".join(shlex.quote(p) for p in parts)
 
 
-def new_session_command(cwd: str | None, new_id: str, handoff_path: str) -> str | None:
+def session_resume_command(conn: sqlite3.Connection, cwd: str | None, session_id: str,
+                           agent: str | None = None) -> tuple[str | None, str | None]:
+    """(command, cwd): `claude attach <job>` while the session runs in a background job (Claude Code
+    refuses `--resume` then), otherwise the ordinary resume."""
+    # jobs → active → search: imported when used.
+    from . import jobs
+    claude = agent in (None, "claude") and valid_session_id(session_id)
+    job = jobs.live_job(conn, session_id) if claude else None
+    if job:
+        cwd = cwd or (job["cwd"] if job["cwd"] and os.path.isdir(job["cwd"]) else None)
+        return jobs.attach_command(cwd, job["job_id"]), cwd
+    return resume_command(cwd, session_id, agent=agent), cwd
+
+
+def prompt_word(prompt: str) -> str:
+    """The first prompt as one argument the agent cannot read as anything else: a leading space
+    keeps "-x" from being a flag and a single word ("resume", "update") from being a subcommand."""
+    return " " + prompt if prompt.startswith("-") or len(prompt.split()) < 2 else prompt
+
+
+def agent_command(cwd: str, agent: str, new_id: str | None, prompt: str = "") -> str:
+    """Claude Code takes the new id up front; Codex picks its own thread id when it starts."""
+    parts = ["codex"] if agent == "codex" else ["claude", "--session-id", new_id or ""]
+    if prompt:
+        parts.append(prompt_word(prompt))
+    return f"cd {shlex.quote(cwd)} && " + " ".join(shlex.quote(p) for p in parts)
+
+
+def new_session_command(cwd: str | None, new_id: str, handoff_path: str,
+                        agent: str | None = None) -> str | None:
     """The command carries the real first prompt, not just a promise of one in the docs."""
     if not cwd or not valid_session_id(new_id):
         return None
-    prompt = prompts.resume(handoff_path)
-    parts = ["claude", "--session-id", new_id, prompt]
-    return f"cd {shlex.quote(cwd)} && " + " ".join(shlex.quote(p) for p in parts)
+    return agent_command(cwd, agent or "claude", new_id, prompts.resume(handoff_path))
 
 
 def open_in_terminal(cwd: str, command: str) -> tuple[bool, str]:
@@ -109,9 +142,12 @@ def rename_session(conn: sqlite3.Connection, session_id: str, title: str,
     error = None
     if write_to_transcript:
         row = conn.execute(
-            "SELECT source_path FROM sessions WHERE session_id=?", (session_id,)).fetchone()
+            "SELECT source_path, agent FROM sessions WHERE session_id=?", (session_id,)).fetchone()
         if row is None:
             error = msg("rename.no_transcript")
+        elif row["agent"] != "claude":
+            # The custom-title line is Claude Code's format: a Codex rollout is never written to.
+            error = msg("rename.codex_transcript")
         else:
             try:
                 line = json.dumps({"type": "custom-title", "customTitle": title,
@@ -190,6 +226,16 @@ def is_cancelled(conn: sqlite3.Connection, job_id: str) -> bool:
 
 # --- new session launch -----------------------------------------------------
 
+# A Codex launch writes its own handoff file: the new thread is found by this name in its first prompt.
+CODEX_HANDOFF_NAME = re.compile(r"^launch-[0-9A-Za-z-]{1,8}-[0-9a-f]{12}\.md$")
+
+
+def handoff_name(source_session_id: str, agent: str | None) -> str:
+    if agent == "codex":
+        return f"launch-{source_session_id[:8]}-{uuid.uuid4().hex[:12]}.md"
+    return f"launch-{source_session_id[:8]}.md"
+
+
 def register_pending_launch(conn: sqlite3.Connection, source_session_id: str,
                             handoff_path: str) -> str:
     """derived_from appears only once the new session's transcript is actually found."""
@@ -223,6 +269,25 @@ def confirm_launches(conn: sqlite3.Connection) -> int:
     return confirmed
 
 
+def link_codex_launch(conn: sqlite3.Connection, session_id: str, first_prompt: str | None) -> bool:
+    """Codex cannot start with a given id, so its launch is registered under a placeholder and
+    takes the thread's id once a thread whose first prompt names the launch's handoff file appears."""
+    if not first_prompt or conn.execute(
+            "SELECT 1 FROM pending_launches WHERE new_session_id=?", (session_id,)).fetchone():
+        return False
+    rows = conn.execute(
+        "SELECT new_session_id, handoff_path FROM pending_launches WHERE confirmed_at IS NULL "
+        "ORDER BY created_at DESC").fetchall()
+    for row in rows:
+        path = row["handoff_path"] or ""
+        if CODEX_HANDOFF_NAME.match(os.path.basename(path)) and path in first_prompt:
+            conn.execute(
+                "UPDATE pending_launches SET new_session_id=?, confirmed_at=? WHERE new_session_id=?",
+                (session_id, _now(), row["new_session_id"]))
+            return True
+    return False
+
+
 def lineage(conn: sqlite3.Connection, session_id: str) -> dict:
     derived_from = conn.execute(
         "SELECT source_session_id, handoff_path, confirmed_at FROM pending_launches "
@@ -242,8 +307,10 @@ def actions_for(conn: sqlite3.Connection, session_id: str) -> dict:
     """Everything a card needs: ready commands and warnings, without running anything."""
     cwd = resume_cwd(conn, session_id)
     row = conn.execute(
-        "SELECT last_activity_at, content_hash FROM sessions WHERE session_id=?", (session_id,)
-    ).fetchone()
+        "SELECT last_activity_at, content_hash, agent FROM sessions WHERE session_id=?",
+        (session_id,)).fetchone()
+    agent = row["agent"] if row else None
+    resume, cwd = session_resume_command(conn, cwd, session_id, agent)
     warnings = []
     if cwd is None:
         warnings.append(msg("actions.no_workdir"))
@@ -251,8 +318,9 @@ def actions_for(conn: sqlite3.Connection, session_id: str) -> dict:
     return {
         "resume_cwd": cwd,
         "content_hash": row["content_hash"] if row else None,
-        "resume_command": resume_command(cwd, session_id),
-        "fork_command": resume_command(cwd, session_id, fork=True),
+        "agent": agent,
+        "resume_command": resume,
+        "fork_command": resume_command(cwd, session_id, fork=True, agent=agent),
         "can_open_terminal": cwd is not None,
         "warnings": warnings,
         "lineage": lineage(conn, session_id),

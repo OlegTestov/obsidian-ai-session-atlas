@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from . import query as q
+from . import agents as agents_mod, query as q
 from .query import (  # noqa: F401
     FTS_COLUMNS,
     IDENTIFIER_RE,
@@ -31,9 +31,12 @@ def _weights() -> list[float]:
     return [0.0] + [COLUMN_WEIGHTS[c] for c in FTS_COLUMNS] + [0.0]
 
 
-def _session_where(kinds, include_automation, since) -> tuple[list[str], list]:
-    """Session kind and date are filtered in SQL: there are hundreds of background runs."""
+def _session_where(kinds, include_automation, since, agents=None) -> tuple[list[str], list]:
+    """Session kind, agent and date are filtered in SQL: there are hundreds of background runs."""
     where, args = [], []
+    if agents:
+        where.append(f"s.agent IN ({','.join('?' * len(agents))})")
+        args += agents
     if not include_automation and not kinds:
         where.append("s.session_kind = 'interactive'")
     elif kinds:
@@ -68,12 +71,12 @@ def _best_per_session(conn, match: str, where: list[str], args: list) -> dict[st
 
 
 def _candidates(conn: sqlite3.Connection, parsed: q.Parsed, columns: tuple[str, ...], *, kinds,
-                include_automation, since, order) -> list[tuple[str, float]]:
+                include_automation, since, order, agents=None) -> list[tuple[str, float]]:
     """Sessions containing every word group of the query, in any turns, not necessarily one.
 
     A group is a word or an OR chain; excluded words are subtracted over the whole session.
     """
-    where, args = _session_where(kinds, include_automation, since)
+    where, args = _session_where(kinds, include_automation, since, agents)
     total: dict[str, float] | None = None
     for group in parsed.groups:
         expr = group[0].fts() if len(group) == 1 else "(" + " OR ".join(t.fts() for t in group) + ")"
@@ -98,9 +101,9 @@ def _candidates(conn: sqlite3.Connection, parsed: q.Parsed, columns: tuple[str, 
 
 
 def _trigram_extra(conn, query: str, known: set[str], limit: int, *, kinds,
-                   include_automation, since) -> list[tuple[str, float]]:
+                   include_automation, since, agents=None) -> list[tuple[str, float]]:
     """Substring search over paths and commands: `release.mjs` inside `deploy-release.mjs`."""
-    extra, extra_args = _session_where(kinds, include_automation, since)
+    extra, extra_args = _session_where(kinds, include_automation, since, agents)
     where = " AND ".join(["fts_paths MATCH ?", *extra])
     out = []
     for token in query.split():
@@ -210,8 +213,9 @@ def run(conn: sqlite3.Connection, query: str, limit: int = 20,
         projects: list[str] | None = None, domains: list[str] | None = None,
         kinds: list[str] | None = None, since: str | None = None,
         include_automation: bool = False, topics: list[str] | None = None,
-        scope: str = "prompts", order: str = "date") -> dict:
-    """Results plus how the query was understood, the full count and a hint about another scope."""
+        scope: str = "prompts", order: str = "date", agents: list[str] | None = None) -> dict:
+    """Results plus how the query was understood, the full count and a hint about another scope.
+    `agents` narrows to sessions of these agents (claude, codex); None means all."""
     parsed = q.parse(query)
     out = {"results": [], "total": 0, "plan": q.describe(parsed), "elsewhere": None,
            "error": None}
@@ -223,7 +227,8 @@ def run(conn: sqlite3.Connection, query: str, limit: int = 20,
     if not match:
         return out
     scope = scope if scope in SCOPE_COLUMNS else "prompts"
-    opts = {"kinds": kinds, "include_automation": include_automation, "since": since}
+    opts = {"kinds": kinds, "include_automation": include_automation, "since": since,
+            "agents": agents}
     filters = {"projects": projects, "domains": domains, "topics": topics}
     cache: dict = {}
 
@@ -303,6 +308,7 @@ def _load_session(conn: sqlite3.Connection, session_id: str) -> dict | None:
 
     return {
         "session_id": session_id,
+        "agent": row["agent"],
         "title": (override["title"] if override and override["title"] else row["title"]),
         "title_source": ("manual" if override and override["title"] else row["title_source"]),
         "session_kind": row["session_kind"],
@@ -330,7 +336,25 @@ def _load_session(conn: sqlite3.Connection, session_id: str) -> dict | None:
         "sensitivity": sensitivity,
         "work_outcome": (override["work_outcome"] if override else None) or "unknown",
         "last_prompt": row["last_prompt"],
+        # A parked conversation: the background job it went on in, or the session it came from.
+        "continued_from": row["continued_from"],
+        "continued_in": row["continued_in"],
+        **conversions(conn, session_id),
     }
+
+
+def conversions(conn: sqlite3.Connection, session_id: str) -> dict:
+    """"Resume with…" (atlas/convert.py): the session this one was copied from, and its copies."""
+    source = conn.execute(
+        "SELECT c.source_session_id AS session_id, c.source_agent AS agent, c.at, "
+        "COALESCE(u.title, s.title) AS title FROM conversions c "
+        "LEFT JOIN sessions s ON s.session_id = c.source_session_id "
+        "LEFT JOIN user_overrides u ON u.session_id = c.source_session_id "
+        "WHERE c.session_id=?", (session_id,)).fetchone()
+    copies = conn.execute("SELECT session_id, agent, at FROM conversions "
+                          "WHERE source_session_id=? ORDER BY at", (session_id,)).fetchall()
+    return {"converted_from": dict(source) if source else None,
+            "converted_to": [dict(r) for r in copies]}
 
 
 def load_session(conn: sqlite3.Connection, session_id: str) -> dict | None:
@@ -348,10 +372,14 @@ def load_session(conn: sqlite3.Connection, session_id: str) -> dict | None:
 def recent(conn: sqlite3.Connection, limit: int = 60, projects: list[str] | None = None,
            domains: list[str] | None = None, since: str | None = None,
            include_automation: bool = False, topics: list[str] | None = None,
-           scope: str = "prompts", order: str = "date") -> list[dict]:
+           scope: str = "prompts", order: str = "date",
+           agents: list[str] | None = None) -> list[dict]:
     """List without a query: most recent activity first."""
     sql = ["SELECT s.session_id FROM sessions s"]
     where, args = [], []
+    if agents:
+        where.append(f"s.agent IN ({','.join('?' * len(agents))})")
+        args += agents
     if projects:
         sql.append("JOIN session_projects p ON p.session_id = s.session_id")
         where.append(f"p.project_id IN ({','.join('?' * len(projects))})")
@@ -413,12 +441,11 @@ def local_state(conn: sqlite3.Connection, session_id: str) -> dict | None:
     The main card block must not depend on an external call: all it needs is already on disk.
     """
     row = conn.execute(
-        "SELECT source_path, cwd_last, branch_last, last_prompt FROM sessions WHERE session_id=?",
-        (session_id,)).fetchone()
+        "SELECT source_path, cwd_last, branch_last, last_prompt, agent FROM sessions "
+        "WHERE session_id=?", (session_id,)).fetchone()
     if row is None:
         return None
-    from .parse import parse_file
-    facts = parse_file(row["source_path"], session_id)
+    facts = agents_mod.parse_session(row["source_path"], session_id, row["agent"])
     tail = facts.assistant_text[-1] if facts.assistant_text else ""
     summary = facts.summaries[-1] if facts.summaries else None
     if summary:
@@ -441,9 +468,8 @@ def local_state(conn: sqlite3.Connection, session_id: str) -> dict | None:
 def load_prompts(conn: sqlite3.Connection, session_id: str, limit: int = 40) -> list[str]:
     """Prompts are parsed on demand: there is no reason to keep them in the DB for the card."""
     row = conn.execute(
-        "SELECT source_path FROM sessions WHERE session_id=?", (session_id,)
+        "SELECT source_path, agent FROM sessions WHERE session_id=?", (session_id,)
     ).fetchone()
     if row is None:
         return []
-    from .parse import parse_file
-    return parse_file(row["source_path"], session_id).user_text[:limit]
+    return agents_mod.parse_session(row["source_path"], session_id, row["agent"]).user_text[:limit]

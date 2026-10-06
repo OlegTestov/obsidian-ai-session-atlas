@@ -3,19 +3,19 @@
 ## Supported versions
 
 Security fixes go into the latest release only. Update to the
-[latest release](https://github.com/OlegTestov/obsidian-session-atlas/releases/latest) before you
+[latest release](https://github.com/OlegTestov/obsidian-ai-session-atlas/releases/latest) before you
 report a problem.
 
 | Version | Supported |
 |---|---|
-| 2.0.x | Yes |
+| 2.1.x | Yes |
 | Older | No |
 
 ## Reporting a vulnerability
 
 Report vulnerabilities privately through GitHub:
 
-1. Open the [Security tab](https://github.com/OlegTestov/obsidian-session-atlas/security) of the
+1. Open the [Security tab](https://github.com/OlegTestov/obsidian-ai-session-atlas/security) of the
    repository.
 2. Choose **Report a vulnerability**. This creates a private security advisory that only you and the
    maintainer can see.
@@ -28,7 +28,7 @@ credit to you unless you ask otherwise.
 
 ## Scope
 
-Session Atlas runs a local HTTP server and executes commands on your Mac, so these are in scope:
+AI Session Atlas runs a local HTTP server and executes commands on your Mac, so these are in scope:
 
 - **The local server** (`atlas/server.py`). It binds to `127.0.0.1` only. A loopback address is not
   treated as a trust boundary, because any web page in a browser can send requests to it. The server
@@ -49,8 +49,11 @@ Session Atlas runs a local HTTP server and executes commands on your Mac, so the
 - **The bridge between the page and the plugin.** The plugin accepts messages only from the
   server's origin, accepts only known message types, parses terminal commands from the page against
   a strict pattern, and acts only on its own terminal tabs.
-- **Destructive actions:** deleting a session, editing `~/.claude/settings.json` for the status line,
-  stopping a Claude Code process to move it into Obsidian.
+- **Destructive actions:** deleting a session (Claude Code files, or Codex session files and their
+  lines in the Codex input history), editing `~/.claude/settings.json` for the status line, stopping
+  a Claude Code or Codex process to move it into Obsidian. Deletion is refused for a running session
+  and for any path outside the agent's own folder or the data folder. Codex's own databases
+  (`state_*.sqlite`) are only read, in read-only mode, and never written.
 - **The release build:** `main.js` embeds the server and the tab scripts and unpacks them into
   `~/Library/Application Support/session-atlas/runtime/`.
 
@@ -59,6 +62,6 @@ Out of scope:
 - Problems in Claude Code, Codex, Obsidian, Python or macOS themselves. Report those to their
   vendors.
 - Attacks that need code already running as your user on the Mac. Such code can read your sessions
-  without Session Atlas.
+  without AI Session Atlas.
 - What the optional AI features send to Anthropic after you confirm the preview. That is the
   documented behaviour; see "Disclosures" in the [README](README.md#disclosures).

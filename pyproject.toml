@@ -1,7 +1,7 @@
 [project]
 name = "session-atlas"
 version = "2.0.0"
-description = "Catalog, search and live view of Claude Code sessions — the local server behind the Session Atlas Obsidian plugin."
+description = "Catalog, search and live view of Claude Code sessions — the local server behind the AI Session Atlas Obsidian plugin."
 readme = "README.md"
 license = { text = "MIT" }
 authors = [{ name = "Oleg Testov" }]

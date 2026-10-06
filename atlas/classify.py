@@ -7,7 +7,7 @@ import re
 import sqlite3
 from datetime import datetime, timezone
 
-from . import actions, config, db, parse, prompts, runner
+from . import actions, agents, config, db, prompts, runner
 from .messages import msg
 
 CLASSIFIER_VERSION = 4
@@ -52,7 +52,7 @@ def build_signal(conn: sqlite3.Connection, session_id: str) -> dict:
     """Fact card for the classifier. The full transcript is not needed and never leaves the machine."""
     row = conn.execute(
         "SELECT title, started_at, last_activity_at, cwd_last, branch_last, human_turns, "
-        "content_hash, source_path FROM sessions WHERE session_id=?", (session_id,)
+        "content_hash, source_path, agent FROM sessions WHERE session_id=?", (session_id,)
     ).fetchone()
     if row is None:
         raise LookupError(session_id)
@@ -63,7 +63,7 @@ def build_signal(conn: sqlite3.Connection, session_id: str) -> dict:
     files = [r["resolved_path"] for r in conn.execute(
         "SELECT DISTINCT resolved_path FROM session_files WHERE session_id=? LIMIT ?",
         (session_id, SIGNAL_FILES))]
-    facts = parse.parse_file(row["source_path"], session_id)
+    facts = agents.parse_session(row["source_path"], session_id, row["agent"])
     prompts = facts.user_text
     thin = not files and not tickets
     extra = [p[:SIGNAL_PROMPT_CHARS] for p in prompts[1:-1][:THIN_PROMPTS]] if thin else []

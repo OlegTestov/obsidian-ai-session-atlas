@@ -135,15 +135,32 @@
                + (pct >= 80 ? I18.i18n("logic.context.soon") : "") };
   }
 
-  // Weekly and 5-hour limits as a line for the top bar; stale data is marked.
+  // "3 h ago" from an age in seconds, the wording of the page's other ages.
+  function limitsAge(seconds) {
+    const min = Math.round(seconds / 60);
+    if (min < 1) return I18.i18n("common.justNow");
+    if (min < 60) return I18.i18n("common.minAgo", { n: min });
+    const h = Math.round(seconds / 3600);
+    return h < 24 ? I18.i18n("common.hoursAgo", { n: h }) : I18.i18n("common.daysAgo", { n: Math.round(h / 24) });
+  }
+
+  // Weekly and 5-hour limits as a line for the top bar. Numbers the server does not call live
+  // (an old status line file, Codex's last run) carry their age; a window at 100% says so.
   function limitsText(l, fmtWhen) {
     if (!l || !l.windows || !l.windows.length) return null;
     const parts = l.windows.map(w => `${w.label} ${Math.round(w.used_percentage)}%`
+      + (w.used_percentage >= 100 ? I18.i18n("logic.limits.reached") : "")
       + (w.resets_at && fmtWhen ? I18.i18n("logic.limits.until", { when: fmtWhen(w.resets_at) }) : ""));
     const top = Math.max(...l.windows.map(w => w.used_percentage));
-    const stale = l.age_seconds != null && l.age_seconds > 6 * 3600;
-    return { text: I18.i18n("logic.limits", { parts: parts.join(" · ") }) + (stale ? I18.i18n("logic.limits.stale") : ""),
-             tone: top >= 90 ? "warn" : top >= 75 ? "mid" : "ok", stale };
+    const age = l.live === true || l.age_seconds == null ? null : limitsAge(l.age_seconds);
+    return { text: I18.i18n("logic.limits", { parts: parts.join(" · ") }),
+             tone: top >= 90 ? "warn" : top >= 75 ? "mid" : "ok", age, reached: top >= 100 };
+  }
+
+  // The poll of "Active": the chat tail first (the detailed view), then whether to ask Codex itself.
+  function activeUrl(messages, agents) {
+    const q = (messages > 1 ? [`msgs=${messages}`] : []).concat((agents || []).includes("codex") ? ["codex_usage=1"] : []);
+    return "/api/active" + (q.length ? "?" + q.join("&") : "");
   }
 
   // Card order does not depend on message freshness, otherwise cards jump on every reply:
@@ -307,7 +324,66 @@
     return notes;
   }
 
-  const api = { cardHistory, applyFrozenOrder, pruneClosedNotes, CLOSED_NOTE_TTL_MS, pluralRu, tasksSummary, jumpMatches, durationText, stepPasses, relPath, terminalStatus, infoParts, shortTokens, arrangeSessions, contextLevel, limitsText, deliveryState, DELIVERY_WAIT_MS, commandMatches,
+  // Agents a session can come from. A row without the field predates Codex support: Claude Code.
+  const AGENTS = ["claude", "codex"];
+  const agentOf = s => (s && s.agent) || "claude";
+
+  /** A stored agent pick: known values in a fixed order; nothing known left means all (the default). */
+  function agentSelection(stored) {
+    const want = Array.isArray(stored) ? stored : [];
+    const known = AGENTS.filter(a => want.includes(a));
+    return known.length ? known : AGENTS.slice();
+  }
+
+  /** The `agent` request parameter; empty when every agent is picked, so the request stays as before. */
+  function agentParam(selected) {
+    const sel = agentSelection(selected);
+    return sel.length === AGENTS.length ? "" : sel.join(",");
+  }
+
+  /** Client-side check (Active). With all picked, a value this page does not know passes too. */
+  function agentPasses(s, selected) {
+    const sel = agentSelection(selected);
+    return sel.length === AGENTS.length || sel.includes(agentOf(s));
+  }
+
+  /** A checkbox click. The last ticked agent stays: an empty pick would show an empty page. */
+  function toggleAgent(selected, agent, on) {
+    const sel = agentSelection(selected);
+    const next = AGENTS.filter(a => (a === agent ? on : sel.includes(a)));
+    return next.length ? next : sel;
+  }
+
+  /** Agents "+ Session" offers: Claude Code always, Codex only when the plugin reports it enabled. */
+  function newSessionAgents(hostAgents) {
+    return hostAgents && hostAgents.codex === true ? AGENTS.slice() : ["claude"];
+  }
+
+  /** The remembered agent while it is still offered, otherwise Claude Code. */
+  function newSessionAgent(offered, remembered) {
+    return offered.includes(remembered) ? remembered : "claude";
+  }
+
+  /**
+   * The dialog option answered with typed text, or null: Claude Code's "Type something." field in a
+   * question, or Codex's decline that tells it what to do instead. The other options are one key.
+   */
+  function freeTextOption(d) {
+    if (!d || !d.answerable || !Array.isArray(d.options)) return null;
+    if (d.agent === "codex") {
+      return d.feedback ? d.options.find(o => o.n === d.feedback.n && o.text === d.feedback.label) || null : null;
+    }
+    return d.kind === "question" ? d.options.find(o => o.freeText) || null : null;
+  }
+
+  /** Typed answer as the terminal field takes it: one line (Enter there sends), at most 4000 characters. */
+  function freeAnswerText(text) {
+    const line = String(text || "").replace(/\s+/g, " ").trim();
+    return line.length > 4000 ? "" : line;
+  }
+
+  const api = { AGENTS, freeTextOption, freeAnswerText, agentOf, agentSelection, agentParam, agentPasses, toggleAgent, newSessionAgents,
+                newSessionAgent, cardHistory, applyFrozenOrder, pruneClosedNotes, CLOSED_NOTE_TTL_MS, pluralRu, tasksSummary, jumpMatches, durationText, stepPasses, relPath, terminalStatus, infoParts, shortTokens, arrangeSessions, contextLevel, limitsText, limitsAge, activeUrl, deliveryState, DELIVERY_WAIT_MS, commandMatches,
                 historyStep, PERIODS, periodOf, valuesOf, passes, filterOptions, parseLayout,
                 backgroundReasons, unansweredPrompt, nextCard, costText };
   root.AtlasLogic = api;           // own namespace: active.js has wrappers

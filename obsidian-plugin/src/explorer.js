@@ -26,7 +26,7 @@ class ExplorerMethods {
     if (!(file instanceof TFile)) return;
     evt.preventDefault();
     evt.stopImmediatePropagation();
-    this.openExplorerFile(file, left).catch((e) => console.error("Session Atlas:", e));
+    this.openExplorerFile(file, left).catch((e) => console.error("AI Session Atlas:", e));
   }
 
   async openExplorerFile(file, newTab) {

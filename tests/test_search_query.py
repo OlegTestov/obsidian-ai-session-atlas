@@ -216,8 +216,12 @@ def _list(base, **params):
 
 
 @pytest.fixture
-def fresh_catch_up(monkeypatch):
-    from atlas import server
+def fresh_catch_up(monkeypatch, atlas_env):
+    from atlas import db, index, server
+    # The full pass a new database is due for is done here: these tests count the passes requests start.
+    conn = db.connect()
+    index.ensure_indexed(conn, root=str(atlas_env["projects"]))
+    conn.close()
     monkeypatch.setattr(server, "_catchup_at", 0.0)
     monkeypatch.setattr(server, "_catchup_proc", None)
     return server
@@ -335,3 +339,47 @@ def test_path_substring_respects_the_automation_filter(atlas_env, write_session)
     index.index_all(conn, root=str(atlas_env["projects"]))
     assert len(search.search(conn, "release.mjs", scope="all")) == 1
     assert len(search.search(conn, "release.mjs", scope="all", include_automation=True)) == 2
+
+
+def test_a_due_full_pass_runs_in_the_background(atlas_env, live_server, fresh_catch_up, monkeypatch):
+    """After a schema upgrade the full pass takes minutes on a large corpus: requests must not wait."""
+    import time
+
+    from atlas import db
+    fake = type("SlowPass", (_FakePass,), {"started": 0, "instant": False})
+    monkeypatch.setattr(fresh_catch_up, "_Pass", fake)
+    conn = db.connect()
+    db.set_meta(conn, "needs_reindex", "1")
+    conn.commit()
+    conn.close()
+    base, _ = live_server
+    started = time.monotonic()
+    assert _list(base)["indexing"] is True
+    assert time.monotonic() - started < fresh_catch_up.CATCHUP_WAIT + 1.0
+    assert fake.started == 1
+    assert _list(base)["indexing"] is True and fake.started == 1      # the running pass is reused
+    conn = db.connect()
+    assert db.get_meta(conn, "needs_reindex") == "1"     # the request left the full pass to the background
+    conn.close()
+    fresh_catch_up._catchup_proc.done.set()
+
+
+def test_the_index_command_runs_a_due_full_pass(atlas_env, write_session):
+    """`atlas index` is the server's background pass: it does the full pass that is due."""
+    import os
+    import subprocess
+    import sys
+
+    from atlas import db
+    from tests.conftest import write_config
+    _indexed(atlas_env, write_session, [user_text("чиню ZZZ-77 до смены настроек")])
+    conn = db.connect()
+    assert conn.execute("SELECT COUNT(*) FROM session_tickets WHERE ticket='ZZZ-77'").fetchone()[0] == 0
+    # A new ticket prefix changes what the unchanged transcript yields: only a full pass sees it.
+    write_config(os.environ["ATLAS_HOME"], {"ticket_prefixes": ["ZZZ"]})
+    env = dict(os.environ, ATLAS_PROJECTS_ROOT=str(atlas_env["projects"]))
+    subprocess.run([sys.executable, "-m", "atlas.cli", "index"], check=True, capture_output=True, env=env,
+                   cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))), timeout=60)
+    assert conn.execute("SELECT COUNT(*) FROM session_tickets WHERE ticket='ZZZ-77'").fetchone()[0] == 1
+    assert db.get_meta(conn, "needs_reindex") == "0"
+    conn.close()

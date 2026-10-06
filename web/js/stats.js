@@ -11,6 +11,7 @@ let statsPrefs = Object.assign({ period: "7d", metric: "cost", auto: false },
   (() => { try { return JSON.parse(window.localStorage.getItem(STATS_KEY) || "{}"); } catch { return {}; } })());
 let statsData = null;
 let statsSeq = 0;
+let statsAgents = null;        // built once: the bar redraws on every load, an open list must survive it
 
 function saveStatsPrefs() {
   try { window.localStorage.setItem(STATS_KEY, JSON.stringify(statsPrefs)); } catch { /* private window */ }
@@ -26,8 +27,10 @@ function renderStatsBar() {
   auto.title = i18n("stats.auto.hint");
   const note = el("span", "shown", statsData ? i18n("stats.updated", { time: new Date().toLocaleTimeString(I18N.locale(),
     { hour: "2-digit", minute: "2-digit" }) }) : "");
+  if (!statsAgents) statsAgents = agentFilter("stats", loadStats);
   $("#stats-bar").replaceChildren(
     segButtons(S.PERIODS, statsPrefs.period, v => { statsPrefs.period = v; saveStatsPrefs(); loadStats(); }),
+    statsAgents,
     auto,
     segButtons(S.METRICS, statsPrefs.metric, v => { statsPrefs.metric = v; saveStatsPrefs(); renderStats(); }, "metric"),
     note);
@@ -38,7 +41,9 @@ async function loadStats() {
   const seq = ++statsSeq;
   if (!statsData) $("#stats-body").replaceChildren(el("p", "empty", i18n("stats.loading")));
   try {
-    const data = await api(`/api/stats?period=${encodeURIComponent(statsPrefs.period)}&auto=${statsPrefs.auto ? 1 : 0}`);
+    const agent = agentQuery("stats");
+    const data = await api(`/api/stats?period=${encodeURIComponent(statsPrefs.period)}&auto=${statsPrefs.auto ? 1 : 0}`
+      + (agent ? `&agent=${encodeURIComponent(agent)}` : ""));
     if (seq !== statsSeq) return;                 // another period was picked while waiting
     statsData = data;
   } catch (e) {
@@ -203,6 +208,9 @@ function renderStats() {
   const openSession = r => { setView("search"); openCard(r.session_id); };
   const panels = el("div", "spanels");
   panels.append(
+    // Per agent only once the server sends it; older servers have no such field.
+    ...(d.by_agent ? [breakdown(i18n("stats.panel.byAgent"), d.by_agent,
+                                { label: r => agentName(r.name || r.key) })] : []),
     breakdown(i18n("stats.panel.domains"), d.domains),
     breakdown(i18n("stats.panel.models"), d.models),
     breakdown(i18n("stats.panel.topics"), d.topics),
@@ -216,3 +224,5 @@ function renderStats() {
 }
 
 registerView("stats", { tab: "#view-stats", panel: "#stats", show: loadStats });
+// The agent list sits above the page: if the bar scrolls sideways, close it.
+$("#stats-bar").addEventListener("scroll", () => closeFilters());

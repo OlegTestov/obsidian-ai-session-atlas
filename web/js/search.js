@@ -51,7 +51,8 @@ async function loadList(keepScroll) {
   }
   if (!data.count) {
     if (data.error) { box.replaceChildren(el("p", "empty", data.error)); return; }
-    const filtered = state.q || state.domains.size || state.project || state.topic || state.since;
+    const filtered = state.q || state.domains.size || state.project || state.topic || state.since
+      || agentFiltered("search");
     box.replaceChildren(...lead, el("p", "empty", filtered
       ? i18n("search.nothingFiltered")
       : i18n("search.nothing")));
@@ -84,6 +85,8 @@ async function loadList(keepScroll) {
     }
 
     const meta = el("div", "meta");
+    meta.appendChild(agentBadge(s));
+    if (s.converted_from) meta.appendChild(convertedBadge(s));
     const projects = s.projects || [];
     if (projects.length) {
       meta.appendChild(el("span", "pill acc", projects[0]
@@ -234,6 +237,12 @@ async function watchClassify(jobId) {
 // --- events ------------------------------------------------------------------
 
 let timer;
+// Narrow pane: the filters other than search fold behind a button (atlas.css, max-width 900px).
+$("#filters-toggle").addEventListener("click", () => {
+  const open = $("#filters").classList.toggle("open");
+  $("#filters-toggle").setAttribute("aria-expanded", String(open));
+});
+
 $("#q").addEventListener("input", e => {
   state.q = e.target.value.trim();
   window.clearTimeout(timer); timer = window.setTimeout(loadList, 220);
@@ -263,6 +272,7 @@ $("#rename-cancel").addEventListener("click", () => $("#rename").close());
 document.addEventListener("click", e => {
   const menu = document.getElementById("menu");
   if (menu) menu.classList.add("hidden");
+  closeResumeWith();
   closeFilters();                 // the Active dropdown filters close on the same outside click
   selectCardByClick(e);           // a click on an Active card selects it for the keyboard
 });

@@ -1,5 +1,7 @@
 """Active sessions: live Claude Code processes found via `~/.claude/sessions/<pid>.json`.
 
+Live Codex threads come from `codex_live` and get cards with the same keys.
+
 The transcript does not show if a session is open (`lsof` is empty: each write opens and closes it).
 Claude Code writes a file per process with `sessionId`, `startedAt`, `kind` and `status`.
 The file outlives its process, so liveness is checked by PID and the process start time.
@@ -15,7 +17,7 @@ import subprocess
 import time
 from datetime import datetime, timedelta, timezone
 
-from . import costs, paths, prompt_queue, search, tasks
+from . import codex_parse, codex_procs, codex_tail, costs, paths, prompt_queue, search, tasks
 from .parse import COMPACT_PREFIX
 from .resolve import HEADLESS_ENTRYPOINTS
 
@@ -48,19 +50,22 @@ def shell_tasks(pid: int, table: dict) -> int:
                if row[0] == pid and len(row) > 2 and SHELL_TASK_MARK in row[2])
 
 
-def live_subagents(transcript: str | None, now: float | None = None) -> int:
-    if not transcript:
-        return 0
-    folder = os.path.join(transcript[:-len(".jsonl")], "subagents")
+def live_subagents(*transcripts: str | None, now: float | None = None) -> int:
+    """Subagents writing right now. A parked conversation's job links the subagents running at
+    the hand-over to the parent's files, so one file is counted once."""
     now = now or time.time()
-    count = 0
-    for path in glob.glob(os.path.join(glob.escape(folder), "*.jsonl")):
-        try:
-            if now - os.stat(path).st_mtime < AGENT_FRESH_SECONDS:
-                count += 1
-        except OSError:
+    fresh = set()
+    for transcript in transcripts:
+        if not transcript:
             continue
-    return count
+        folder = os.path.join(transcript[:-len(".jsonl")], "subagents")
+        for path in glob.glob(os.path.join(glob.escape(folder), "*.jsonl")):
+            try:
+                if now - os.stat(path).st_mtime < AGENT_FRESH_SECONDS:
+                    fresh.add(os.path.realpath(path))
+            except OSError:
+                continue
+    return len(fresh)
 
 
 # What wakes a session without you: /loop (ScheduleWakeup, CronCreate) and /goal.
@@ -149,6 +154,54 @@ def _alive(pid: int, proc_start: str | None, table: dict) -> bool:
     if pid not in table:
         return False
     return proc_start is None or table[pid][1] == " ".join(proc_start.split())
+
+
+def alive_jobs(files: list[dict], table: dict) -> dict[str, dict]:
+    """Background jobs (`kind: bg`) by their short id, only those whose process still runs."""
+    return {str(d["jobId"]): d for d in files
+            if d.get("jobId") and _alive(d["pid"], d.get("procStart"), table)}
+
+
+def parked_job(data: dict, jobs: dict) -> dict | None:
+    """Claude Code 2.1.289+ parks a session: the work goes on in a background job with its own
+    process, session file and transcript, while the tab's own file says `idle`."""
+    job_id = data.get("parkedJobId")
+    return jobs.get(str(job_id)) if job_id else None
+
+
+def parked_status(own: dict, job: dict | None) -> tuple:
+    """(status, waitingFor) of a card: a dialog in either process blocks typing, then work."""
+    if job is None:
+        return own.get("status"), own.get("waitingFor") if own.get("status") == "waiting" else None
+    for data in (job, own):
+        if data.get("status") == "waiting":
+            return "waiting", data.get("waitingFor")
+    for data in (job, own):
+        if data.get("status") in ("busy", "shell"):
+            return data["status"], None
+    return job.get("status") or own.get("status"), None
+
+
+def _newer(job_found: dict, own_found: dict) -> bool:
+    return _as_datetime(job_found["last_at"]) >= _as_datetime(own_found["last_at"])
+
+
+def live_transcript(conn: sqlite3.Connection, session_id: str, projects_root: str | None = None,
+                    sessions_dir: str | None = None, table: dict | None = None) -> str | None:
+    """The transcript a card reads: a parked session's job when it has the newer messages."""
+    from .index import PROJECTS_ROOT
+    projects_root = projects_root or PROJECTS_ROOT
+    path = _transcript(conn, session_id, projects_root)
+    files = _read_files(sessions_dir or SESSIONS_DIR)
+    own = next((d for d in files if str(d["sessionId"]) == session_id and d.get("parkedJobId")),
+               None)
+    if own is None:
+        return path
+    job = parked_job(own, alive_jobs(files, process_table() if table is None else table))
+    job_path = _transcript(conn, str(job["sessionId"]), projects_root) if job else None
+    if job_path and _newer(last_messages(job_path), last_messages(path)):
+        return job_path
+    return path
 
 
 def ancestors(pid: int, table: dict) -> list[int]:
@@ -253,6 +306,9 @@ def last_messages(path: str | None) -> dict:
            "interrupted_at": None}
     if not path:
         return out
+    if codex_parse.session_id_of(path):
+        found = codex_tail.read(path)
+        return {k: found[k] for k in out}
     try:
         with open(path, "rb") as fh:
             fh.seek(0, os.SEEK_END)
@@ -325,8 +381,7 @@ def markdown_tail(text: str, limit: int = PREVIEW_CHARS) -> str:
 
 def last_reply(conn: sqlite3.Connection, session_id: str) -> dict | None:
     """Claude's full last reply, for "show in full" on the card."""
-    from .index import PROJECTS_ROOT
-    path = _transcript(conn, session_id, PROJECTS_ROOT)
+    path = live_transcript(conn, session_id)
     if not path:
         return None
     found = last_messages(path)
@@ -339,7 +394,8 @@ def _transcript(conn: sqlite3.Connection, session_id: str, projects_root: str) -
     if row and row["source_path"] and os.path.exists(row["source_path"]):
         return row["source_path"]
     found = glob.glob(os.path.join(glob.escape(projects_root), "*", session_id + ".jsonl"))
-    return found[0] if found else None
+    # A Codex thread not indexed yet: its rollout is looked up by the thread id.
+    return found[0] if found else codex_procs.find_rollout(session_id)
 
 
 def _read_files(sessions_dir: str) -> list[dict]:
@@ -361,77 +417,113 @@ def is_interactive(data: dict) -> bool:
 
 
 def list_active(conn: sqlite3.Connection, sessions_dir: str | None = None,
-                projects_root: str | None = None, table: dict | None = None) -> list[dict]:
-    """Live interactive sessions, the one with the most recent message first."""
+                projects_root: str | None = None, table: dict | None = None,
+                run=None, codex_home: str | None = None) -> list[dict]:
+    """Live interactive sessions of both agents, the one with the most recent message first."""
+    # Both build on this module's helpers.
+    from . import codex_live, jobs as bg_jobs
     from .index import PROJECTS_ROOT
-    from .relocate import host_app  # relocate itself depends on this module
     sessions_dir = sessions_dir or SESSIONS_DIR
     projects_root = projects_root or PROJECTS_ROOT
     table = process_table() if table is None else table
     out = []
-    for data in _read_files(sessions_dir):
-        pid = data["pid"]
-        if not is_interactive(data) or not _alive(pid, data.get("procStart"), table):
-            continue
-        sid = str(data["sessionId"])
-        meta = search._load_session(conn, sid) or {}
-        path = _transcript(conn, sid, projects_root)
-        found = last_messages(path)
-        tail = found["last_at"]
-        reply = found["reply"] or ""
-        cost = costs.session_cost(path)
-        plan = schedule_state(path)
-        background = {"shells": shell_tasks(pid, table), "agents": live_subagents(path),
-                      "wake_at": plan["wake_at"], "crons": plan["crons"], "goal": plan["goal"]}
-        # The index is not mixed in: its last_activity_at also counts service records.
-        last = tail
-        out.append({
-            "session_id": sid,
-            "pid": pid,
-            "ancestors": ancestors(pid, table),
-            "host_app": host_app(pid, table),
-            "status": data.get("status"),
-            "activity": activity(data.get("status"), background),
-            "background": background,
-            # waiting: a dialog is open (a multiple-choice question, a command permission).
-            "waiting_for": data.get("waitingFor") if data.get("status") == "waiting" else None,
-            "cwd": data.get("cwd"),
-            "indexed": bool(meta),
-            "title": meta.get("title") or data.get("name") or sid[:8],
-            "card_line": meta.get("card_line"),
-            "last_prompt": meta.get("last_prompt"),
-            "projects": meta.get("projects", []),
-            "topic": meta.get("topic"),
-            "domains": meta.get("domains", []),
-            "tickets": meta.get("tickets", []),
-            "sensitivity": meta.get("sensitivity"),
-            "human_turns": meta.get("human_turns"),
-            # Recorded by Claude Code on exit (as of a date) and the current estimate from tokens.
-            "cost_usd": cost["recorded"] if cost["recorded"] is not None else meta.get("cost_usd"),
-            "cost_recorded_at": cost["recorded_at"],
-            "cost_now": cost["now"],
-            "cost_partial": cost["partial"],
-            "context_tokens": cost["context_tokens"],
-            "context_window": costs.context_window(cost["context_model"], cost["context_tokens"])
-            if cost["context_tokens"] else None,
-            "started_at": meta.get("started_at") or _iso_ms(data.get("startedAt")),
-            "process_started_at": _iso_ms(data.get("startedAt")),
-            "last_message_at": last,
-            # Reply tail: a question to you is usually at the end; the start reports work done.
-            "reply_tail": markdown_tail(reply),
-            "reply_len": len(reply),
-            "reply_at": found["reply_at"],
-            "progress": (found["progress"] or "")[-PREVIEW_CHARS:] or None,
-            "prompt": markdown_tail(found["prompt"]) if found["prompt"] else None,
-            "prompt_at": found["prompt_at"],
-            "prompt_images": found["prompt_images"],
-            "interrupted_at": found["interrupted_at"],
-            "queued": prompt_queue.queued_messages(path),
-            "tasks": tasks.progress(sid),
-            "progress_at": found["progress_at"],
-        })
+    files = _read_files(sessions_dir)
+    jobs = alive_jobs(files, table)
+    for data in files:
+        if is_interactive(data) and _alive(data["pid"], data.get("procStart"), table):
+            out.append(_claude_card(conn, data, jobs, table, projects_root))
+    # A job whose tab closed runs on; `claude attach` shows it in a tab again, and the card follows
+    # that tab's attach client (the job's own process lives under Claude Code's daemon).
+    parked = {str(d.get("parkedJobId")) for d in files if d.get("parkedJobId")
+              and is_interactive(d) and _alive(d["pid"], d.get("procStart"), table)}
+    clients = bg_jobs.attach_clients(table)
+    for job_id, data in sorted(bg_jobs.running_jobs(files, table).items()):
+        if job_id in clients and job_id not in parked:
+            out.append(_claude_card(conn, data, jobs, table, projects_root, tab_pid=clients[job_id]))
+    out += codex_live.list_live(conn, table, run=run, home=codex_home)
     out.sort(key=lambda s: _as_datetime(s["last_message_at"]), reverse=True)
     return out
+
+
+def _claude_card(conn: sqlite3.Connection, data: dict, jobs: dict, table: dict, projects_root: str,
+                 tab_pid: int | None = None) -> dict:
+    """A Claude Code card. tab_pid: the process in the tab when it is not the session's own (attach)."""
+    from .relocate import host_app  # relocate itself depends on this module
+    pid = data["pid"]
+    sid = str(data["sessionId"])
+    meta = search._load_session(conn, sid) or {}
+    path = _transcript(conn, sid, projects_root)
+    found = last_messages(path)
+    # Parked: the job is this card's work; its transcript copies the parent's and goes on.
+    job = parked_job(data, jobs)
+    job_sid = str(job["sessionId"]) if job else None
+    job_path = _transcript(conn, job_sid, projects_root) if job else None
+    live_sid, live_path = sid, path
+    if job_path:
+        job_found = last_messages(job_path)
+        if _newer(job_found, found):
+            found, live_sid, live_path = job_found, job_sid, job_path
+    tail = found["last_at"]
+    reply = found["reply"] or ""
+    cost = costs.parked_cost(path, job_path) if job_path else costs.session_cost(path)
+    plan = schedule_state(live_path)
+    status, waiting_for = parked_status(data, job)
+    background = {"shells": shell_tasks(pid, table) + (shell_tasks(job["pid"], table) if job else 0),
+                  "agents": live_subagents(path, job_path),
+                  "wake_at": plan["wake_at"], "crons": plan["crons"], "goal": plan["goal"]}
+    # The index is not mixed in: its last_activity_at also counts service records.
+    last = tail
+    return {
+        "session_id": sid,
+        "agent": "claude",
+        # The process in the tab: input from the card goes there, the tab is found by its parents.
+        "pid": tab_pid or pid,
+        "ancestors": ancestors(tab_pid or pid, table),
+        "host_app": host_app(tab_pid or pid, table),
+        "status": status,
+        "activity": activity(status, background),
+        "background": background,
+        # waiting: a dialog is open (a multiple-choice question, a command permission).
+        "waiting_for": waiting_for,
+        # A parked session's background job and the transcript the card reads.
+        "job_session_id": job_sid,
+        "transcript_session_id": live_sid,
+        "cwd": data.get("cwd"),
+        "indexed": bool(meta),
+        "title": meta.get("title") or data.get("name") or sid[:8],
+        "card_line": meta.get("card_line"),
+        "last_prompt": meta.get("last_prompt"),
+        "projects": meta.get("projects", []),
+        "topic": meta.get("topic"),
+        "domains": meta.get("domains", []),
+        "tickets": meta.get("tickets", []),
+        "sensitivity": meta.get("sensitivity"),
+        "human_turns": meta.get("human_turns"),
+        # Recorded by Claude Code on exit (as of a date) and the current estimate from tokens.
+        "cost_usd": cost["recorded"] if cost["recorded"] is not None else meta.get("cost_usd"),
+        "cost_recorded_at": cost["recorded_at"],
+        "cost_now": cost["now"],
+        "cost_partial": cost["partial"],
+        "model": cost["context_model"],
+        "context_tokens": cost["context_tokens"],
+        "context_window": costs.context_window(cost["context_model"], cost["context_tokens"])
+        if cost["context_tokens"] else None,
+        "started_at": meta.get("started_at") or _iso_ms(data.get("startedAt")),
+        "process_started_at": _iso_ms(data.get("startedAt")),
+        "last_message_at": last,
+        # Reply tail: a question to you is usually at the end; the start reports work done.
+        "reply_tail": markdown_tail(reply),
+        "reply_len": len(reply),
+        "reply_at": found["reply_at"],
+        "progress": (found["progress"] or "")[-PREVIEW_CHARS:] or None,
+        "prompt": markdown_tail(found["prompt"]) if found["prompt"] else None,
+        "prompt_at": found["prompt_at"],
+        "prompt_images": found["prompt_images"],
+        "interrupted_at": found["interrupted_at"],
+        "queued": prompt_queue.queued_messages(live_path),
+        "tasks": (tasks.progress(job_sid) if job_sid else None) or tasks.progress(sid),
+        "progress_at": found["progress_at"],
+    }
 
 
 RECENT_HOURS = 8
@@ -439,7 +531,8 @@ RECENT_LIMIT = 8
 
 
 def recently_closed(conn: sqlite3.Connection, live_ids: set[str], now: datetime | None = None,
-                    hours: int = RECENT_HOURS, limit: int = RECENT_LIMIT) -> list[dict]:
+                    hours: int = RECENT_HOURS, limit: int = RECENT_LIMIT,
+                    agents: list[str] | None = None) -> list[dict]:
     """Interactive sessions with work in the last few hours whose process has already exited.
 
     The "Active" card disappears with the process; from here one button returns to the session
@@ -447,14 +540,23 @@ def recently_closed(conn: sqlite3.Connection, live_ids: set[str], now: datetime 
     """
     now = now or datetime.now(timezone.utc)
     cutoff = (now - timedelta(hours=hours)).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    picked = f" AND s.agent IN ({','.join('?' * len(agents))})" if agents else ""
+    # A parked conversation is one entry: its job while the parent's card is live, then the job
+    # (resuming it opens the whole conversation), not the parent it was handed over from.
     rows = conn.execute(
-        """SELECT s.session_id, COALESCE(u.title, s.title) AS title, s.last_activity_at,
-                  s.human_turns, s.cost_usd, s.cwd_last,
+        f"""SELECT s.session_id, s.agent, COALESCE(u.title, s.title) AS title, s.last_activity_at,
+                  s.human_turns, s.cost_usd, s.cwd_last, s.continued_from,
                   (SELECT c.summary FROM classification c WHERE c.session_id = s.session_id) AS summary
              FROM sessions s LEFT JOIN user_overrides u ON u.session_id = s.session_id
-            WHERE s.session_kind = 'interactive' AND s.last_activity_at >= ?
-            ORDER BY s.last_activity_at DESC LIMIT ?""", (cutoff, limit + len(live_ids))).fetchall()
-    return [dict(r) for r in rows if r["session_id"] not in live_ids][:limit]
+            WHERE s.session_kind = 'interactive' AND s.last_activity_at >= ?{picked}
+              AND NOT EXISTS (SELECT 1 FROM sessions j WHERE j.session_id = s.continued_in)
+            ORDER BY s.last_activity_at DESC LIMIT ?""",
+        (cutoff, *(agents or []), limit + len(live_ids))).fetchall()
+    out = [dict(r) for r in rows
+           if r["session_id"] not in live_ids and r["continued_from"] not in live_ids]
+    for r in out:
+        del r["continued_from"]
+    return out[:limit]
 
 
 def _as_datetime(value: str | None) -> datetime:

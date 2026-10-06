@@ -1,0 +1,27 @@
+/* "+ Session" folder field (folder-pick.js): a combobox. The list overlays the prompt and stops
+   above the Start row; its max-height is set from the layout, the rest is here. */
+#newsess .fp{position:relative}
+#newsess #ns-dir{width:100%;min-width:0;font:inherit;font-size:13px;color:var(--ink);background:var(--bg);
+  border:1px solid var(--line);border-radius:6px;padding:6px 8px}
+#newsess #ns-dir:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 1px var(--accent)}
+#newsess #ns-dir[aria-invalid=true]{border-color:var(--warn)}
+#ns-dir-list{position:absolute;left:0;right:0;top:calc(100% + 3px);z-index:5;margin:0;padding:4px;
+  list-style:none;max-height:240px;overflow-y:auto;overscroll-behavior:contain;background:var(--panel);
+  border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 22px var(--shade)}
+#ns-dir-list .fp-opt{display:flex;gap:10px;align-items:baseline;padding:4px 8px;border-radius:6px;
+  cursor:pointer;color:var(--ink);font-size:13px;line-height:1.4}
+#ns-dir-list .fp-opt:hover{background:var(--bg)}
+#ns-dir-list .fp-opt[aria-selected=true]{background:var(--accent-soft);box-shadow:inset 2px 0 0 var(--accent)}
+#ns-dir-list .fp-text{flex:1 1 auto;min-width:0;display:flex;overflow:hidden;white-space:nowrap}
+#ns-dir-list .fp-dir{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;color:var(--dim)}
+#ns-dir-list .fp-name{flex:0 0 auto;max-width:100%;overflow:hidden;text-overflow:ellipsis;font-weight:600}
+#ns-dir-list .fp-side:empty{display:none}
+#ns-dir-list .fp-side{flex:0 0 auto;font-size:11.5px;color:var(--dim);white-space:nowrap}
+#newsess .fp-quick{display:flex;flex-wrap:wrap;gap:6px}
+#newsess .fp-quick:empty{display:none}
+#newsess .fp-quick .fp-root{font-size:12px;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#newsess .fp-hint{margin:0;font-size:12px;color:var(--dim);overflow-wrap:anywhere}
+#newsess .fp-hint:empty{display:none}
+#newsess .fp-hint.ok:empty{display:block}
+#newsess .fp-hint.ok::before{content:"✓ ";color:var(--accent);font-weight:600}
+#newsess .fp-hint.bad{color:var(--warn)}

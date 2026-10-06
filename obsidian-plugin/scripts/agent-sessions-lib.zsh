@@ -133,6 +133,12 @@ codex_session_pid() {
 # OBS_AGENT_RUNNING_ANSWER answers for tests (y or n).
 take_over_running() {
   local agent="$1" session_id="$2" pid="$3" answer="${OBS_AGENT_RUNNING_ANSWER:-}"
+  # A shared Codex server owns multiple threads. Stopping it would interrupt all of them.
+  if [[ "$agent" == Codex && "$(ps -o command= -p "$pid" 2>/dev/null)" == *' app-server '* ]]; then
+    print "This session is held by a shared Codex server; not stopping it to move one thread."
+    print "Close the original session first, then reopen it here."
+    return 1
+  fi
   print "This $agent session is already running in another process (pid $pid)."
   print "Two processes on one conversation would mix their replies, so this tab does not start it."
   if [[ -z "$answer" ]]; then

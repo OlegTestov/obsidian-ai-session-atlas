@@ -139,7 +139,9 @@ def test_routes_need_confirmation_and_index_the_new_session(converted, live_serv
         try:
             with urllib.request.urlopen(f"{base}/api/session/{r['session_id']}", timeout=20) as resp:
                 card = json.loads(resp.read())
-            break
+            if card.get("session_id") == r["session_id"]:
+                break
+            time.sleep(0.05)              # a missing card currently answers 200 with an error object
         except urllib.error.HTTPError:
             time.sleep(0.05)
     assert card["converted_from"]["session_id"] == X.CLAUDE_ID and card["agent"] == "codex"

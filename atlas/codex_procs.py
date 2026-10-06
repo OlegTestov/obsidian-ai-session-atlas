@@ -158,9 +158,19 @@ def all_rollouts(session_id: str, home: str | None = None) -> list[str]:
 
 
 def _from_argv(command: str, home: str) -> str | None:
-    """Without lsof: `codex resume <id>` names its thread on the command line."""
-    m = UUID.search(command or "")
-    return find_rollout(m.group(0), home) if m else None
+    """Only an explicit resume id, never a UUID mentioned in a prompt or a fork's source."""
+    parts = (command or "").split()
+    skip = False
+    for i, word in enumerate(parts[1:], 1):
+        if skip:
+            skip = False
+        elif word.startswith("-"):
+            skip = word in VALUE_FLAGS
+        else:
+            if word == "resume" and i + 1 < len(parts) and UUID.fullmatch(parts[i + 1]):
+                return find_rollout(parts[i + 1], home)
+            return None
+    return None
 
 
 def rollouts_for(table: dict, run=None, home: str | None = None, fresh: bool = False,
@@ -173,10 +183,21 @@ def rollouts_for(table: dict, run=None, home: str | None = None, fresh: bool = F
     stale = [pid for pid, key in keys.items()
              if fresh or key not in _map_cache or now - _map_cache[key][0] > MAP_TTL]
     if stale:
-        found = open_rollouts(stale, run, home)
+        # A modern CLI delegates to a shared daemon. Its explicit resume id can be displayed
+        # only while that exact file is open there; never choose the daemon's newest file.
+        daemons = [pid for pid, row in table.items() if len(row) > 2
+                   and len(row[2].split()) > 1 and BINARY.search(row[2].split()[0])
+                   and row[2].split()[1] == "app-server"]
+        candidates = daemons if any(_from_argv(table[p][2], home) for p in stale) else []
+        found = open_rollouts(stale + candidates, run, home)
+        shared = {p for pid in candidates for p in (found or {}).get(pid, [])}
         for pid in stale:
             if found is not None:
-                _map_cache[keys[pid]] = (now, main_rollout(found.get(pid, [])))
+                path = main_rollout(found.get(pid, []))
+                resumed = _from_argv(table[pid][2], home) if not path else None
+                if resumed in shared and not session_meta(resumed).get("subagent"):
+                    path = resumed
+                _map_cache[keys[pid]] = (now, path)
             elif keys[pid] not in _map_cache:      # keep an older answer; retried next time
                 _map_cache[keys[pid]] = (0.0, _from_argv(table[pid][2], home))
     for key in [k for k in _map_cache if k not in keys.values()]:

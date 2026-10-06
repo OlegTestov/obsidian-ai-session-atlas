@@ -26,7 +26,7 @@ OTHER = "01a10b55-a179-7ab2-acc6-8aa1f5b5ce3b"
 PARENT = "aaaaaaaa-1111-4111-8111-111111111111"
 JOB_SID = "eeeeeeee-2222-4222-8222-222222222222"
 JOB = "eeeeeeee"
-STUB = '#!/bin/zsh\nprint -r -- "${(pj:\\x1f:)@}" >> "$CALLS"\n'
+STUB = '#!/bin/zsh\n[[ "$1" == --help ]] && exit 0\nprint -r -- "${(pj:\\x1f:)@}" >> "$CALLS"\n'
 
 
 @pytest.fixture
@@ -302,3 +302,26 @@ def test_codex_thread_open_in_another_codex_is_not_resumed_twice(tab):
     finally:
         holder.kill()
         holder.wait()
+
+
+def test_shared_codex_daemon_is_never_terminated_to_move_one_thread(tab):
+    path = _rollout(tab["codex"], TID, _current(TID, str(tab["work"])))
+    holder = subprocess.Popen(["/bin/bash", "-c",
+                               'exec -a "codex app-server --managed-daemon" sleep 60 < "$1"',
+                               "x", str(path)])
+    try:
+        time.sleep(0.3)
+        out, calls = _run_out(tab, "codex", "cx-shared", "resume", TID, answer="y")
+        assert holder.poll() is None, "moving one thread must not stop the shared daemon"
+        assert "shared" in out.lower() and calls == []
+    finally:
+        holder.kill()
+        holder.wait()
+
+
+def test_new_codex_launch_disables_daemon_only_when_supported(tab):
+    binary = Path(tab["env"]["PATH"].split(":")[0]) / "codex"
+    binary.write_text(STUB.replace('[[ "$1" == --help ]] && exit 0',
+                      '[[ "$1" == --help ]] && { print -- --no-daemon; exit 0; }', 1))
+    _rollout(tab["codex"], TID, _current(TID, str(tab["work"])))
+    assert tab["run"]("codex", "cx-daemon-mode", "resume", TID)[0] == ["--no-daemon", "resume", TID]

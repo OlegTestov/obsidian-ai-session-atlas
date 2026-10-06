@@ -127,6 +127,33 @@ def test_a_subagent_rollout_held_by_the_same_process_is_not_the_card(codex_home,
     assert got == {101: main}
 
 
+def test_resumed_cli_without_open_rollout_uses_only_its_daemon_held_thread(codex_home, write_rollout):
+    main = write_rollout([cx_meta(TID), *turn()], thread_id=TID)
+    other = write_rollout([cx_meta(SUB), *turn()], thread_id=SUB)
+    t = table((101, f"{CODEX} resume {TID}"), (102, CODEX),
+              (201, f"{CODEX} app-server --listen unix:// --managed-daemon"))
+    fake = FakeLsof({201: [main, other]})
+    assert codex_procs.rollouts_for(t, run=fake) == {101: main}
+    # The daemon is shared: a file held there is not proof that a CLI may be controlled.
+    assert not codex_procs.owner(101, TID, t, run=fake)
+    assert not codex_procs.owner(201, TID, t, run=fake)
+
+
+def test_daemon_fallback_does_not_treat_a_prompt_uuid_as_a_resume(codex_home, write_rollout):
+    main = write_rollout([cx_meta(TID), *turn()], thread_id=TID)
+    t = table((101, f"{CODEX} please resume {TID}"),
+              (201, f"{CODEX} app-server --listen unix:// --managed-daemon"))
+    assert codex_procs.rollouts_for(t, run=FakeLsof({201: [main]})) == {}
+
+
+def test_daemon_fallback_requires_the_resumed_thread_to_be_open(codex_home, write_rollout):
+    write_rollout([cx_meta(TID), *turn()], thread_id=TID)
+    other = write_rollout([cx_meta(SUB), *turn()], thread_id=SUB)
+    t = table((101, f"{CODEX} resume {TID}"),
+              (201, f"{CODEX} app-server --listen unix:// --managed-daemon"))
+    assert codex_procs.rollouts_for(t, run=FakeLsof({201: [other]})) == {}
+
+
 # --- turn state from the rollout tail ---
 
 def test_status_busy_until_the_turn_ends(write_rollout):

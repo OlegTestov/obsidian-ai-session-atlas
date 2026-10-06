@@ -23,7 +23,6 @@ body{margin:0;font:14px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",syste
   padding:0;color:var(--dim)}
 #app{display:grid;grid-template-columns:250px 420px 1fr;height:calc(100vh - 32px)}
 #app.hidden,#active.hidden,#stats.hidden{display:none}
-[hidden]{display:none!important}
 #active{height:calc(100vh - 32px);display:flex;flex-direction:column;min-height:0}
 /* Compact: 4 wide and 5 high; a row is a fifth of the window minus the bars
    (41 tabs + 40 header + 44 filters), the gaps and two section titles. */
@@ -590,3 +589,5 @@ button.feedbtn[aria-pressed="true"]{background:var(--accent-soft);border-color:v
   font-size:10.5px;line-height:16px;color:var(--dim);white-space:nowrap;vertical-align:1px}
 .agent-badge.codex{border-color:var(--dim);color:var(--ink)}
 .acard .tags .agent-badge{flex:0 0 auto;align-self:center}
+/* The two labels also have ID-scoped flex rules; hidden state must win in the cascade. */
+[hidden],#auto-classify-label[hidden],#ns-agent-row[hidden]{display:none}

@@ -205,6 +205,12 @@ developer policies.
   the plugin never reads Codex's login. OpenAI prices come from a table inside the plugin, not
   from the network.
 
+**Clipboard.** The plugin reads clipboard text only when you choose Paste in a terminal's context
+menu, and sends it to that terminal as typed input. Copy actions write the selected terminal text
+or the requested catalog text to the clipboard. Pasting into a reply field can also attach images
+from the paste event. The plugin does not poll the clipboard or keep a clipboard history. Pasted
+content can become part of the agent's transcript or an attached image, as with ordinary input.
+
 **Files outside the vault.**
 
 | Path | Access | Why |
@@ -244,6 +250,9 @@ Delete the new session like any other if you no longer need it.
   running Claude Code and Codex sessions, and runs `lsof` on interactive `codex` processes to see
   which session file each one holds open (Codex writes no file per process).
 - Your login shell (`$SHELL -l -i`), once per start, to read `PATH` and find `claude` and `codex`.
+- Codex terminal tabs probe `codex --help` and use `--no-daemon` when supported. Each tab then
+  keeps its own session process, so session switches and terminal controls can be verified.
+  Existing CLI instances and your Codex settings are left alone.
 - Terminal tabs: `/bin/sh`, `cat` and `/usr/bin/script` provide a pseudo-terminal, which runs your
   login shell, a tab script from the data folder, and then `claude` or `codex`. The tab passes Claude
   Code a `SessionStart`/`UserPromptSubmit` hook through `--settings` for that launch only; your
@@ -256,6 +265,7 @@ Delete the new session like any other if you no longer need it.
   process in the other terminal app (it exits as on Ctrl+C) and resumes the session in an Obsidian
   tab (`claude --resume` or `codex resume`). It checks first that the process belongs to that
   session; for Codex, that the process holds this session's file open.
+  A shared Codex app server is never stopped to move a single session.
 
 **AI features.** Off by default. While they are off, the server refuses every request that would call
 a model.
@@ -342,7 +352,7 @@ The plugin adds nothing to the Codex home, so there is nothing to remove there.
 | Codex sessions are missing from Search | The catalog reads `$CODEX_HOME` or `~/.codex`. If you moved the Codex home with `CODEX_HOME`, Obsidian must have the variable in its environment too (for example `launchctl setenv CODEX_HOME /path/to/codex-home`, then restart Obsidian). Then press **Rebuild**. Check that Codex is ticked in the **Agent** filter. |
 | A Codex tab starts a new session after a restart instead of the old one | The tab script looks for the session in `~/.codex/sessions/` only. With a moved Codex home, resume the session from Search. |
 | A Codex card never shows that it waits for you | Codex permission prompts are read from the screen of the plugin's own tab. Move the session into a tab with **Move**. |
-| A running Codex session is missing from Active | Only an interactive `codex` in a terminal is shown; `codex exec` runs and the Codex app are not. The session is matched with `lsof` (`/usr/sbin/lsof`, part of macOS). |
+| A running Codex session is missing from Active | Only interactive terminal clients are shown. Plugin tabs use `--no-daemon` when available. For external clients using a shared server, only an explicit `codex resume <id>` can be matched; switching threads inside that external client cannot be tracked reliably. Restart that client with `codex --no-daemon resume <id>` for full tracking. The shared server is never stopped by Move. |
 
 ## Development
 

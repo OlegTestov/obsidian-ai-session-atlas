@@ -19,11 +19,13 @@ def _env(tmp_path):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     stub = bin_dir / "claude"
-    stub.write_text('#!/bin/zsh\nprint -r -- "${(pj:\\x1f:)@}" >> "$CALLS"\n', encoding="utf-8")
+    stub.write_text('#!/bin/zsh\n[[ "$1" == --help ]] && exit 0\nprint -r -- "${(pj:\\x1f:)@}" >> "$CALLS"\n',
+                    encoding="utf-8")
     stub.chmod(0o755)
     projects = tmp_path / "projects"
     (projects / "-some-project").mkdir(parents=True, exist_ok=True)
-    (projects / "-some-project" / f"{OLD}.jsonl").write_text("{}\n", encoding="utf-8")
+    (projects / "-some-project" / f"{OLD}.jsonl").write_text("{}\n",
+                    encoding="utf-8")
     work = tmp_path / "work dir"
     work.mkdir(exist_ok=True)
     env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "HOME": str(tmp_path), "CALLS": str(tmp_path / "calls"),
@@ -51,7 +53,8 @@ def test_seed_resume_then_registry_wins(tmp_path):
     first = run(tmp_path, "claude", "inst-1", "resume", OLD)[-1]
     assert _tail(first) == ["--resume", OLD]
     # The hook recorded a different session in the tab, so a restart resumes it, not the initial one.
-    (tmp_path / "projects" / "-some-project" / f"{NEW}.jsonl").write_text("{}\n", encoding="utf-8")
+    (tmp_path / "projects" / "-some-project" / f"{NEW}.jsonl").write_text("{}\n",
+                    encoding="utf-8")
     env, work = _env(tmp_path)
     subprocess.run(["zsh", "-c", f'source "{SCRIPTS}/agent-registry-lib.zsh"; '
                     f'upsert_resume_id claude inst-1 {NEW}'], cwd=work, env=env, check=True)
@@ -84,7 +87,8 @@ def test_ribbon_tab_without_seed_starts_a_new_session(tmp_path):
 
 def test_extra_args_come_from_settings_file_without_expansion(tmp_path):
     (tmp_path / "args").mkdir()
-    (tmp_path / "args" / "claude").write_text("--chrome --channels 'plugin:a b' $HOME `id`\n", encoding="utf-8")
+    (tmp_path / "args" / "claude").write_text("--chrome --channels 'plugin:a b' $HOME `id`\n",
+                    encoding="utf-8")
     call = run(tmp_path, "claude", "inst-9")[-1]
     assert call[:5] == ["--chrome", "--channels", "plugin:a b", "$HOME", "`id`"]
 
@@ -125,7 +129,8 @@ def test_codex_tab_finds_sessions_in_a_moved_codex_home(tmp_path):
     """CODEX_HOME moves Codex's data; the tab script looks there, not in ~/.codex."""
     env, work = _env(tmp_path)
     stub = tmp_path / "bin" / "codex"
-    stub.write_text('#!/bin/zsh\nprint -r -- "${(pj:\\x1f:)@}" >> "$CALLS"\n', encoding="utf-8")
+    stub.write_text('#!/bin/zsh\n[[ "$1" == --help ]] && exit 0\nprint -r -- "${(pj:\\x1f:)@}" >> "$CALLS"\n',
+                    encoding="utf-8")
     stub.chmod(0o755)
     moved = tmp_path / "elsewhere" / "codex"
     day = moved / "sessions" / "2026" / "09" / "01"
@@ -146,10 +151,11 @@ def _codex_stub(tmp_path, env, work):
     env["CODEX_HOME"] = str(home)
     stub = tmp_path / "bin" / "codex"
     stub.write_text(
-        '#!/bin/zsh\nprint -r -- "${(pj:\\x1f:)@}" >> "$CALLS"\n'
+        '#!/bin/zsh\n[[ "$1" == --help ]] && exit 0\nprint -r -- "${(pj:\\x1f:)@}" >> "$CALLS"\n'
         'd="$CODEX_HOME/sessions/2026/10/03"; mkdir -p "$d"\n'
         f'print -r -- \'{{"timestamp":"t","type":"session_meta","payload":{{"id":"{NEW}","cwd":"\'"$PWD"\'"}}}}\' '
-        f'> "$d/rollout-2026-10-03T10-00-00-{NEW}.jsonl"\n', encoding="utf-8")
+        f'> "$d/rollout-2026-10-03T10-00-00-{NEW}.jsonl"\n',
+                    encoding="utf-8")
     stub.chmod(0o755)
 
 
@@ -183,7 +189,8 @@ def test_codex_new_without_a_thread_does_not_repeat_the_prompt(tmp_path):
     """No thread was recorded (Codex quit at once): a restart opens a bare Codex, not the prompt again."""
     env, work = _env(tmp_path)
     stub = tmp_path / "bin" / "codex"
-    stub.write_text('#!/bin/zsh\nprint -r -- "${(pj:\\x1f:)@}" >> "$CALLS"\n', encoding="utf-8")
+    stub.write_text('#!/bin/zsh\n[[ "$1" == --help ]] && exit 0\nprint -r -- "${(pj:\\x1f:)@}" >> "$CALLS"\n',
+                    encoding="utf-8")
     stub.chmod(0o755)
     env["CODEX_HOME"] = str(tmp_path / "codex-home")
     for _ in range(2):

@@ -7,6 +7,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.2.1] - 2026-10-06
+
+### Fixed
+
+- Hidden page controls use selector specificity instead of a CSS `!important` override.
+- Resumed external Codex CLI clients using a shared app server appear in Active when their explicit
+  thread is open in that server. Other daemon-held threads are not guessed to belong to that client.
+- Codex terminal tabs use `--no-daemon` when supported, preserving per-tab session detection and
+  input checks. A shared Codex server is never terminated to move one session.
+- The conversion integration test waits for the new card rather than treating a pre-index error
+  object as a completed response.
+
+### Changed
+
+- Clipboard disclosures describe explicit copy and paste actions and how pasted content is used.
+
 ## [2.2.0] - 2026-10-06
 
 ### Added
@@ -194,7 +210,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Setup checks in settings: macOS, `python3` (3.8+), Claude Code, Codex, server, index rebuild, and an
   opt-in switch for subscription limits in the status line.
 
-[Unreleased]: https://github.com/OlegTestov/obsidian-ai-session-atlas/compare/2.2.0...HEAD
+[Unreleased]: https://github.com/OlegTestov/obsidian-ai-session-atlas/compare/2.2.1...HEAD
+[2.2.1]: https://github.com/OlegTestov/obsidian-ai-session-atlas/compare/2.2.0...2.2.1
 [2.2.0]: https://github.com/OlegTestov/obsidian-ai-session-atlas/compare/2.1.1...2.2.0
 [2.1.1]: https://github.com/OlegTestov/obsidian-ai-session-atlas/compare/2.1.0...2.1.1
 [2.1.0]: https://github.com/OlegTestov/obsidian-ai-session-atlas/compare/2.0.0...2.1.0

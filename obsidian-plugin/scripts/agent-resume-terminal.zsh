@@ -228,6 +228,12 @@ run_codex() {
   extra_args codex
   local -a flags=("${reply[@]}")
 
+  # New Codex CLIs share an app-server that owns every rollout. Keep our tabs independently
+  # observable and controllable; older CLIs without this flag keep their ordinary launch.
+  if codex --help 2>/dev/null | /usr/bin/grep -q -- '--no-daemon'; then
+    [[ "${flags[(Ie)--no-daemon]}" == 0 ]] && flags=(--no-daemon "${flags[@]}")
+  fi
+
   if [[ -n "$session_id" ]] && codex_session_exists "$session_id"; then
     if running="$(codex_session_pid "$session_id")" && ! take_over_running Codex "$session_id" "$running"; then
       return 0

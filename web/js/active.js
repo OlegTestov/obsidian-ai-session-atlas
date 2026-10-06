@@ -1,8 +1,8 @@
 // Active: sections and rendering.
 // Classic script: shares one global scope with the other page files.
 /* exported renderActive -- used by other page scripts */
-function section(title, list) {
-  const box = el("section", "asec");
+function section(title, list, cls) {
+  const box = el("section", "asec" + (cls ? " " + cls : ""));
   const h = el("h3", null, title);
   h.appendChild(el("span", "n", String(list.length)));
   box.appendChild(h);
@@ -140,7 +140,8 @@ function renderActive(skipKey, force) {
   const act = s => s.activity || s.status;
   const isWorking = s => act(s) === "busy" || act(s) === "background";
   // Order comes from arrangeSessions: pinned, then by start; freshness does not reorder.
-  const waitingYou = shown.filter(s => !isWorking(s));
+  const decide = shown.filter(s => act(s) === "waiting");
+  const waitingYou = shown.filter(s => !isWorking(s) && act(s) !== "waiting");
   const working = shown.filter(isWorking);
   // Scroll inside a reply is kept per card: otherwise the text jumps to the top every 5 seconds.
   const inner = new Map([...grid.querySelectorAll(".acard")].map(c => {
@@ -157,7 +158,10 @@ function renderActive(skipKey, force) {
   const caret = focused && { id: focused.dataset.id, start: focused.selectionStart,
                              end: focused.selectionEnd, top: focused.scrollTop };
   const scroll = grid.scrollTop;
-  grid.replaceChildren(section(i18n("active.sectionWaiting"), waitingYou), section(i18n("active.sectionWorking"), working), ...closed());
+  // A dialog blocks the session: such cards get their own section on top, shown only when there are any.
+  const sections = [decide.length ? section(i18n("active.sectionDecision"), decide, "decide") : null,
+                    section(i18n("active.sectionWaiting"), waitingYou), section(i18n("active.sectionWorking"), working)];
+  grid.replaceChildren(...sections.filter(Boolean), ...closed());
   stickChats(grid);
   grid.scrollTop = scroll;
   if (caret) {

@@ -32,8 +32,9 @@ KEY = "sk-ant-api03-probe-" + "x" * 60
 ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07|\x1b[()][0-9A-Za-z]|\r")
 
 
-def standin(requests: list) -> ThreadingHTTPServer:
-    """Anthropic Messages and OpenAI Responses, streamed; every request body is kept."""
+def standin(requests: list, tool_use=None) -> ThreadingHTTPServer:
+    """Anthropic Messages and OpenAI Responses, streamed; every request body is kept.
+    tool_use(body) may return {"name", "input"} to answer a Messages request with that tool call."""
     def sse(events):
         return "".join(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n" for e in events).encode()
 
@@ -58,6 +59,22 @@ def standin(requests: list) -> ThreadingHTTPServer:
             requests.append({"path": self.path, "body": body})
             if "count_tokens" in self.path:
                 return self._send(b'{"input_tokens": 100}')
+            call = tool_use(body) if tool_use and self.path.startswith("/v1/messages") else None
+            if call:
+                usage = {"input_tokens": 10, "output_tokens": 1}
+                return self._send(sse([
+                    {"type": "message_start", "message": {"id": "msg_probe_tool", "type": "message",
+                                                          "role": "assistant", "model": body.get("model"),
+                                                          "content": [], "usage": usage,
+                                                          "stop_reason": None, "stop_sequence": None}},
+                    {"type": "content_block_start", "index": 0,
+                     "content_block": {"type": "tool_use", "id": "toolu_probe_1", "name": call["name"], "input": {}}},
+                    {"type": "content_block_delta", "index": 0,
+                     "delta": {"type": "input_json_delta", "partial_json": json.dumps(call["input"])}},
+                    {"type": "content_block_stop", "index": 0},
+                    {"type": "message_delta", "delta": {"stop_reason": "tool_use", "stop_sequence": None},
+                     "usage": {"output_tokens": 2}},
+                    {"type": "message_stop"}]), "text/event-stream")
             if self.path.startswith("/v1/messages"):
                 usage = {"input_tokens": 10, "output_tokens": 1}
                 return self._send(sse([

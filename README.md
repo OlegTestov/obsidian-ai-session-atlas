@@ -23,7 +23,8 @@ server on `127.0.0.1`, and nothing is sent anywhere unless you turn on the optio
   it is doing, what it said last, whether it waits for you. For sessions running in an AI Session
   Atlas terminal tab you can also:
   - answer permission prompts and questions (for Codex: approvals, questions and choices, read from
-    the tab's screen);
+    the tab's screen); a question with a preview per option shows the preview under the options,
+    👁 shows another option's, and a note can go with the answer;
   - read and approve a Claude Code plan, or send it back with comments;
   - type a reply (Claude Code replies can carry images), stop the agent, run slash commands.
 

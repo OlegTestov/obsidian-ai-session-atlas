@@ -2,9 +2,10 @@
 import { PluginSettingTab, Setting } from "obsidian";
 import { renderStatus, renderCatalog, renderAi, renderAdvanced } from "./settings-server";
 import { NOTICE_HOLDS, DEFAULT_NOTICE_HOLD } from "./notify";
+import { DEFAULT_FONT_SIZE } from "./constants";
 
 const DEFAULT_SETTINGS = { notify: true, systemNotify: true, explorerClicks: false, language: "en",
-                           agents: {}, agentArgs: { claude: "", codex: "" }, terminalFontSize: 13,
+                           agents: {}, agentArgs: { claude: "", codex: "" }, terminalFontSize: DEFAULT_FONT_SIZE,
                            cardMessages: 10, noticeHold: DEFAULT_NOTICE_HOLD };
 
 class AtlasSettingTab extends PluginSettingTab {
@@ -72,7 +73,7 @@ class AtlasSettingTab extends PluginSettingTab {
       .setName(t("settings.fontSize"))
       .addSlider((slider) => slider
         .setLimits(9, 22, 1)
-        .setValue(Number(this.plugin.settings.terminalFontSize) || 13)
+        .setValue(Number(this.plugin.settings.terminalFontSize) || DEFAULT_FONT_SIZE)
         .setDynamicTooltip()
         .onChange(async (value) => {
           this.plugin.settings.terminalFontSize = value;

@@ -10,7 +10,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import * as os from "os";
 import * as path from "path";
 import { spawnPty } from "./pty";
-import { AGENT_VIEW_TYPE } from "./constants";
+import { AGENT_VIEW_TYPE, DEFAULT_FONT_SIZE } from "./constants";
 import { registry, keepHeldTabs, holdForReclaim } from "./held";
 import { selectWithModifier, isCopyKey, copySelection, pasteClipboard, menuItems, copyTarget } from "./term-copy";
 
@@ -100,7 +100,7 @@ class AgentTerminalView extends ItemView {
     const settings = this.plugin.settings || {};
     const term = new Terminal({
       fontFamily: getComputedStyle(document.body).getPropertyValue("--font-monospace") || "Menlo, monospace",
-      fontSize: Number(settings.terminalFontSize) || 13,
+      fontSize: Number(settings.terminalFontSize) || DEFAULT_FONT_SIZE,
       theme: themeFromCss(document.body),
       scrollback: 10000,
       macOptionIsMeta: true,

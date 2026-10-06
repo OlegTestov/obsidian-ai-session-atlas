@@ -21,6 +21,7 @@ const SCREEN_POLL_MS = 100;
 const SCREEN_WAIT_MS = 1500;
 const MAX_FEEDBACK_CHARS = 4000;
 const pause = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
+const DOWN = "\x1b[B";
 const STOPPABLE = new Set(["busy", "shell", "waiting"]);
 
 class InputMethods {
@@ -126,8 +127,10 @@ class InputMethods {
   async answerDialog(target, data) {
     const reply = (ok, reason) => this.answerPage(target, { type: "answered", ok, reason: reason || null,
       sessionId: data.sessionId, nonce: data.nonce });
-    if (!Number.isInteger(data.option) || data.option < 1 || data.option > 9
-        || typeof data.text !== "string") {
+    // "Chat about this" in a question with previews has no number: it is asked for by name.
+    const chat = data.chat === true && data.option === undefined;
+    if (!chat && (!Number.isInteger(data.option) || data.option < 1 || data.option > 9
+        || typeof data.text !== "string")) {
       return reply(false, this.t("input.badRequest"));
     }
     const { error, tab, state } = await this.checkTarget(data);
@@ -135,6 +138,7 @@ class InputMethods {
     if (state.status !== "waiting") return reply(false, this.t("input.dialogClosed"));
     if (state.agent === "codex") return this.codexAnswer(tab, data, reply);
     const dialog = parseDialog(this.screenLines(tab.leaf));
+    if (dialog && dialog.pick === "enter") return this.enterAnswer(tab, dialog, data, reply);
     if (data.feedback !== undefined) return this.typedAnswer(tab, dialog, data, reply);
     if (!sameOption(dialog, data.option, data.text)) {
       return reply(false, this.t("input.dialogChanged"));
@@ -180,6 +184,83 @@ class InputMethods {
     }
     stdin.write("\r");
     reply(true);
+  }
+
+  /** Waits until the re-read screen shows the same question in the state the test expects. */
+  async seenQuestion(tab, dialog, test) {
+    for (let waited = 0; waited <= SCREEN_WAIT_MS; waited += SCREEN_POLL_MS) {
+      await pause(SCREEN_POLL_MS);
+      const d = parseDialog(this.screenLines(tab.leaf));
+      if (d && d.pick === "enter" && d.question === dialog.question && test(d)) return d;
+    }
+    return null;
+  }
+
+  /**
+   * A question with previews: a digit only moves the highlight, Enter answers the highlighted option,
+   * n opens a note that goes with it, and the unnumbered "Chat about this" is reached with ↓. Each key
+   * is followed by a re-read of the screen; Enter is pressed only when it shows what was asked for.
+   */
+  async enterAnswer(tab, dialog, data, reply) {
+    if (!dialog.answerable) return reply(false, this.t("input.dialogChanged"));
+    const stdin = await this.ptyInput(tab.leaf);
+    if (!stdin) return reply(false, this.t("input.noInput"));
+    if (data.chat === true) {
+      if (!dialog.chat) return reply(false, this.t("input.dialogChanged"));
+      stdin.write(DOWN.repeat(dialog.options.length - dialog.highlighted + 1));
+      if (!(await this.seenQuestion(tab, dialog, (d) => d.chat && d.chat.selected))) {
+        return reply(false, this.t("input.highlightMoved"));
+      }
+      stdin.write("\r");
+      return reply(true);
+    }
+    const option = dialog.options.find((o) => o.n === data.option);
+    if (!option || option.text !== data.text) return reply(false, this.t("input.dialogChanged"));
+    const note = data.note === undefined ? "" : cleanInput(String(data.note)).replace(/\s+/g, " ").trim();
+    if (note.length > MAX_FEEDBACK_CHARS || (data.note !== undefined && !note)) {
+      return reply(false, this.t("input.feedbackBad"));
+    }
+    if (note && !dialog.notes) return reply(false, this.t("input.dialogChanged"));
+    stdin.write(String(option.n));
+    if (!(await this.seenQuestion(tab, dialog, (d) => d.highlighted === option.n && !(d.chat && d.chat.selected)))) {
+      return reply(false, this.t("input.highlightMoved"));
+    }
+    if (note) {
+      stdin.write("n");
+      if (!(await this.seenQuestion(tab, dialog, (d) => d.highlighted === option.n && d.notes && d.notes.editing
+                                     && !d.notes.text))) {
+        return reply(false, this.t("input.feedbackField"));
+      }
+      stdin.write(note);
+      if (!(await this.seenQuestion(tab, dialog, (d) => d.highlighted === option.n && d.notes
+                                     && squash(d.notes.text) === squash(note)))) {
+        return reply(false, this.t("input.textMismatch"));
+      }
+    }
+    stdin.write("\r");
+    return reply(true);
+  }
+
+  /** Shows another option's preview: its digit moves the highlight, nothing is answered. */
+  async previewOption(target, data) {
+    const reply = (dialog, reason) => this.answerPage(target, { type: "dialog", sessionId: data.sessionId,
+      ptyPid: data.ptyPid, dialog: dialog || null, reason: reason || null });
+    if (!Number.isInteger(data.option) || data.option < 1 || data.option > 9 || typeof data.text !== "string") {
+      return reply(null, this.t("input.badRequest"));
+    }
+    const { error, tab, state } = await this.checkTarget(data);
+    if (error) return reply(null, error);
+    if (state.status !== "waiting" || state.agent === "codex") return reply(null, this.t("input.noDialog"));
+    const dialog = parseDialog(this.screenLines(tab.leaf));
+    const option = dialog && dialog.pick === "enter" && dialog.options.find((o) => o.n === data.option);
+    if (!option || option.text !== data.text) return reply(dialog, this.t("input.dialogChanged"));
+    // An open note would take the digit as text.
+    if (dialog.notes && dialog.notes.editing) return reply(dialog, this.t("input.noteOpen"));
+    const stdin = await this.ptyInput(tab.leaf);
+    if (!stdin) return reply(dialog, this.t("input.noInput"));
+    stdin.write(String(option.n));
+    const moved = await this.seenQuestion(tab, dialog, (d) => d.highlighted === option.n);
+    return moved ? reply(moved) : reply(parseDialog(this.screenLines(tab.leaf)), this.t("input.highlightMoved"));
   }
 
   /**

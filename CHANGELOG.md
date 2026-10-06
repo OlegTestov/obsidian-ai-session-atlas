@@ -7,6 +7,25 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.2.2] - 2026-10-06
+
+### Added
+
+- Active: a Claude Code question with a preview per option is read correctly (the options from the left
+  column, the preview from its frame) and shown with the options in a column, the highlighted
+  option's preview below them, 👁 to see another option's preview (it moves the highlight in the tab,
+  nothing is answered), a note sent along with the answer, and Chat about this.
+- Active: cards waiting for a decision get their own section on top and an amber strip naming the
+  question, instead of a red outline that looked like a selected card.
+
+### Fixed
+
+- In the detailed view a long "now" line of a working session was drawn over the message below it.
+
+### Changed
+
+- New installs start agent terminal tabs at font size 12; a size already saved in the settings is kept.
+
 ## [2.2.1] - 2026-10-06
 
 ### Fixed
@@ -210,7 +229,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Setup checks in settings: macOS, `python3` (3.8+), Claude Code, Codex, server, index rebuild, and an
   opt-in switch for subscription limits in the status line.
 
-[Unreleased]: https://github.com/OlegTestov/obsidian-ai-session-atlas/compare/2.2.1...HEAD
+[Unreleased]: https://github.com/OlegTestov/obsidian-ai-session-atlas/compare/2.2.2...HEAD
+[2.2.2]: https://github.com/OlegTestov/obsidian-ai-session-atlas/compare/2.2.1...2.2.2
 [2.2.1]: https://github.com/OlegTestov/obsidian-ai-session-atlas/compare/2.2.0...2.2.1
 [2.2.0]: https://github.com/OlegTestov/obsidian-ai-session-atlas/compare/2.1.1...2.2.0
 [2.1.1]: https://github.com/OlegTestov/obsidian-ai-session-atlas/compare/2.1.0...2.1.1

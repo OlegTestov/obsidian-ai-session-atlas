@@ -20,12 +20,18 @@ function requestDialogs() {
   });
   [...dialogs.keys()].forEach(sid => { if (!waiting.has(sid)) dialogs.delete(sid); });
   [...freeModes.keys()].forEach(sid => { if (!waiting.has(sid)) { freeModes.delete(sid); freeDrafts.delete(sid); } });
+  [...previewNoteOpen].forEach(sid => { if (!waiting.has(sid)) { previewNoteOpen.delete(sid); previewNoteDrafts.delete(sid); } });
 }
 
 // Plugin messages about dialogs. true means the message is handled here.
 function handleDialogMessage(d) {
   if (d.type === "dialog" && typeof d.sessionId === "string") {
-    dialogs.set(d.sessionId, { dialog: d.dialog || null, reason: d.reason || null });
+    // A dialog with a reason is a re-read after an action that did not go through (preview, highlight).
+    if (d.dialog && d.reason) dialogs.set(d.sessionId, { dialog: d.dialog, reason: null });
+    else dialogs.set(d.sessionId, { dialog: d.dialog || null, reason: d.reason || null });
+    const shown = dialogNotes.get(d.sessionId);
+    if (d.dialog && d.reason) dialogNotes.set(d.sessionId, { note: d.reason, cls: "bad" });
+    else if (shown && shown.note === i18n("active.previewLoading")) dialogNotes.delete(d.sessionId);
     renderActive();
     return true;
   }
@@ -36,6 +42,8 @@ function handleDialogMessage(d) {
       dialogs.delete(sid);
       freeModes.delete(sid);              // a failed answer keeps the typed text for another try
       freeDrafts.delete(sid);
+      previewNoteOpen.delete(sid);
+      previewNoteDrafts.delete(sid);
       dialogNotes.set(sid, { note: i18n("active.answerSent"), cls: "ok" });
       window.setTimeout(() => { dialogNotes.delete(sid); loadActive(); }, 1500);
     } else {
@@ -91,6 +99,7 @@ function dialogBlock(s, pid, full) {
     return box;
   }
   if (d.kind === "plan" && agentControls(s).plan) return planBlock(s, pid, d, full, busy, note, box);
+  if (d.pick === "enter") return previewBlock(s, pid, d, full, busy, note, box);
   if (d.kind === "panel") {
     // Command panel (/usage, /effort…). If its answer is already in the card, the close button is there too.
     box.appendChild(el("div", "t", i18n("active.panelOpen", { title: d.title })));

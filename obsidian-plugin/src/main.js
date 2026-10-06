@@ -224,6 +224,10 @@ class SessionAtlasPlugin extends Plugin {
       this.answerDialog(event.source, data);
       return;
     }
+    if (data.type === "preview-option") {
+      this.previewOption(event.source, data);
+      return;
+    }
     if (data.type === "ensure-server") {
       this.raiseServer(event.source);
       return;

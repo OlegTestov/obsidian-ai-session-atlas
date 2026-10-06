@@ -658,6 +658,68 @@ describe("dialog answers", () => {
     expectReply(await feedback({ 3: screens.plan_selected, [note]: screens.plan_typed }, true,
                                { feedback: note.replace(", а файл", ",\nа файл") }), null, true, ["3", note, "\r"]));
 
+  // A question with previews (Claude Code 2.1.291): a digit only moves the highlight, Enter answers it.
+  const DOWN = "\x1b[B";
+  const previewPress = async (start, reactions, extra, type = "answer-dialog", expectOk = true) => {
+    screen = screens[start];
+    onType = (chunk) => { if (reactions[chunk] !== undefined) screen = screens[reactions[chunk]]; };
+    const r = await exchange(dialogMsg(type, extra), expectOk ? 400 : 3500);
+    onType = null;
+    return r;
+  };
+  it("preview question: options from the left column, the preview from the frame, notes and chat", async () => {
+    screen = screens.preview_narrow;
+    const d = (await ask()).dialog;
+    assert.equal(d.pick, "enter");
+    assert.deepEqual(d.options.map((o) => o.text), ["Yes, all 5", "Yes, with changes", "Not now"]);
+    assert.equal(d.highlighted, 1);
+    assert.equal(d.preview.n, 1);
+    assert.ok(d.preview.lines.some((l) => l.includes("Answer in the language of the")));
+    assert.ok(!JSON.stringify(d).match(/[┌┐└┘│]/), "no frame characters");
+    assert.deepEqual(d.notes, { editing: false, text: "" });
+    assert.deepEqual(d.chat, { selected: false });
+    screen = screens.preview_notes_typed;
+    assert.deepEqual((await ask()).dialog.notes, { editing: true, text: "keep it short" });
+  });
+  it("preview question: digit, highlight checked on screen, Enter", async () =>
+    expectReply(await previewPress("preview_wide", { 3: "preview_digit_moved" }, { option: 3, text: "Not now" }),
+                "answered", true, ["3", "\r"]));
+  it("preview question: the highlight did not move, Enter is not pressed", async () =>
+    expectReply(await previewPress("preview_wide", {}, { option: 3, text: "Not now" }, "answer-dialog", false),
+                "answered", false, ["3"]));
+  it("preview question: another option under that digit is refused before any key", async () =>
+    expectReply(await previewPress("preview_wide", {}, { option: 3, text: "Yes, all 5" }, "answer-dialog", false),
+                "answered", false, []));
+  it("preview question: a note goes with the option (digit, n, text, check, Enter)", async () =>
+    expectReply(await previewPress("preview_narrow", { n: "preview_notes", "keep it short": "preview_notes_typed" },
+                                   { option: 1, text: "Yes, all 5", note: "keep it short" }),
+                "answered", true, ["1", "n", "keep it short", "\r"]));
+  it("preview question: the note on screen differs, Enter is not pressed", async () =>
+    expectReply(await previewPress("preview_narrow", { n: "preview_notes" },
+                                   { option: 1, text: "Yes, all 5", note: "keep it short" }, "answer-dialog", false),
+                "answered", false, ["1", "n", "keep it short"]));
+  it("preview question: Chat about this is reached with arrows and answered with Enter", async () =>
+    expectReply(await previewPress("preview_wide", { [DOWN.repeat(3)]: "preview_chat_selected" }, { chat: true }),
+                "answered", true, [DOWN.repeat(3), "\r"]));
+  it("preview question: the highlight did not reach Chat about this, Enter is not pressed", async () =>
+    expectReply(await previewPress("preview_wide", {}, { chat: true }, "answer-dialog", false),
+                "answered", false, [DOWN.repeat(3)]));
+  it("Chat about this by name on an ordinary question is refused (there it is a numbered option)", async () =>
+    expectReply(await previewPress("question", {}, { chat: true }, "answer-dialog", false), "answered", false, []));
+  it("preview question: 👁 moves the highlight only and returns the new screen", async () => {
+    const r = await previewPress("preview_wide", { 2: "preview_wide_down" }, { option: 2, text: "Yes, with changes" },
+                                 "preview-option");
+    assert.equal(r.reply.type, "dialog");
+    assert.equal(r.reply.dialog.highlighted, 2);
+    assert.ok(r.reply.dialog.preview.lines.join(" ").includes("PREVIEW-TWO"));
+    assert.deepEqual(r.typed, ["2"]);
+  });
+  it("preview question: 👁 while a note is open types nothing", async () => {
+    const r = await previewPress("preview_notes", {}, { option: 2, text: "Yes, with changes" }, "preview-option");
+    assert.match(r.reply.reason, /заметка/);
+    assert.deepEqual(r.typed, []);
+  });
+
   // A numbered list in Claude's answer under the rule is not a dialog without the "Esc to cancel" footer.
   it("a list without the dialog footer is not a dialog", async () => {
     screen = screens.question.filter((l) => !/Esc to cancel/.test(l)).concat(["❯ ", "? for shortcuts"]);
@@ -1610,6 +1672,7 @@ describe("plugin start-up", () => {
     assert.equal(alone.ribbons.map((r) => r.icon).join(), "library,bot,codex-bot");
     assert.equal(alone.settings.explorerClicks, false);   // changes core explorer clicks: opt-in
     assert.equal(alone.settings.language, "en");
+    assert.equal(alone.settings.terminalFontSize, 12);
   });
 });
 

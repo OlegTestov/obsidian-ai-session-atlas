@@ -1,12 +1,23 @@
 // Active: the card, the last reply and the quick reply field.
 // Classic script: shares one global scope with the other page files.
-/* exported activeCard, FEED_SVG, HIDE_SVG, STOP_SVG -- used by other page scripts */
+/* exported activeCard, decisionStrip, FEED_SVG, HIDE_SVG, STOP_SVG -- used by other page scripts */
+/** The strip on top of a card whose session waits for a decision: what is asked, when known. */
+function decisionStrip(s) {
+  const got = dialogs.get(s.session_id);
+  const title = got && got.dialog && got.dialog.title;
+  const strip = el("div", "decide", "❓ " + i18n("active.decisionStrip") + (title ? " · " + title : ""));
+  strip.setAttribute("role", "status");
+  strip.title = s.waiting_for ? `${i18n("active.status.waitingHint")} (${s.waiting_for})` : i18n("active.status.waitingHint");
+  return strip;
+}
+
 function activeCard(s) {
   const full = activeMode === "full";
   const act = s.activity || s.status;
   const card = el("article", "acard" + (act === "busy" ? " busy" : act === "background" ? " busy bg"
     : act === "waiting" ? " waiting" : ""));
   card.dataset.id = s.session_id;
+  if (act === "waiting") card.appendChild(decisionStrip(s));
   const head = el("div", "head");
   head.appendChild(pinButton(s));
   const title = el("div", "t", s.title || s.session_id);

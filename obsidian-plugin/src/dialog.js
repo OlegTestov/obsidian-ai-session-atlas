@@ -22,6 +22,87 @@ const FEEDBACK_HINT = /shift\+tab to approve with this feedback/;
 const FEEDBACK_LABEL = "Tell Claude what to change";
 const PLAN_END = /ctrl\+g to edit|~\/\.claude\/plans\//;
 
+// A question with a preview per option (checked on Claude Code 2.1.291): options on the left, a framed
+// preview of the highlighted one on the right, "Notes:" under the frame, an unnumbered "Chat about this"
+// below the separator. Here a digit only moves the highlight (and the preview); Enter answers the
+// highlighted option, n opens a note that Enter sends along with it.
+const BOX_TOP = /┌─{3,}┐/;
+const BOX_BOTTOM = /└─{3,}┘/;
+const NOTES = /^Notes:\s?(.*)$/;
+const NOTES_EMPTY = /^press n to add notes$/;
+const NOTES_PLACEHOLDER = /^Add notes on this/;
+const NOTES_EDITING = /ctrl\+g to edit/;
+const CHAT_ROW = /^\s*(❯\s*)?Chat about this\s*$/;
+
+function parsePreviewQuestion(rows, footer) {
+  let top = -1;
+  for (let i = footer - 1; i >= 0 && footer - i <= 60; i--) {
+    if (BOX_TOP.test(rows[i])) { top = i; break; }
+  }
+  if (top < 0) return null;
+  const col = rows[top].indexOf("┌");
+  let bottom = -1;
+  for (let i = top + 1; i < footer; i++) if (BOX_BOTTOM.test(rows[i])) { bottom = i; break; }
+  if (bottom < 0 || col < 4) return null;
+  let start = -1;
+  for (let i = top; i >= 0 && top - i <= 20; i--) if (RULE.test(rows[i])) { start = i; break; }
+  if (start < 0) return null;
+  // Rows split at the frame's left edge: the option column, and the frame or the notes line.
+  const left = (row) => row.slice(0, col).replace(/\s+$/, "");
+  const right = (row) => row.slice(col);
+  const options = [];
+  let highlighted = null;
+  let firstOption = -1;
+  for (let i = start + 1; i < footer && !RULE.test(rows[i]); i++) {
+    const m = OPTION.exec(left(rows[i]));
+    if (m && Number(m[3]) === options.length + 1) {
+      if (firstOption < 0) firstOption = i;
+      options.push({ n: Number(m[3]), text: m[4], detail: "" });
+      if (m[2]) highlighted = Number(m[3]);
+    } else if (options.length && left(rows[i]).trim()) {
+      options[options.length - 1].text += " " + left(rows[i]).trim();   // a long label wraps in its column
+    }
+  }
+  if (!options.length || highlighted === null) return null;
+  const head = rows.slice(start + 1, Math.min(firstOption, top)).map((l) => l.trim()).filter(Boolean);
+  const tabs = head.length && /^(←\s*)?[☐☒✔]/.test(head[0]) ? head[0] : null;
+  if (!tabs) return null;
+  const lines = [];
+  for (let i = top + 1; i < bottom; i++) {
+    const inner = right(rows[i]);
+    const end = inner.lastIndexOf("│");
+    lines.push((end > 0 ? inner.slice(1, end) : inner.slice(1)).replace(/^ /, "").replace(/\s+$/, ""));
+  }
+  let notes = null;
+  for (let i = bottom + 1; i < footer && !RULE.test(rows[i]); i++) {
+    const m = NOTES.exec(right(rows[i]).trim());
+    if (m) { notes = m[1].trim(); break; }
+  }
+  const footerText = rows.slice(footer - 1, footer + 2).join(" ");
+  const editing = NOTES_EDITING.test(footerText);
+  const noteText = notes === null || NOTES_EMPTY.test(notes) || NOTES_PLACEHOLDER.test(notes) ? "" : notes;
+  let chat = null;
+  for (let i = bottom + 1; i < footer + 1 && i < rows.length; i++) {
+    const m = CHAT_ROW.exec(rows[i]);
+    if (m) { chat = { selected: !!m[1] }; break; }
+  }
+  const multi = /Submit/.test(tabs) || (tabs.match(/[☐☒✔]/g) || []).length > 1;
+  return {
+    kind: "question",
+    title: tabs.replace(/[←→]/g, "").split(/[☐☒✔]/).map((t) => t.trim()).filter((t) => t && t !== "Submit").join(" · "),
+    details: [],
+    question: head.slice(1).join(" "),
+    options,
+    pick: "enter",                              // a digit only moves the highlight; Enter answers
+    highlighted,
+    preview: { n: highlighted, lines },
+    notes: notes === null ? null : { editing, text: noteText },
+    chat,
+    answerable: !multi,
+    reason: multi ? "dialog.multi" : null,
+  };
+}
+
 function parsePlanDialog(rows) {
   let pathRow = -1;
   let planPath = null;
@@ -80,6 +161,8 @@ function parseDialog(lines) {
     if (FOOTER.test(rows[i])) { footer = i; break; }
   }
   if (footer < 0) return null;
+  const preview = parsePreviewQuestion(rows, footer);
+  if (preview) return preview;
   // The first "1." option above the footer; the block starts at the rule above it.
   let first = -1;
   for (let i = footer - 1; i >= 0 && footer - i <= 40; i--) {

@@ -1,6 +1,6 @@
 {
   "name": "session-atlas",
-  "version": "2.2.1",
+  "version": "2.2.2",
   "private": true,
   "description": "AI Session Atlas: an Obsidian plugin to search, watch and resume Claude Code and Codex sessions on macOS.",
   "license": "MIT",

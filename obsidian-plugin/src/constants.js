@@ -7,6 +7,8 @@ const ATLAS_PORT = 8787;
 const ATLAS_ORIGIN = `http://127.0.0.1:${ATLAS_PORT}`;
 // A development install (tools/install_plugin.py --dev) runs its own server, apart from the working one.
 const DEV_PORT = 8788;
+// Terminal tabs: the font size until one is chosen in the settings.
+const DEFAULT_FONT_SIZE = 12;
 const DEV_MARKER = ".dev";
 
 const AGENT_VIEW_TYPE = "session-atlas-terminal";   // our own agent terminal tab
@@ -33,6 +35,7 @@ export {
   ATLAS_PORT,
   ATLAS_ORIGIN,
   DEV_PORT,
+  DEFAULT_FONT_SIZE,
   DEV_MARKER,
   AGENT_VIEW_TYPE,
   TERMINAL_VIEW_TYPE,

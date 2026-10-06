@@ -174,3 +174,24 @@ test("Claude-only controls are hidden on the Codex card; replies reach the right
     expect.objectContaining({ ptyPid: run.pids.codex.shell, sessionId: ids.codexLive,
                               text: "please also check the rounding" })]);
 });
+
+// A long "now" line of a working session: in the detailed chat it is shown in full. Capped at a few
+// lines while the chat lets it overflow, it was drawn over the message below it.
+test("the detailed chat shows a long \"now\" line in full, over nothing", async ({ page, open }) => {
+  const progress = "Found the cause: the orchestrator starts the subagents in the background and spends its turns "
+    + "on side tasks while it waits for their results. ".repeat(12);
+  await page.route(/\/api\/active(\?|$)/, async route => {
+    const res = await route.fetch();
+    const data = await res.json();
+    (data.sessions || []).forEach(s => {
+      if (s.session_id === ids.codexLive) Object.assign(s, { status: "busy", activity: "busy", progress });
+    });
+    await route.fulfill({ response: res, json: data });
+  });
+  await open("active");
+  await page.locator("#active-filters .mode button[data-mode=full]").click();
+  const now = card(page, ids.codexLive).locator(".amsgs .txt.now");
+  await expect(now).toContainText("Found the cause");
+  const fit = await now.evaluate(el => ({ sh: el.scrollHeight, ch: el.clientHeight }));
+  expect(fit.sh).toBeLessThanOrEqual(fit.ch + 1);
+});

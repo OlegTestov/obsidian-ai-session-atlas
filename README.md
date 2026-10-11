@@ -37,8 +37,9 @@ server on `127.0.0.1`, and nothing is sent anywhere unless you turn on the optio
   weekly rhythm heatmap. Claude Code replies are priced at Anthropic API prices, Codex replies at
   OpenAI API prices.
 - **Agent terminals.** Ribbon buttons and commands open Claude Code or Codex in a terminal tab inside
-  Obsidian. Each tab remembers the session it holds and resumes it after Obsidian restarts. Closing a
-  tab with a running agent asks for confirmation.
+  Obsidian. Each tab remembers the session it holds; after Obsidian restarts every agent tab brings its
+  session back by itself, one at a time, without opening each tab. Closing a tab with a running agent
+  asks for confirmation.
 - **Notifications.** A notice when a session finishes its turn or waits for a decision, and a macOS
   notification when Obsidian is in the background. Notices stack, one per session; they hide after
   10 s, 30 s or 1 min, or stay until you click or close them, and go by themselves once the session

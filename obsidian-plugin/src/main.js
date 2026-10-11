@@ -26,6 +26,7 @@ import { ExplorerMethods } from "./explorer";
 import { resolveLanguage, obsidianLanguage, translate } from "./i18n";
 import { NotifyMethods } from "./notify";
 import { RestoreMethods } from "./restore";
+import { StartupMethods } from "./startup";
 import { AtlasSettingTab, DEFAULT_SETTINGS } from "./settings";
 
 /** A port written into the dev marker (a live test Obsidian next to the test vault), else none. */
@@ -43,6 +44,8 @@ class SessionAtlasPlugin extends Plugin {
     const saved = (await this.loadData()) || {};
     this.settings = Object.assign({}, DEFAULT_SETTINGS, saved);
     this.loadedAt = Date.now();
+    // Before the tabs come back: a process an earlier Obsidian left behind would hold their sessions.
+    this.endOrphanTabs();
     this.initRestore();
     this.addSettingTab(new AtlasSettingTab(this.app, this));
     this.registerView(VIEW_TYPE, (leaf) => new AtlasView(leaf, this));
@@ -68,6 +71,8 @@ class SessionAtlasPlugin extends Plugin {
     this.app.workspace.onLayoutReady(() => this.watchOwnBuild());
     // Held processes whose tabs are still in the layout wait for them; the rest are offered back.
     this.app.workspace.onLayoutReady(() => { keepHeldTabs(this.app.workspace); this.offerHeldTabs(); });
+    // Every agent comes back without its tab having to be shown first.
+    this.app.workspace.onLayoutReady(() => { this.loadAgentTabs().catch(() => {}); });
     // Not only the catalog tab needs the server: notifications poll it constantly, and Obsidian
     // does not create a background tab until you switch to it.
     this.app.workspace.onLayoutReady(() => this.ensureServer().catch(() => {}));
@@ -315,7 +320,8 @@ class SessionAtlasPlugin extends Plugin {
 
 // Methods from the other files are mixed into the plugin class and run with the plugin as `this`.
 for (const methods of [TerminalMethods, InputMethods, CodexInputMethods, NotifyMethods, RestoreMethods, HeldMethods,
-                       AgentMethods, GuardMethods, ExplorerMethods, RuntimeMethods, StatusLineMethods, ReloadMethods]) {
+                       AgentMethods, GuardMethods, ExplorerMethods, RuntimeMethods, StatusLineMethods, ReloadMethods,
+                       StartupMethods]) {
   for (const name of Object.getOwnPropertyNames(methods.prototype)) {
     if (name === "constructor") continue;
     Object.defineProperty(SessionAtlasPlugin.prototype, name,

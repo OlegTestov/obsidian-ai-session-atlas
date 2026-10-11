@@ -7,6 +7,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.2.3] - 2026-10-11
+
+### Fixed
+
+- After Obsidian restarts, every agent tab brings its session back by itself, one at a time and
+  without taking the keyboard; tabs no longer wait to be opened one by one (setting, on by default).
+- An agent no longer outlives Obsidian when Obsidian ends without closing its tabs (a crash, a forced
+  quit); such processes left by earlier versions are ended when the plugin starts, instead of making
+  their tabs ask "End it there and continue here? [y/N]".
+- Answering "y" to that question no longer ends with "Agent exited": the tab waits up to a minute for
+  the other Claude Code to save and quit (it took longer than the ten seconds allowed).
+- A Claude Code background job started from an agent tab, or any other agent that only inherited the
+  tab's variables (a headless `claude -p` run by a hook), no longer takes that tab over: after a
+  restart the tab came back in that agent's conversation.
+- Two tabs that led to one background job show it once: the spare tab closes itself with a notice,
+  and Continue on a job already shown in a tab shows that tab.
+
 ## [2.2.2] - 2026-10-06
 
 ### Added
@@ -229,7 +246,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Setup checks in settings: macOS, `python3` (3.8+), Claude Code, Codex, server, index rebuild, and an
   opt-in switch for subscription limits in the status line.
 
-[Unreleased]: https://github.com/OlegTestov/obsidian-ai-session-atlas/compare/2.2.2...HEAD
+[Unreleased]: https://github.com/OlegTestov/obsidian-ai-session-atlas/compare/2.2.3...HEAD
+[2.2.3]: https://github.com/OlegTestov/obsidian-ai-session-atlas/compare/2.2.2...2.2.3
 [2.2.2]: https://github.com/OlegTestov/obsidian-ai-session-atlas/compare/2.2.1...2.2.2
 [2.2.1]: https://github.com/OlegTestov/obsidian-ai-session-atlas/compare/2.2.0...2.2.1
 [2.2.0]: https://github.com/OlegTestov/obsidian-ai-session-atlas/compare/2.1.1...2.2.0

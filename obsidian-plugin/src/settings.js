@@ -6,7 +6,7 @@ import { DEFAULT_FONT_SIZE } from "./constants";
 
 const DEFAULT_SETTINGS = { notify: true, systemNotify: true, explorerClicks: false, language: "en",
                            agents: {}, agentArgs: { claude: "", codex: "" }, terminalFontSize: DEFAULT_FONT_SIZE,
-                           cardMessages: 10, noticeHold: DEFAULT_NOTICE_HOLD };
+                           cardMessages: 10, noticeHold: DEFAULT_NOTICE_HOLD, loadAgentTabs: true };
 
 class AtlasSettingTab extends PluginSettingTab {
   constructor(app, plugin) {
@@ -69,6 +69,7 @@ class AtlasSettingTab extends PluginSettingTab {
             this.plugin.writeAgentArgs();
           }));
     }
+    this.toggle("loadAgentTabs", "settings.loadAgentTabs", "settings.loadAgentTabs.desc");
     new Setting(this.containerEl)
       .setName(t("settings.fontSize"))
       .addSlider((slider) => slider

@@ -129,7 +129,8 @@ const SessionAtlasPlugin = pluginClass(BUNDLE ? require(BUNDLE) : loadSrc("main"
 // Pure helpers come from the sources, also under the stand-ins (the build exports only the class).
 const agents = loadSrc("agents");
 const i18n = loadSrc("i18n");
-const { AgentTerminalView, specialKey, canFit, applyTheme } = loadSrc("term-view");
+const { AgentTerminalView, specialKey, canFit, applyTheme, isCloseRequest } = loadSrc("term-view");
+const { attachProcesses } = loadSrc("terminal");
 Module._load = realLoad;
 // No plugin instance in these tests writes to the real data folder.
 SessionAtlasPlugin.prototype.dataDirOverride = TEST_DATA;
@@ -1301,6 +1302,70 @@ describe("agent tabs", () => {
       agentPlugin.app.workspace = ws;
       agentPlugin.registryFile = path.join(vault, "no-registry.tsv");
     }
+  });
+  it("catalog: Continue on a background job already shown in a tab shows that tab", async () => {
+    const JOB = "abcdef12";
+    const dir = fs.mkdtempSync(path.join(TMP, "viewer-"));
+    const stub = path.join(dir, "claude");
+    fs.writeFileSync(stub, "#!/usr/bin/perl\nsleep 30;\n", { mode: 0o755 });
+    // A tab's tree: its PTY top, and `claude attach <job>` under it.
+    const top = require("child_process").spawn("/bin/sh", ["-c", `'${stub}' attach ${JOB}; :`]);
+    const loaded = { view: {} };
+    const restored = { getViewState: () => ({ type: "session-atlas-terminal", state: { instance: "claude-job-1" } }) };
+    const registry = path.join(vault, "resume-job.tsv");
+    const ws = agentPlugin.app.workspace;
+    const realTabs = agentPlugin.terminalTabs;
+    let revealed = null;
+    agentPlugin.registryFile = registry;
+    agentPlugin.app.workspace = Object.assign({}, ws, { iterateAllLeaves: (fn) => [restored].forEach(fn),
+                                                        revealLeaf: (leaf) => { revealed = leaf; } });
+    const command = `cd '/Users/u/Code/p' && claude attach ${JOB}`;
+    const before = viewStates.length;
+    try {
+      await sleep(300);
+      agentPlugin.terminalTabs = async () => [{ leaf: loaded, pid: top.pid, title: "Job" }];
+      fs.writeFileSync(registry, "");
+      await agentPlugin.openCommandInTerminal(command, "/Users/u/Code/p", "Job");
+      assert.equal(revealed, loaded, "the loaded tab whose tree attaches to the job");
+      assert.equal(viewStates.length, before);
+      // Restored, not loaded yet: its registry entry is the job's session.
+      revealed = null;
+      agentPlugin.terminalTabs = async () => [];
+      fs.writeFileSync(registry, `claude\tclaude-job-1\t${JOB}-1111-4111-8111-111111111111\t/w\t1\n`);
+      await agentPlugin.openCommandInTerminal(command, "/Users/u/Code/p", "Job");
+      assert.equal(revealed, restored);
+      assert.equal(viewStates.length, before);
+      // Shown nowhere: a new tab attaches.
+      fs.writeFileSync(registry, "");
+      await agentPlugin.openCommandInTerminal(command, "/Users/u/Code/p", "Job");
+      assert.equal(viewStates.length, before + 1);
+    } finally {
+      top.kill();
+      require("child_process").spawnSync("pkill", ["-f", `${dir}/claude attach`]);
+      agentPlugin.terminalTabs = realTabs;
+      agentPlugin.app.workspace = ws;
+      agentPlugin.registryFile = path.join(vault, "no-registry.tsv");
+    }
+  });
+  it("a tab the tab script found to duplicate another one is closed, with a word about it", () => {
+    let detached = 0;
+    const before = notices.length;
+    agentPlugin.closeDuplicateTab({ detach: () => { detached++; } }, "Agent Rooms");
+    assert.equal(detached, 1);
+    assert.match(notices[before], /Agent Rooms/);
+  });
+  it("the close request counts only for this tab's id, while it starts", () => {
+    assert.equal(isCloseRequest("close;claude-a", "claude-a", 500), true);
+    assert.equal(isCloseRequest("close;claude-b", "claude-a", 500), false);
+    assert.equal(isCloseRequest("close;claude-a;x", "claude-a", 500), false);
+    assert.equal(isCloseRequest("close;", "", 500), false);
+    assert.equal(isCloseRequest("close;claude-a", "claude-a", 61000), false);
+    assert.equal(isCloseRequest("open;claude-a", "claude-a", 500), false);
+  });
+  it("attach processes are found by job id only", () => {
+    const ps = ["  10 claude attach abcdef12", "  11 /usr/local/bin/claude attach abcdef12", "  12 claude attach abcdef123",
+                "  13 claude attach 00000000", "  14 vim claude attach abcdef12.txt", "  15 echo claude attach abcdef12"].join("\n");
+    assert.deepEqual(attachProcesses(ps, "abcdef12"), [10, 11]);
   });
   it("catalog: an unrecognized command opens in the tab as is", async () => {
     const before = viewStates.length;

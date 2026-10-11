@@ -9,7 +9,9 @@ import * as childProcess from "child_process";
 const SCRIPT = "/usr/bin/script";
 // Inside the tty: set the size and replace itself with the program. Arguments go through "$@", unquoted.
 const INNER = 'stty rows "$1" cols "$2" 2>/dev/null; shift 2; exec "$@"';
-const OUTER = 'cat | exec ' + SCRIPT + ' -q /dev/null "$@"';
+// cat ends when the pipe from Obsidian closes: on a crash or a forced quit nothing kills the tab, and a
+// program in raw mode (Claude Code) never sees end of input. The group then ends as on closing the tab.
+const OUTER = '{ cat; kill -HUP 0; } | exec ' + SCRIPT + ' -q /dev/null "$@"';
 const LIVENESS_MS = 3000;
 const RECENT_BYTES = 256 * 1024;     // output tail: a new tab picks up the process and shows it
 

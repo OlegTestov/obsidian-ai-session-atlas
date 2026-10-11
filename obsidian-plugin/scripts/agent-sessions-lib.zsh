@@ -128,9 +128,96 @@ codex_session_pid() {
   return 1
 }
 
-# The session already runs in another process: never start a second one silently. Asks whether to
-# end it there and continue here; returns 0 when the tab may go on, 1 when it must not.
-# OBS_AGENT_RUNNING_ANSWER answers for tests (y or n).
+# The top of the nearest tab tree a process runs in (the plugin's `sh … atlas-pty`, with `script`
+# under it) and that top's parent: "pid ppid". Nearest: Obsidian itself may run in another tab's agent.
+tab_root_of() {
+  local pid="$1" ppid cmd line top="" i
+  for i in {1..32}; do
+    [[ "$pid" == <-> ]] && (( pid > 1 )) || break
+    line="$(ps -o ppid=,command= -p "$pid" 2>/dev/null)" || break
+    read -r ppid cmd <<< "$line"
+    if [[ "$cmd" == *" atlas-pty" || "$cmd" == *" atlas-pty "* ]]; then
+      top="$pid $ppid"
+    elif [[ -n "$top" ]]; then
+      break
+    fi
+    pid="$ppid"
+  done
+  [[ -n "$top" ]] && print -r -- "$top"
+}
+
+# The process runs in a tab of an Obsidian that is gone: the top of that tab's tree now belongs to
+# launchd. Or the tree is already ending and the process itself belongs to launchd. Either way
+# nothing can show it or type into it any more.
+orphaned_tab_process() {
+  local top ppid _
+  if top="$(tab_root_of "$1")"; then
+    [[ "${top#* }" == 1 ]]
+    return
+  fi
+  read -r ppid _ <<< "$(ps -o ppid= -p "$1" 2>/dev/null)"
+  [[ "$ppid" == 1 ]]
+}
+
+# A tab tree top of a running Obsidian: alive, not handed to launchd, still the plugin's `sh … atlas-pty`.
+_live_tab_root() {
+  local line ppid cmd
+  [[ "$1" == <-> ]] || return 1
+  line="$(ps -o ppid=,command= -p "$1" 2>/dev/null)" || return 1
+  read -r ppid cmd <<< "$line"
+  [[ "$ppid" != 1 && ( "$cmd" == *" atlas-pty" || "$cmd" == *" atlas-pty "* ) ]]
+}
+
+# Another tab of a running Obsidian already shows this background job. Tabs restored together start
+# within the same second, so the first one claims the job (an atomic mkdir holding its tree's top);
+# a `claude attach <job>` in another tab counts too (a tab of an older version takes no claim).
+job_open_in_another_tab() {
+  local job="$1" pid top mine claim owner age
+  local -a viewers=()
+  mine="$(tab_root_of $$)"
+  mine="${mine%% *}"
+  for pid in ${(f)"$(/usr/bin/pgrep -f "(^|/)claude attach $job\$" 2>/dev/null)"}; do
+    top="$(tab_root_of "$pid")" || continue
+    [[ "${top#* }" != 1 && "${top%% *}" != "$mine" ]] && viewers+=("${top%% *}")
+  done
+  (( ${#viewers} )) && return 0
+  [[ -n "$mine" && -n "${STATE_DIR:-}" ]] || return 1
+  claim="$STATE_DIR/view-$job"
+  if ! mkdir "$claim" 2>/dev/null; then
+    owner="$(<"$claim/root")" 2>/dev/null
+    age=$(( $(date +%s) - $(stat -f %m "$claim" 2>/dev/null || print 0) ))
+    # Still starting (no attach under it yet): the claim holds for half a minute.
+    # An empty claim was made a moment ago and is being written.
+    [[ "$owner" != "$mine" ]] && (( age < 30 )) && { [[ -z "$owner" ]] || _live_tab_root "$owner"; } && return 0
+    rm -rf "$claim"
+    mkdir "$claim" 2>/dev/null || return 0      # another tab claimed it this very moment
+  fi
+  print -r -- "$mine" > "$claim/root"
+  return 1
+}
+
+# Ends the process and waits until it is gone. Claude Code saves its session and stops its MCP
+# servers on SIGTERM, which takes well over ten seconds on a busy machine. OBS_AGENT_END_WAIT: seconds.
+end_process() {
+  local pid="$1" limit="${OBS_AGENT_END_WAIT:-60}" i
+  kill -TERM "$pid" 2>/dev/null
+  for i in $(seq 1 $(( limit * 5 ))); do
+    kill -0 "$pid" 2>/dev/null || return 0
+    (( i == 10 )) && print "Waiting for it to finish saving…"
+    sleep 0.2
+  done
+  kill -KILL "$pid" 2>/dev/null
+  for i in {1..25}; do
+    kill -0 "$pid" 2>/dev/null || return 0
+    sleep 0.2
+  done
+  print "The other process (pid $pid) did not end; not starting a second one."
+  return 1
+}
+
+# The session already runs in another process: never start a second one silently. A process left by
+# an Obsidian that has closed is ended without asking; any other one only on yes. Returns 0 when the
+# tab may go on, 1 when it must not. OBS_AGENT_RUNNING_ANSWER answers for tests (y or n).
 take_over_running() {
   local agent="$1" session_id="$2" pid="$3" answer="${OBS_AGENT_RUNNING_ANSWER:-}"
   # A shared Codex server owns multiple threads. Stopping it would interrupt all of them.
@@ -138,6 +225,12 @@ take_over_running() {
     print "This session is held by a shared Codex server; not stopping it to move one thread."
     print "Close the original session first, then reopen it here."
     return 1
+  fi
+  if orphaned_tab_process "$pid"; then
+    print "This $agent session was still running in a tab of an Obsidian that has closed (pid $pid)."
+    print "Ending it there and continuing here."
+    end_process "$pid"
+    return
   fi
   print "This $agent session is already running in another process (pid $pid)."
   print "Two processes on one conversation would mix their replies, so this tab does not start it."
@@ -149,12 +242,5 @@ take_over_running() {
     fi
   fi
   [[ "$answer" == [yY]* ]] || { print "Left running there. Close this tab, or use Move in AI Session Atlas → Active."; return 1; }
-  kill -TERM "$pid" 2>/dev/null
-  local i
-  for i in {1..50}; do
-    kill -0 "$pid" 2>/dev/null || return 0
-    sleep 0.2
-  done
-  print "The other process (pid $pid) did not end; not starting a second one."
-  return 1
+  end_process "$pid"
 }

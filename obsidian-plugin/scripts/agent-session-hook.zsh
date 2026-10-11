@@ -34,6 +34,38 @@ session_id="$(print -r -- "$payload" \
   | head -1)"
 [[ "$session_id" =~ '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' ]] || exit 0
 
+# Only the tab's own agent: Claude Code's background jobs run under a daemon outside the tab but
+# inherit its variables, and their sessions would take the tab over after a restart.
+_ancestor_of_hook() {
+  local pid=$PPID ppid _ i
+  for i in {1..32}; do
+    [[ "$pid" == "$1" ]] && return 0
+    (( pid > 1 )) || return 1
+    read -r ppid _ <<< "$(ps -o ppid= -p "$pid" 2>/dev/null)"
+    [[ "$ppid" == <-> ]] || return 1
+    pid=$ppid
+  done
+  return 1
+}
+_background_job() {
+  local dir="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/sessions" pid=$PPID ppid _ i text
+  for i in {1..6}; do
+    if [[ -r "$dir/$pid.json" ]]; then
+      text="$(<"$dir/$pid.json")"
+      [[ "$text" == *'"kind":"bg"'* || "$text" == *'"kind": "bg"'* ]] && return 0
+      return 1
+    fi
+    read -r ppid _ <<< "$(ps -o ppid= -p "$pid" 2>/dev/null)"
+    [[ "$ppid" == <-> ]] && (( ppid > 1 )) || return 1
+    pid=$ppid
+  done
+  return 1
+}
+if [[ -n "${OBS_AGENT_TAB_PID:-}" ]]; then
+  _ancestor_of_hook "$OBS_AGENT_TAB_PID" || exit 0
+fi
+_background_job && exit 0
+
 script_dir="${0:A:h}"
 (
   source "$script_dir/agent-registry-lib.zsh"

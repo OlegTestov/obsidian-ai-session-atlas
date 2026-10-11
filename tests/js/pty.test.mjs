@@ -1,6 +1,10 @@
 // Pseudo-terminal on system tools: a real tty, size, Ctrl-C, UTF-8, exit, close.
 import { after, describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { spawn as spawnChild } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import process from "node:process";
 import { setTimeout as delay } from "node:timers/promises";
 import { setGlobal } from "./helpers/globals.mjs";
@@ -118,5 +122,29 @@ describe("pseudo-terminal: closing", () => {
     let alive = true;
     try { process.kill(inner.pid, 0); } catch { alive = false; }
     assert.equal(alive, false);
+  });
+});
+
+describe("pseudo-terminal: Obsidian gone without closing the tab", () => {
+  // A crash or a forced quit skips the unload: the pipe from Obsidian closes, nothing is killed.
+  // A program in raw mode never sees an end of input, so it must be ended for it.
+  it("ends the program inside once its owner is gone", async () => {
+    const pidFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "atlas-owner-")), "pid");
+    const helper = path.join(path.dirname(new URL(import.meta.url).pathname), "helpers", "pty-owner.mjs");
+    const owner = spawnChild(process.execPath, [helper, pidFile], { stdio: "ignore" });
+    let pid = 0;
+    for (let i = 0; i < 100 && !pid; i++) {
+      await sleep(100);
+      try { pid = Number(fs.readFileSync(pidFile, "utf8")); } catch { /* not yet */ }
+    }
+    assert.ok(pid, "the program did not start");
+    owner.kill("SIGKILL");
+    let alive = true;
+    for (let i = 0; i < 30 && alive; i++) {
+      await sleep(100);
+      try { process.kill(pid, 0); } catch { alive = false; }
+    }
+    if (alive) process.kill(pid, "SIGKILL");
+    assert.equal(alive, false, "the program outlived Obsidian");
   });
 });

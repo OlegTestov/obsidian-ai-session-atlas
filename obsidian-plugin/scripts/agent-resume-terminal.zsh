@@ -134,6 +134,14 @@ hook_settings() {
 # resumes its transcript once the job is gone. Attach takes no flags and runs no hooks.
 attach_claude_job() {
   local instance="$1" job="$2" job_session
+  # After a restart both the tab of a parked session and a tab opened on its job lead here: one view
+  # is enough. The plugin closes this tab when told so (OSC 7770 with the tab's id).
+  if job_open_in_another_tab "$job"; then
+    print "This conversation is already open in another tab (Claude Code background session $job)."
+    printf '\e]7770;close;%s\a' "$instance"
+    DUPLICATE_TAB=1
+    return 0
+  fi
   job_session="$(claude_job_session "$job")" && upsert_resume_id claude "$instance" "$job_session"
   print "Attaching to Claude Code background session: $job"
   claude attach "$job"
@@ -150,6 +158,9 @@ run_claude() {
   export OBS_AGENT_INSTANCE="$instance"
   export OBS_AGENT_TERMINAL_STATE_DIR="$STATE_DIR"
   export OBS_AGENT_TERMINAL_VAULT_ROOT="$VAULT_ROOT"
+  # Background jobs the agent starts (a daemon outside the tab) inherit these variables: the hook
+  # records a session only for a process that descends from this script.
+  export OBS_AGENT_TAB_PID="$$"
 
   local -a reply
   extra_args claude
@@ -223,6 +234,9 @@ run_codex() {
   export OBS_AGENT_INSTANCE="$instance"
   export OBS_AGENT_TERMINAL_STATE_DIR="$STATE_DIR"
   export OBS_AGENT_TERMINAL_VAULT_ROOT="$VAULT_ROOT"
+  # Background jobs the agent starts (a daemon outside the tab) inherit these variables: the hook
+  # records a session only for a process that descends from this script.
+  export OBS_AGENT_TAB_PID="$$"
 
   local -a reply
   extra_args codex
@@ -282,6 +296,7 @@ if ! valid_instance "$INSTANCE"; then
 fi
 
 START_EPOCH="$(date +%s)"
+DUPLICATE_TAB=""
 
 case "$APP" in
   claude) print "Starting Claude Code terminal instance: $INSTANCE" ;;
@@ -297,8 +312,8 @@ esac
 # paste, alternate screen). Reset to the state before it started.
 printf '\e[?1000l\e[?1002l\e[?1003l\e[?1006l\e[?1004l\e[?2004l\e[?1049l\e[?25h'
 
-# Tests and automation: no shell after the agent exits.
-[[ -n "${OBS_AGENT_TERMINAL_NO_SHELL:-}" ]] && exit 0
+# Tests and automation: no shell after the agent exits. A duplicate tab is about to be closed.
+[[ -n "${OBS_AGENT_TERMINAL_NO_SHELL:-}${DUPLICATE_TAB:-}" ]] && exit 0
 print
 print "Agent exited. This shell is kept open for manual commands."
 exec zsh -l -i

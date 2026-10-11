@@ -203,3 +203,61 @@ def test_codex_new_without_a_thread_does_not_repeat_the_prompt(tmp_path):
 def test_codex_new_without_a_prompt_is_a_bare_codex(tmp_path):
     calls, _ = _codex_run(tmp_path, "codex-tab-5", "new", "")
     assert calls == [[""]]
+
+
+# --- the hook: only the tab's own agent records its session ---
+
+HOOK = SCRIPTS / "agent-session-hook.zsh"
+
+
+def _hook(tmp_path, env_extra, session, *, sessions_dir=None):
+    env = {"PATH": "/usr/bin:/bin", "HOME": str(tmp_path), "OBS_AGENT_KIND": "claude",
+           "OBS_AGENT_INSTANCE": "inst-h", "OBS_AGENT_TERMINAL_STATE_DIR": str(tmp_path / "state"),
+           "OBS_AGENT_TERMINAL_VAULT_ROOT": str(tmp_path), **env_extra}
+    if sessions_dir:
+        env["CLAUDE_CONFIG_DIR"] = str(sessions_dir.parent)
+    subprocess.run(["zsh", str(HOOK)], input=json.dumps({"session_id": session, "hook_event_name": "SessionStart"}),
+                   text=True, env=env, check=True, timeout=20)
+    registry = tmp_path / "state" / "resume.tsv"
+    return registry.read_text(encoding="utf-8") if registry.exists() else ""
+
+
+def test_hook_records_the_session_of_the_tabs_own_agent(tmp_path):
+    """Run from the tab: its script (here this test's process) is among the hook's ancestors."""
+    import os
+    assert NEW in _hook(tmp_path, {"OBS_AGENT_TAB_PID": str(os.getpid())}, NEW)
+
+
+def test_hook_ignores_an_agent_that_only_inherited_the_tab_variables(tmp_path):
+    """A background job Claude Code starts from the tab (a daemon outside the tab) inherits the tab's
+    variables; its sessions must not take the tab over."""
+    other = subprocess.Popen(["sleep", "30"])
+    try:
+        assert NEW not in _hook(tmp_path, {"OBS_AGENT_TAB_PID": str(other.pid)}, NEW)
+    finally:
+        other.kill()
+        other.wait()
+
+
+def test_hook_ignores_a_background_job_of_a_tab_started_by_an_older_version(tmp_path):
+    """No tab pid (a tab started before it was passed): the job's own process file says what it is."""
+    import os
+    sessions = tmp_path / "claude" / "sessions"
+    sessions.mkdir(parents=True)
+    (sessions / f"{os.getpid()}.json").write_text(json.dumps({"pid": os.getpid(), "sessionId": NEW, "kind": "bg",
+                                                             "jobId": "aaaaaaaa"}), encoding="utf-8")
+    assert NEW not in _hook(tmp_path, {}, NEW, sessions_dir=sessions)
+
+
+def test_hook_of_a_tab_started_by_an_older_version_still_records(tmp_path):
+    assert NEW in _hook(tmp_path, {}, NEW)
+
+
+def test_tab_script_passes_its_pid_to_the_hook(tmp_path):
+    env, work = _env(tmp_path)
+    stub = tmp_path / "bin" / "claude"
+    stub.write_text('#!/bin/zsh\n[[ "$1" == --help ]] && exit 0\nprint -r -- "$OBS_AGENT_TAB_PID" >> "$CALLS"\n',
+                    encoding="utf-8")
+    proc = subprocess.run(["zsh", "-c", 'print $$; exec zsh "$0" "$@"', str(SCRIPT), "claude", "inst-p", "resume", OLD],
+                          cwd=work, env=env, capture_output=True, text=True, timeout=20)
+    assert (tmp_path / "calls").read_text(encoding="utf-8").split() == [proc.stdout.split()[0]]

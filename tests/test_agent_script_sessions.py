@@ -6,6 +6,7 @@ The agents are stubs that record their arguments; homes, registry and working fo
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import subprocess
@@ -162,6 +163,86 @@ def test_parent_whose_transcript_continued_in_a_running_job_attaches(tab, job):
     assert tab["run"]("claude", "cl-3", "resume", PARENT)[0] == ["attach", JOB]
 
 
+def _attach_view(tmp: Path, *, orphaned: bool):
+    """`claude attach JOB` in a tab tree (the plugin's `sh … atlas-pty`): of a running Obsidian, or
+    of one that is gone (the top belongs to launchd)."""
+    stub = tmp / "viewer" / "claude"
+    stub.parent.mkdir(exist_ok=True)
+    stub.write_text("#!/usr/bin/perl\nsleep 60;\n", encoding="utf-8")
+    stub.chmod(0o755)
+    inner = f"'{stub}' attach {JOB}; :"
+    if orphaned:
+        root = int(subprocess.run(["/bin/sh", "-c", f"/bin/sh -c \"{inner}\" atlas-pty >/dev/null 2>&1 & echo $!"],
+                                  capture_output=True, text=True).stdout)
+        return root, None
+    proc = subprocess.Popen(["/bin/sh", "-c", inner, "atlas-pty"])
+    return proc.pid, proc
+
+
+@pytest.mark.parametrize("seeded", [True, False])
+def test_job_already_open_in_another_tab_closes_this_one(tab, job, seeded):
+    """After a restart the tab of a parked session and a tab opened on its job both lead to the job."""
+    _transcript(tab["claude"], PARENT, rec(type="continued-in", sessionId=PARENT, continuedInSessionId=JOB_SID))
+    _transcript(tab["claude"], JOB_SID)
+    job()
+    root, proc = _attach_view(tab["work"].parent, orphaned=False)
+    try:
+        _child_of(root)
+        args = ("claude", "cl-d1", "resume", PARENT) if seeded else ("claude", "cl-d1", "attach", JOB)
+        out, calls = _run_out(tab, *args, answer="n")
+        assert "already open in another tab" in out
+        assert "\x1b]7770;close;cl-d1\x07" in out
+        assert calls == []
+        assert "Agent exited" not in out
+    finally:
+        proc.kill()
+        proc.wait()
+        subprocess.run(["pkill", "-f", f"viewer/claude attach {JOB}"])
+
+
+def test_two_tabs_restored_at_once_show_the_job_once(tab, job):
+    """Obsidian starts the restored tabs within the same second: one claims the job, the other closes."""
+    _transcript(tab["claude"], JOB_SID)
+    job()
+    env = dict(tab["env"], OBS_AGENT_RUNNING_ANSWER="n")
+    tabs = [subprocess.Popen(["/bin/sh", "-c", f'zsh "{SCRIPT}" claude cl-t{n} attach {JOB}; :', "atlas-pty"],
+                             cwd=tab["work"], env=env, stdout=subprocess.PIPE, text=True) for n in (1, 2)]
+    outs = [t.communicate(timeout=30)[0] for t in tabs]
+    calls = [c.split("\x1f") for c in Path(tab["env"]["CALLS"]).read_text(encoding="utf-8").splitlines()]
+    assert calls == [["attach", JOB]]
+    assert sum("already open in another tab" in o for o in outs) == 1
+
+
+def test_a_claim_of_a_tab_that_moved_on_does_not_close_a_new_one(tab, job):
+    """A claim older than its start, whose tab shows no attach any more, is taken over."""
+    _transcript(tab["claude"], JOB_SID)
+    job()
+    holder = subprocess.Popen(["/bin/sh", "-c", "sleep 60; :", "atlas-pty"])
+    try:
+        claim = tab["state"] / f"view-{JOB}"
+        claim.mkdir(parents=True)
+        (claim / "root").write_text(str(holder.pid), encoding="utf-8")
+        old = time.time() - 120
+        os.utime(claim, (old, old))
+        assert tab["run"]("claude", "cl-t3", "attach", JOB)[0] == ["attach", JOB]
+    finally:
+        holder.kill()
+        holder.wait()
+        subprocess.run(["pkill", "-P", str(holder.pid)])
+
+
+def test_job_viewed_only_by_a_closed_obsidian_is_attached(tab, job):
+    _transcript(tab["claude"], JOB_SID)
+    job()
+    root, _ = _attach_view(tab["work"].parent, orphaned=True)
+    try:
+        _child_of(root)
+        assert tab["run"]("claude", "cl-d2", "resume", JOB_SID)[0] == ["attach", JOB]
+    finally:
+        subprocess.run(["pkill", "-f", f"viewer/claude attach {JOB}"])
+        subprocess.run(["kill", str(root)])
+
+
 def test_parked_parent_process_file_names_the_job(tab, job):
     _transcript(tab["claude"], PARENT)
     job()
@@ -230,10 +311,10 @@ def test_new_thread_of_another_folder_is_not_claimed(tab):
 
 # --- a session already running in another process: the tab never starts a second one ---
 
-def _run_out(tab, *args, answer):
+def _run_out(tab, *args, answer, timeout=20):
     env = dict(tab["env"], OBS_AGENT_RUNNING_ANSWER=answer)
     out = subprocess.run(["zsh", str(SCRIPT), *args], cwd=tab["work"], env=env, capture_output=True,
-                         text=True, timeout=20).stdout
+                         text=True, timeout=timeout, stdin=subprocess.DEVNULL).stdout
     calls = Path(tab["env"]["CALLS"])
     return out, [c.split("\x1f") for c in calls.read_text(encoding="utf-8").splitlines()] if calls.exists() else []
 
@@ -283,6 +364,103 @@ def test_tab_restored_after_restart_checks_too(tab, running):
     Path(tab["env"]["CALLS"]).unlink()
     out, calls = _run_out(tab, "claude", "cl-r3", answer="n")
     assert "already running" in out and calls == []
+
+
+def _register(tab, pid: int, sid: str = PARENT) -> None:
+    sessions = tab["claude"] / "sessions"
+    sessions.mkdir(parents=True, exist_ok=True)
+    data = {"pid": pid, "sessionId": sid, "cwd": "/Users/u/Code/other", "startedAt": 1,
+            "procStart": _proc_start(pid), "version": "2.1.296", "kind": "interactive",
+            "entrypoint": "cli", "status": "idle"}
+    (sessions / f"{pid}.json").write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
+
+
+def _child_of(root: int) -> int:
+    for _ in range(50):
+        out = subprocess.run(["pgrep", "-P", str(root)], capture_output=True, text=True).stdout.split()
+        if out:
+            return int(out[0])
+        time.sleep(0.1)
+    raise AssertionError(f"no child of {root}")
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True,
+                          text=True).stdout.strip()[:1] not in ("", "Z")
+
+
+@pytest.fixture
+def orphan(tab):
+    """The session's process in a tab of an Obsidian that is gone: the top of the tab's tree (the
+    plugin's `sh … atlas-pty`) belongs to launchd, as after a crash with nothing ended."""
+    root = int(subprocess.run(["/bin/sh", "-c", "/bin/sh -c 'sleep 120; :' atlas-pty >/dev/null 2>&1 & echo $!"],
+                              capture_output=True, text=True).stdout)
+    agent = _child_of(root)
+    _register(tab, agent)
+    yield agent
+    for pid in (agent, root):
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(pid, 9)
+
+
+def test_left_by_a_closed_obsidian_is_taken_over_without_asking(tab, orphan):
+    _transcript(tab["claude"], PARENT)
+    out, calls = _run_out(tab, "claude", "cl-o1", "resume", PARENT, answer="")
+    assert "[y/N]" not in out and "Obsidian" in out
+    assert not _alive(orphan)
+    assert calls[-1][-2:] == ["--resume", PARENT]
+
+
+def test_process_whose_tree_already_ended_is_taken_over_without_asking(tab):
+    """Ending an orphaned tree takes Claude Code a while: meanwhile it belongs to launchd itself."""
+    agent = int(subprocess.run(["/bin/sh", "-c", "sleep 120 >/dev/null 2>&1 & echo $!"],
+                               capture_output=True, text=True).stdout)
+    try:
+        _register(tab, agent)
+        _transcript(tab["claude"], PARENT)
+        out, calls = _run_out(tab, "claude", "cl-o4", "resume", PARENT, answer="")
+        assert "Ending it there" in out and not _alive(agent)
+        assert calls[-1][-2:] == ["--resume", PARENT]
+    finally:
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(agent, 9)
+
+
+def test_tab_of_a_running_obsidian_still_asks(tab):
+    """The same tree under a live parent is another tab: never ended without asking."""
+    root = subprocess.Popen(["/bin/sh", "-c", "sleep 120; :", "atlas-pty"])
+    try:
+        agent = _child_of(root.pid)
+        _register(tab, agent)
+        _transcript(tab["claude"], PARENT)
+        out, calls = _run_out(tab, "claude", "cl-o2", "resume", PARENT, answer="n")
+        assert "already running in another process" in out and calls == [] and _alive(agent)
+    finally:
+        root.kill()
+        root.wait()
+        subprocess.run(["pkill", "-P", str(root.pid)])
+
+
+def test_slow_to_end_process_is_waited_for(tab):
+    """Claude Code with MCP servers takes many seconds to quit on SIGTERM: the tab waits it out."""
+    slow = subprocess.Popen(["/usr/bin/python3", "-c",
+                             "import signal, sys, time\n"
+                             "signal.signal(signal.SIGTERM, lambda *a: (time.sleep(14), sys.exit(0)))\n"
+                             "time.sleep(120)\n"])
+    threading.Thread(target=slow.wait, daemon=True).start()
+    try:
+        time.sleep(0.5)
+        _register(tab, slow.pid)
+        _transcript(tab["claude"], PARENT)
+        out, calls = _run_out(tab, "claude", "cl-o3", "resume", PARENT, answer="y", timeout=90)
+        assert "did not end" not in out
+        assert calls and calls[-1][-2:] == ["--resume", PARENT]
+    finally:
+        slow.kill()
 
 
 def test_fork_of_a_running_session_still_forks(tab, running):

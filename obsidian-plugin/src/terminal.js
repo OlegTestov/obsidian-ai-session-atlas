@@ -194,6 +194,8 @@ class TerminalMethods {
     // The session already has a tab, maybe one Obsidian brought back but has not loaded yet: show it.
     // A second tab would start a second process on the same conversation once both are open.
     if (launch && launch.mode === "resume" && this.revealSessionTab(launch.sessionId)) return;
+    // A background job already shown in a tab: that tab, not a second view of the same conversation.
+    if (launch && launch.mode === "attach" && (await this.revealJobTab(launch.sessionId))) return;
     if (launch && (await this.openAgent(launch.agent, { cwd: launch.cwd, seed: launch, label }))) return;
     try {
       const leaf = this.app.workspace.getLeaf("tab");
@@ -226,6 +228,32 @@ class TerminalMethods {
     return true;
   }
 
+  /** The tab showing this background job (`claude attach <job>` in its tree), loaded or restored. */
+  async revealJobTab(jobId) {
+    const workspace = this.app && this.app.workspace;
+    if (!workspace || !/^[0-9a-f]{8}$/.test(jobId || "")) return false;
+    const viewers = attachProcesses(listProcesses(), jobId);
+    for (const tab of viewers.length ? await this.terminalTabs() : []) {
+      if (viewers.some((pid) => this.isDescendant(pid, tab.pid))) {
+        workspace.revealLeaf(tab.leaf);
+        return true;
+      }
+    }
+    // A restored tab not loaded yet: its registry entry is the job's session (the job id starts it).
+    const registry = readRegistry(this.registryFile || REGISTRY_FILE);
+    const sessions = new Set(String(registry).split("\n").map((l) => l.split("\t")[2])
+      .filter((sid) => sid && sid.startsWith(`${jobId}-`)));
+    for (const sid of sessions) if (this.revealSessionTab(sid)) return true;
+    return false;
+  }
+
+  /** A tab the tab script found to duplicate another one: closed, with a word about it. */
+  closeDuplicateTab(leaf, title) {
+    if (!leaf || typeof leaf.detach !== "function") return;
+    leaf.detach();
+    new Notice(this.t("terminal.duplicateClosed", { title: title || "Claude Code" }));
+  }
+
   getVaultPath() {
     const adapter = this.app.vault.adapter;
     return typeof adapter.getBasePath === "function" ? adapter.getBasePath() : "";
@@ -239,6 +267,26 @@ function readRegistry(file) {
   } catch {
     return "";
   }
+}
+
+/** pid → command of every process, as `ps` prints them. */
+function listProcesses() {
+  try {
+    return childProcess.execFileSync("/bin/ps", ["-A", "-o", "pid=,command="],
+                                     { encoding: "utf8", timeout: 3000, maxBuffer: 64 << 20 });
+  } catch {
+    return "";
+  }
+}
+
+/** Pids of `claude attach <job>` processes in a `ps` listing. */
+function attachProcesses(psText, jobId) {
+  const out = [];
+  for (const line of String(psText).split("\n")) {
+    const m = /^\s*(\d+)\s+(.*)$/.exec(line);
+    if (m && new RegExp(`(^|/)claude attach ${jobId}$`).test(m[2].trim())) out.push(Number(m[1]));
+  }
+  return out;
 }
 
 /** Tab instances whose recorded session is this one (instance ids are random: no folder check). */
@@ -261,4 +309,4 @@ function cleanInput(text) {
   return String(text).replace(/\r\n?/g, "\n").replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "");
 }
 
-export { TerminalMethods, cleanInput, tabInstancesOf };
+export { TerminalMethods, cleanInput, tabInstancesOf, attachProcesses };

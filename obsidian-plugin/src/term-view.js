@@ -15,6 +15,8 @@ import { registry, keepHeldTabs, holdForReclaim } from "./held";
 import { selectWithModifier, isCopyKey, copySelection, pasteClipboard, menuItems, copyTarget } from "./term-copy";
 
 const DEFAULT_SHELL = "/bin/zsh";
+const CLOSE_OSC = 7770;                 // scripts/agent-resume-terminal.zsh: "close;<tab id>"
+const CLOSE_WINDOW_MS = 60000;
 
 /** Fit only a visible tab. Obsidian shrinks a hidden one to zero: fitting it would report a tiny
  *  screen to the program, and on return Claude Code would redraw everything. */
@@ -30,6 +32,13 @@ function specialKey(e) {
   if (e.key === "Enter" && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) return "\x1b\r";
   return null;
 }
+/** "close;<tab id>" from the tab script, for this very tab, while it is starting. */
+function isCloseRequest(data, instance, elapsedMs) {
+  const [what, id, extra] = String(data).split(";");
+  return what === "close" && !!instance && id === instance && extra === undefined
+    && elapsedMs >= 0 && elapsedMs < CLOSE_WINDOW_MS;
+}
+
 /** Terminal colours come from the Obsidian theme: light and dark without configuration. */
 function themeFromCss(el) {
   const css = getComputedStyle(el);
@@ -154,6 +163,15 @@ class AgentTerminalView extends ItemView {
     pty.onExit(() => term.write(`\r\n\x1b[2m[${this.plugin.t("terminal.exited")}]\x1b[0m\r\n`));
     term.onData((data) => pty.write(data));
     term.onTitleChange((title) => this.setLiveTitle(title));
+    // The tab script asks to close a tab that would show what another tab already shows. Only for
+    // this tab's own id and only while it starts: printed text must not close tabs later.
+    const opened = Date.now();
+    term.parser.registerOscHandler(CLOSE_OSC, (data) => {
+      if (isCloseRequest(data, this.state.instance, Date.now() - opened)) {
+        window.setTimeout(() => this.plugin.closeDuplicateTab(this.leaf, this.getDisplayText()), 0);
+      }
+      return true;
+    });
     term.onResize(({ cols, rows }) => pty.resize(cols, rows));
     // Consecutive changes (dragging the window) make one fit: each fit makes the program redraw.
     let settle = null;
@@ -188,7 +206,8 @@ class AgentTerminalView extends ItemView {
     this.registerEvent(this.app.workspace.on("css-change", () => applyTheme(term, document.body)));
     this.themeObserver = new MutationObserver(() => applyTheme(term, document.body));
     this.themeObserver.observe(document.body, { attributes: true, attributeFilter: ["class"] });
-    if (this.state.focus !== false) term.focus();
+    // A tab loaded in the background at start-up leaves the keyboard where it is.
+    if (this.state.focus !== false && !this.plugin.loadingInBackground) term.focus();
   }
 
   /** Copy and paste on the right click; xterm has already selected the word under the pointer. */
@@ -226,4 +245,4 @@ class AgentTerminalView extends ItemView {
   }
 }
 
-export { AgentTerminalView, specialKey, canFit, applyTheme, keepHeldTabs };
+export { AgentTerminalView, specialKey, canFit, applyTheme, keepHeldTabs, isCloseRequest };

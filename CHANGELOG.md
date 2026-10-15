@@ -7,6 +7,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-10-15
+
+### Added
+
+- The Claude Code status line shows the context window after the limits: used tokens, the point where
+  auto-compact fires and the window size, e.g. `context 291k · compact at ~467k · window 1M`, in the
+  catalog's language. When auto-compact is off (`DISABLE_AUTO_COMPACT`, `DISABLE_COMPACT` or
+  `autoCompactEnabled: false`) it reads `compact off`.
+- The compact window is read like Claude Code reads it: `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, then
+  `modelSettings.<model>.autoCompactWindow`, then `autoCompactWindow`, from the managed, project-local,
+  project and user `settings.json` (in that order of precedence), clamped to 100k–1M and capped at the
+  window. The point shown is the window minus Claude Code's 33k buffer, lowered by
+  `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE`; Claude Code does not document the exact rule, so it is marked with `~`.
+- Known limits: the `--autocompact` launch flag and `CLAUDE_CODE_MAX_OUTPUT_TOKENS` are not visible to
+  the status line.
+
 ## [2.2.3] - 2026-10-11
 
 ### Fixed
@@ -246,7 +262,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Setup checks in settings: macOS, `python3` (3.8+), Claude Code, Codex, server, index rebuild, and an
   opt-in switch for subscription limits in the status line.
 
-[Unreleased]: https://github.com/OlegTestov/obsidian-ai-session-atlas/compare/2.2.3...HEAD
+[Unreleased]: https://github.com/OlegTestov/obsidian-ai-session-atlas/compare/2.3.0...HEAD
+[2.3.0]: https://github.com/OlegTestov/obsidian-ai-session-atlas/compare/2.2.3...2.3.0
 [2.2.3]: https://github.com/OlegTestov/obsidian-ai-session-atlas/compare/2.2.2...2.2.3
 [2.2.2]: https://github.com/OlegTestov/obsidian-ai-session-atlas/compare/2.2.1...2.2.2
 [2.2.1]: https://github.com/OlegTestov/obsidian-ai-session-atlas/compare/2.2.0...2.2.1

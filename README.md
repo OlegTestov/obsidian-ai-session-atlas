@@ -294,7 +294,11 @@ The **Subscription limits** switch adds a AI Session Atlas status line to `~/.cl
 Before its first edit the plugin saves a copy as `settings.json.session-atlas.bak` next to it. If you
 already have a status line, or the file is not valid JSON, the switch is disabled and the file is
 left alone. While enabled, the status line runs for every Claude Code session on the computer and
-writes the limits to `rate-limits.json` in the data folder. Turning the switch off removes the
+writes the limits to `rate-limits.json` in the data folder. It also shows the context window: used
+tokens, the auto-compact point and the window size (e.g. `context 227k · compact at ~467k · window 1M`;
+`compact off` when auto-compact is switched off). The point is estimated from Claude Code's settings
+and environment, as the window minus its 33k buffer; the `--autocompact` launch flag and
+`CLAUDE_CODE_MAX_OUTPUT_TOKENS` are not visible to the status line. Turning the switch off removes the
 `statusLine` entry.
 
 **Deleting a session** (Search card → Delete session) removes, after a confirmation that lists every

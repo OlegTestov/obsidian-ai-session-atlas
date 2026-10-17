@@ -11,7 +11,6 @@ let listAbort = null;
 
 async function loadList(keepScroll) {
   writeHash();
-  const scrollTop = keepScroll ? $("#list").scrollTop : 0;
   const seq = ++listSeq;
   if (listAbort) listAbort.abort();
   listAbort = new AbortController();
@@ -27,6 +26,12 @@ async function loadList(keepScroll) {
     return;
   }
   if (seq !== listSeq) return;
+  // Snapshot only after the response: the user may have scrolled while it was in flight.
+  const scrollTop = keepScroll ? box.scrollTop : 0;
+  const top = box.getBoundingClientRect().top;
+  const anchor = keepScroll && Array.from(box.querySelectorAll(".row"))
+    .find(row => row.getBoundingClientRect().bottom > top);
+  const anchorOffset = anchor ? anchor.getBoundingClientRect().top - top : 0;
   box.removeAttribute("aria-busy");
   box.dataset.q = state.q;
 
@@ -111,7 +116,11 @@ async function loadList(keepScroll) {
     frag.appendChild(row);
   }
   box.replaceChildren(frag);
-  if (keepScroll) box.scrollTop = scrollTop;
+  const restored = anchor && Array.from(box.querySelectorAll(".row"))
+    .find(row => row.dataset.id === anchor.dataset.id);
+  // A new result or a changed badge can change row heights above the card being read.
+  if (restored) box.scrollTop += restored.getBoundingClientRect().top - box.getBoundingClientRect().top - anchorOffset;
+  else box.scrollTop = scrollTop;
 }
 
 

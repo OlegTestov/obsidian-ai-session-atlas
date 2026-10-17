@@ -212,7 +212,9 @@ developer policies.
 **Clipboard.** The plugin reads clipboard text only when you choose Paste in a terminal's context
 menu, and sends it to that terminal as typed input. Copy actions write the selected terminal text
 or the requested catalog text to the clipboard. Pasting into a reply field can also attach images
-from the paste event. The plugin does not poll the clipboard or keep a clipboard history. Pasted
+from the paste event. In Codex terminal tabs, image paste (keyboard or context menu) saves a private
+local file in the plugin uploads folder and pastes its path without submitting the prompt.
+The plugin does not poll the clipboard or keep a clipboard history. Pasted
 content can become part of the agent's transcript or an attached image, as with ordinary input.
 
 **Files outside the vault.**

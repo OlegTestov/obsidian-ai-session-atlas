@@ -261,3 +261,29 @@ def test_tab_script_passes_its_pid_to_the_hook(tmp_path):
     proc = subprocess.run(["zsh", "-c", 'print $$; exec zsh "$0" "$@"', str(SCRIPT), "claude", "inst-p", "resume", OLD],
                           cwd=work, env=env, capture_output=True, text=True, timeout=20)
     assert (tmp_path / "calls").read_text(encoding="utf-8").split() == [proc.stdout.split()[0]]
+
+
+def test_resume_hint_is_printed_after_leaving_alternate_screen(tmp_path):
+    env, work = _env(tmp_path)
+    stub = tmp_path / "bin" / "claude"
+    stub.write_text(f'#!/bin/zsh\nprint "Resume this session with:"\nprint "claude --resume {OLD}"\n',
+                    encoding="utf-8")
+    stub.chmod(0o755)
+    out = subprocess.run(["zsh", str(SCRIPT), "claude", "inst-hint", "resume", OLD],
+                         cwd=work, env=env, check=True, capture_output=True, timeout=20).stdout
+    main_screen = out.rfind(b"\x1b[?1049l")
+    assert main_screen >= 0
+    assert f"claude --resume {OLD}".encode() in out[main_screen:]
+
+
+def test_exit_hint_uses_the_session_selected_inside_the_tab(tmp_path):
+    env, work = _env(tmp_path)
+    stub = tmp_path / "bin" / "claude"
+    stub.write_text(f'#!/bin/zsh\nsource "{SCRIPTS}/agent-registry-lib.zsh"\n'
+                    f'upsert_resume_id claude "$OBS_AGENT_INSTANCE" {NEW}\n', encoding="utf-8")
+    stub.chmod(0o755)
+    out = subprocess.run(["zsh", str(SCRIPT), "claude", "inst-hint-switch", "resume", OLD],
+                         cwd=work, env=env, check=True, capture_output=True, timeout=20).stdout
+    restored = out[out.rfind(b"\x1b[?1049l"):]
+    assert f"claude --resume {NEW}".encode() in restored
+    assert OLD.encode() not in restored

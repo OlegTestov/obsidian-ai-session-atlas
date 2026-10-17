@@ -1,3 +1,5 @@
+import { pasteImages } from "./term-paste";
+
 // Selecting and copying in the agent terminal tab. Plain functions over an xterm Terminal, so the
 // browser test runs them against the real xterm.js (tests/e2e/terminal.spec.mjs).
 
@@ -60,9 +62,19 @@ function copyTarget(event, leaf, activeLeaf, term) {
 }
 
 /** Pastes the clipboard as typed input: xterm wraps it in bracketed paste when the program asked. */
-async function pasteClipboard(term) {
+async function pasteClipboard(term, saveImage) {
   const clip = typeof navigator !== "undefined" ? navigator.clipboard : null;
-  if (!term || !clip || typeof clip.readText !== "function") return false;
+  if (!term || !clip) return false;
+  if (saveImage && typeof clip.read === "function") {
+    const items = await clip.read().catch(() => []);
+    const images = [];
+    for (const item of items) {
+      const type = item.types.find((type) => type.startsWith("image/"));
+      if (type) images.push(await item.getType(type));
+    }
+    if (images.length) return pasteImages(term, images, saveImage);
+  }
+  if (typeof clip.readText !== "function") return false;
   const text = await clip.readText().catch(() => "");
   if (!text) return false;
   term.paste(text);

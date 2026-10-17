@@ -7,6 +7,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.3.1] - 2026-10-17
+
+### Fixed
+
+- Modern Obsidian theme colours (color-mix/oklch and hsl) are resolved to sRGB before passing them
+  to xterm. Selection and the cursor stay visible on a light shell after Claude Code exits,
+  including after switching tabs or refreshing the theme.
+- Background search refreshes keep the visible result in place, including scrolling during a
+  pending request and changes to the rows above it.
+- Agent terminal tabs print the current resume/attach command after restoring the main screen,
+  so the recovery hint survives Ctrl-C and the subsequent shell prompt.
+- Pasting a clipboard image into a Codex terminal tab now creates a private local attachment and
+  pastes its path, both from the keyboard and the context menu. Text paste and Claude Code
+  clipboard handling are preserved; pasting does not submit the prompt.
+
 ## [2.3.0] - 2026-10-15
 
 ### Added

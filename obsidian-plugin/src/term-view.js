@@ -3,16 +3,20 @@
 // handed back after a restart: the command runs again, and the tab script brings back its session
 // from the registry. From outside the tab looks like a Terminal plugin tab (emulator.terminal,
 // emulator.pseudoterminal.shell), so the Active view code works with both.
-import { ItemView, Menu } from "obsidian";
+import { ItemView, Menu, Notice } from "obsidian";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import * as os from "os";
 import * as path from "path";
+import { themeFromCss, applyTheme } from "./term-theme";
 import { spawnPty } from "./pty";
 import { AGENT_VIEW_TYPE, DEFAULT_FONT_SIZE } from "./constants";
 import { registry, keepHeldTabs, holdForReclaim } from "./held";
 import { selectWithModifier, isCopyKey, copySelection, pasteClipboard, menuItems, copyTarget } from "./term-copy";
+
+import { pasteImageEvent } from "./term-paste";
+import { saveClipboardImage } from "./term-image";
 
 const DEFAULT_SHELL = "/bin/zsh";
 const CLOSE_OSC = 7770;                 // scripts/agent-resume-terminal.zsh: "close;<tab id>"
@@ -37,29 +41,6 @@ function isCloseRequest(data, instance, elapsedMs) {
   const [what, id, extra] = String(data).split(";");
   return what === "close" && !!instance && id === instance && extra === undefined
     && elapsedMs >= 0 && elapsedMs < CLOSE_WINDOW_MS;
-}
-
-/** Terminal colours come from the Obsidian theme: light and dark without configuration. */
-function themeFromCss(el) {
-  const css = getComputedStyle(el);
-  const v = (name, fallback) => (css.getPropertyValue(name) || "").trim() || fallback;
-  return {
-    background: v("--background-primary", "#1e1e1e"),
-    foreground: v("--text-normal", "#dcddde"),
-    cursor: v("--text-accent", "#7f6df2"),
-    selectionBackground: v("--text-selection", "rgba(127,109,242,.35)"),
-  };
-}
-
-/** Follows an Obsidian theme change (by hand, or with the system at nightfall) in the terminal colours.
- *  Returns true when the colours changed. */
-function applyTheme(term, el) {
-  if (!term) return false;
-  const next = themeFromCss(el);
-  const now = term.options.theme || {};
-  if (Object.keys(next).every((k) => now[k] === next[k])) return false;
-  term.options.theme = next;
-  return true;
 }
 
 class AgentTerminalView extends ItemView {
@@ -183,6 +164,12 @@ class AgentTerminalView extends ItemView {
       }, RESIZE_SETTLE_MS);
     });
     this.resizeObserver.observe(this.box);
+    // Capture before xterm's paste listener; other agents retain their native clipboard handling.
+    this.registerDomEvent(this.box, "paste", (event) => {
+      if (this.state.kind !== "codex") return;
+      const pending = pasteImageEvent(event, term, (image) => saveClipboardImage(this.plugin.dataDir(), image));
+      if (pending) pending.catch(() => new Notice(this.plugin.t("terminal.imagePasteFailed")));
+    }, { capture: true });
     this.registerDomEvent(this.box, "contextmenu", (event) => this.showMenu(event, term));
     // A drag with ⌥ selects without giving the terminal the keyboard: the next ⌘C went to the page.
     // xterm ends a forced selection on the document, so the check runs there, after its own handlers.
@@ -217,7 +204,9 @@ class AgentTerminalView extends ItemView {
     for (const item of menuItems(term)) {
       menu.addItem((entry) => entry.setTitle(this.plugin.t(`terminal.${item.id}`)).setIcon(item.icon)
         .setDisabled(item.disabled)
-        .onClick(() => (item.id === "copy" ? copySelection(term) : pasteClipboard(term))));
+        .onClick(() => (item.id === "copy" ? copySelection(term) : pasteClipboard(term,
+          this.state.kind === "codex" ? (image) => saveClipboardImage(this.plugin.dataDir(), image) : undefined)
+          .catch(() => new Notice(this.plugin.t("terminal.imagePasteFailed"))))));
     }
     menu.showAtMouseEvent(event);
     return menu;

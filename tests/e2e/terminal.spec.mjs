@@ -88,3 +88,84 @@ test("the agent exited and the shell is left: a plain drag selects, ⌘C copies"
   await page.keyboard.press("Meta+c");
   await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toMatch(/electable words/);
 });
+
+
+test("Codex image paste bypasses xterm text and inserts one attachment path without Enter", async ({ page }) => {
+  await terminal(page, true);
+  const source = esbuild.buildSync({ entryPoints: [path.join(ROOT, "obsidian-plugin/src/term-paste.js")],
+    bundle: true, write: false, format: "iife", globalName: "AtlasTermPaste" }).outputFiles[0].text;
+  await page.addScriptTag({ content: source });
+  await page.evaluate(() => {
+    window.savedImages = [];
+    document.getElementById("box").addEventListener("paste", (event) => {
+      window.pastedImage = window.AtlasTermPaste.pasteImageEvent(event, window.term, async (image) => {
+        window.savedImages.push({ type: image.type, size: image.size });
+        return "/test data/uploads/clipboard.png";
+      });
+    }, { capture: true });
+    const data = new DataTransfer();
+    data.items.add(new File([new Uint8Array([137,80,78,71])], "clipboard.png", {type:"image/png"}));
+    data.setData("text/plain", "must not be pasted twice");
+    document.querySelector("#box textarea").dispatchEvent(new ClipboardEvent("paste", {bubbles:true, cancelable:true, clipboardData:data}));
+  });
+  await page.evaluate(() => window.pastedImage);
+  expect(await page.evaluate(() => window.savedImages)).toEqual([{type:"image/png",size:4}]);
+  expect(await page.evaluate(() => window.toProgram.join(""))).toBe('"/test data/uploads/clipboard.png" ');
+});
+
+test("Codex context menu reads a real clipboard PNG instead of its empty text", async ({ page }) => {
+  await terminal(page, true);
+  const result = await page.evaluate(async () => {
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 2;
+    canvas.getContext("2d").fillRect(0, 0, 2, 2);
+    const png = await new Promise(resolve => canvas.toBlob(resolve, "image/png"));
+    await navigator.clipboard.write([new ClipboardItem({"image/png":png})]);
+    let saved = 0;
+    const ok = await window.AtlasTermCopy.pasteClipboard(window.term, async image => {
+      if (image.type === "image/png" && image.size > 0) saved++;
+      return "/clipboard.png";
+    });
+    return {ok,saved,typed:window.toProgram.join("")};
+  });
+  expect(result).toEqual({ok:true,saved:1,typed:'"/clipboard.png" '});
+});
+
+
+test("Obsidian color-mix selection stays visible on the white shell after Claude exits", async ({ page }) => {
+  const screen = await terminal(page, true);
+  const source = esbuild.buildSync({entryPoints:[path.join(ROOT,"obsidian-plugin/src/term-theme.js")],
+    bundle:true,write:false,format:"iife",globalName:"AtlasTermTheme"}).outputFiles[0].text;
+  await page.addScriptTag({content:source});
+  await page.addStyleTag({content:`#box {
+    --background-primary:#ffffff; --text-normal:#222222;
+    --text-accent:hsl(258, 88%, 66%);
+    --text-selection:color-mix(in oklch, hsl(258, 88%, 66%) 20%, transparent);
+  }`});
+  await page.evaluate(() => {
+    window.term.options.theme=window.AtlasTermTheme.themeFromCss(document.getElementById("box"));
+  });
+  // The agent takes the alternate screen; on exit its shell uses the light Obsidian theme again.
+  await page.evaluate(() => new Promise(resolve => window.term.write("\x1b[?1049h\x1b[?1000h\x1b[?1002h\x1b[?1006h",resolve)));
+  await page.evaluate(() => new Promise(resolve => window.term.write("\x1b[?1000l\x1b[?1002l\x1b[?1006l\x1b[?1049l",resolve)));
+  expect(await drag(page,screen)).toMatch(/electable words/);
+  const colors=await page.evaluate(()=>{
+    const c=window.term._core._themeService.colors;
+    return {background:c.background.css,selection:c.selectionBackgroundOpaque.css,cursor:c.cursor.css};
+  });
+  expect(colors.selection).not.toBe(colors.background);
+  expect(colors.cursor).not.toBe(colors.background);
+  expect(await page.evaluate(()=>window.term.options.theme.selectionBackground))
+    .toMatch(/^rgba\(\d+, \d+, \d+, 0\.2\)$/);
+  // Tab focus/theme notifications reapply the same palette: modern CSS must not leak back to xterm.
+  const afterRefresh=await page.evaluate(()=>{
+    const changed=window.AtlasTermTheme.applyTheme(window.term,document.getElementById("box"));
+    const c=window.term._core._themeService.colors;
+    return {changed,background:c.background.css,selection:c.selectionBackgroundOpaque.css};
+  });
+  expect(afterRefresh.changed).toBe(false);
+  expect(afterRefresh.selection).not.toBe(afterRefresh.background);
+  await page.locator("#box textarea").focus();
+  await page.keyboard.press("Meta+c");
+  await expect.poll(()=>page.evaluate(()=>navigator.clipboard.readText())).toMatch(/electable words/);
+});

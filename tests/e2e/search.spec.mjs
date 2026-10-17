@@ -176,3 +176,40 @@ test("narrow pane: the search field stays, Filters opens the rest, a found sessi
   const width = await page.evaluate(() => document.documentElement.scrollWidth);
   expect(width, "no sideways scroll").toBeLessThanOrEqual(680);
 });
+
+
+test("background search refresh preserves scrolling during the request and the visible row", async ({ page, open }) => {
+  const base = await api("/api/sessions?limit=200");
+  let results = Array.from({length:60}, (_,i) => ({...base.results[i % base.results.length], session_id:`scroll-${i}`}));
+  let release;
+  let delay = false;
+  await page.route("**/api/sessions?*", async route => {
+    if (delay) await new Promise(resolve => { release = resolve; });
+    await route.fulfill({json:{...base, results, count:results.length, shown:results.length, indexing:false}});
+  });
+  await open();
+  await expect(page.locator("#list .row")).toHaveCount(60);
+  await page.evaluate(() => { document.querySelector("#list").scrollTop = 200; });
+  delay = true;
+  await page.evaluate(() => { window.refreshScrollTest = window.loadList(true); });
+  await expect.poll(() => !!release).toBe(true);
+  const before = await page.evaluate(() => {
+    const box = document.querySelector("#list"); box.scrollTop = 800;
+    const top = box.getBoundingClientRect().top;
+    const row = [...box.querySelectorAll(".row")].find(r => r.getBoundingClientRect().bottom > top);
+    return {id:row.dataset.id, offset:row.getBoundingClientRect().top-top, scroll:box.scrollTop};
+  });
+  // A new result and taller preceding rows must not move the card being read.
+  results = [{...results[0],session_id:"new-result"}, ...results.map(r => ({...r,title:r.title+" extra words ".repeat(10)}))];
+  release();
+  await page.evaluate(async () => {
+    await window.refreshScrollTest;
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
+  const after = await page.evaluate(id => {
+    const box=document.querySelector("#list");
+    const row=[...box.querySelectorAll(".row")].find(r=>r.dataset.id===id);
+    return row.getBoundingClientRect().top-box.getBoundingClientRect().top;
+  }, before.id);
+  expect(Math.abs(after-before.offset)).toBeLessThan(2);
+});

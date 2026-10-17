@@ -312,6 +312,25 @@ esac
 # paste, alternate screen). Reset to the state before it started.
 printf '\e[?1000l\e[?1002l\e[?1003l\e[?1006l\e[?1004l\e[?2004l\e[?1049l\e[?25h'
 
+# The agent prints its own hint on the alternate screen, which the reset above discards.
+# Read the current mapping: /resume or a fork may have changed it since this tab started.
+if [[ -z "$DUPLICATE_TAB" ]]; then
+  resume_id="$(get_resume_id "$APP" "$INSTANCE")"
+  if valid_uuid "$resume_id"; then
+    resume_command=""
+    if [[ "$APP" == claude ]]; then
+      if resume_job="$(claude_live_job "$resume_id")"; then
+        resume_command="claude attach $resume_job"
+      else
+        resume_command="claude --resume $resume_id"
+      fi
+    else
+      resume_command="codex resume $resume_id"
+    fi
+    printf '\n\e[90mResume this session with:\n%s\e[0m\n' "$resume_command"
+  fi
+fi
+
 # Tests and automation: no shell after the agent exits. A duplicate tab is about to be closed.
 [[ -n "${OBS_AGENT_TERMINAL_NO_SHELL:-}${DUPLICATE_TAB:-}" ]] && exit 0
 print

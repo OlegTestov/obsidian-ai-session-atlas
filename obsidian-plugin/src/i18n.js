@@ -31,6 +31,7 @@ const STRINGS = {
     "tab.gone": "Вкладка с этой сессией уже закрыта.",
     "terminal.copy": "Копировать",
     "terminal.paste": "Вставить",
+    "terminal.imagePasteFailed": "Не удалось вставить картинку из буфера обмена",
     "held.notice": "AI Session Atlas: вкладки закрылись, а агенты в них работают (вкладок: {n}). Нажми — вкладки вернутся к тем же процессам. Ещё можно из каталога, «Активные».",
     // Refusal reasons for the page, which shows them as is.
     "input.badRequest": "неверный запрос",
@@ -181,6 +182,7 @@ const STRINGS = {
     "tab.gone": "The tab with this session is already closed.",
     "terminal.copy": "Copy",
     "terminal.paste": "Paste",
+    "terminal.imagePasteFailed": "Could not paste the clipboard image",
     "held.notice": "AI Session Atlas: tabs were closed, but their agents are still running (tabs: {n}). Click to bring the tabs back to the same processes, or do it from the catalog's Active view.",
     "input.badRequest": "invalid request",
     "input.tabClosed": "the tab is already closed",

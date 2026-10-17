@@ -9,6 +9,8 @@ server on `127.0.0.1`, and nothing is sent anywhere unless you turn on the optio
 
 *[Русская версия](README.ru.md)*
 
+![AI Session Atlas: live agent cards, search, statistics, rhythm and limits (demo data)](https://github.com/OlegTestov/obsidian-ai-session-atlas/raw/main/docs/images/collage-en.png)
+
 ## Features
 
 - **Search.** Full-text search over every Claude Code and Codex session: your prompts, the answers,

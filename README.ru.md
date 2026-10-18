@@ -10,6 +10,8 @@ Obsidian — после перезапуска вкладка открывает
 
 *[English version](README.md)*
 
+![AI Session Atlas: живые карточки агентов, поиск, статистика, ритм и лимиты (демо-данные)](https://github.com/OlegTestov/obsidian-ai-session-atlas/raw/main/docs/images/collage-ru.png)
+
 ## Возможности
 
 - **Поиск.** Полнотекстовый поиск по всем сессиям Claude Code и Codex: твои запросы, ответы,

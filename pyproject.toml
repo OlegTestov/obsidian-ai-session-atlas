@@ -5,7 +5,7 @@ description = "Catalog, search and live view of Claude Code sessions — the loc
 readme = "README.md"
 license = { text = "MIT" }
 authors = [{ name = "Oleg Testov" }]
-# Системный python3 из Xcode Command Line Tools — 3.9; зависимостей нет, только стандартная библиотека.
+# The system python3 from Xcode Command Line Tools is 3.9; no dependencies, standard library only.
 requires-python = ">=3.8"
 
 [project.scripts]

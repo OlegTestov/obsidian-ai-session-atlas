@@ -202,5 +202,10 @@ def write_new(path: str, records: list[dict]) -> None:
     Compact JSON and raw UTF-8, as both agents write it: tools match their records as text."""
     os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        fh.write("".join(json.dumps(r, ensure_ascii=False, separators=(",", ":")) + "\n" for r in records))
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write("".join(json.dumps(r, ensure_ascii=False, separators=(",", ":")) + "\n" for r in records))
+    except OSError:
+        # Only our newly created file: O_EXCL failures above never remove an existing session.
+        os.unlink(path)
+        raise

@@ -84,16 +84,19 @@ def resume_with(conn: sqlite3.Connection, session_id: str, target: str) -> dict:
         path = convert_write.codex_path(index.codex_home(), new_id, at)
         records = convert_write.codex_records(messages, new_id, cwd, at,
                                               convert_write.codex_provider(index.codex_home()))
-    # The link goes first: an index pass between the two writes must already skip the copies.
-    conn.execute("INSERT INTO conversions (session_id, source_session_id, source_agent, agent, path, at) "
-                 "VALUES (?,?,?,?,?,?)", (new_id, session_id, src["agent"], target, path, stamp))
-    conn.commit()
-    try:
-        convert_write.write_new(path, records)
-    except OSError:
-        conn.execute("DELETE FROM conversions WHERE session_id=?", (new_id,))
+    # Share the indexer lock: a large indexing transaction can exceed SQLite's busy timeout.
+    # Prepare history above, then publish the link before the discoverable transcript.
+    with index.writer_lock():
+        # The link goes first: an index pass between the two writes must already skip the copies.
+        conn.execute("INSERT INTO conversions (session_id, source_session_id, source_agent, agent, path, at) "
+                     "VALUES (?,?,?,?,?,?)", (new_id, session_id, src["agent"], target, path, stamp))
         conn.commit()
-        raise
+        try:
+            convert_write.write_new(path, records)
+        except OSError:
+            conn.execute("DELETE FROM conversions WHERE session_id=?", (new_id,))
+            conn.commit()
+            raise
     return {"agent": target, "session_id": new_id, "cwd": cwd, "converted": True, "path": path,
             "source_session_id": session_id, "omitted": omitted, "messages": len(messages),
             "title": src["title"], "command": actions.resume_command(cwd, new_id, agent=target)}

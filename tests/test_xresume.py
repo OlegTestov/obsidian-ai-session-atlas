@@ -271,3 +271,96 @@ def test_written_records_are_compact_like_the_agents_own(tmp_path):
                             f'"payload":{{"session_id":"{new}","id":"{new}",')
     assert '"cwd":"/w"' in first and ": " not in first and "вопрос" in path.read_text(encoding="utf-8")
     assert [json.loads(x)["ordinal"] for x in path.read_text(encoding="utf-8").splitlines()] == [0, 1, 2, 3]
+
+
+@pytest.mark.parametrize("sid,target", [(X.CLAUDE_ID, "codex"), (X.CODEX_ID, "claude")])
+def test_conversion_waits_for_index_writer_beyond_sqlite_timeout(corpus, sid, target):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    started = Event()
+    source_before = _digest(corpus["paths"]["claude" if target == "codex" else "codex"])
+
+    def convert_in_thread():
+        conn = db.connect()
+        conn.execute("PRAGMA busy_timeout=30")
+        started.set()
+        try:
+            return convert.resume_with(conn, sid, target)
+        finally:
+            conn.close()
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with index.writer_lock():
+            blocker = db.connect()
+            blocker.execute("BEGIN IMMEDIATE")
+            future = pool.submit(convert_in_thread)
+            try:
+                assert started.wait(5)
+                # Holding the cooperative lock must keep this alive past SQLite's timeout.
+                from concurrent.futures import TimeoutError
+                with pytest.raises(TimeoutError):
+                    future.result(timeout=0.2)
+            finally:
+                blocker.rollback()
+                blocker.close()
+        result = future.result(timeout=5)
+    assert os.path.exists(result["path"])
+    assert corpus["conn"].execute("SELECT count(*) FROM conversions").fetchone()[0] == 1
+    assert _digest(corpus["paths"]["claude" if target == "codex" else "codex"]) == source_before
+
+
+def test_failed_write_removes_conversion_link(corpus, monkeypatch):
+    def fail(*args):
+        raise OSError("disk full")
+    monkeypatch.setattr(convert_write, "write_new", fail)
+    with pytest.raises(OSError, match="disk full"):
+        convert.resume_with(corpus["conn"], X.CLAUDE_ID, "codex")
+    assert corpus["conn"].execute("SELECT count(*) FROM conversions").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("detail", ["database is locked", "database table is locked", "database is busy"])
+def test_busy_conversion_has_retryable_localized_response(corpus, monkeypatch, detail):
+    import sqlite3
+
+    from atlas import server
+    from atlas.messages import use_lang
+
+    def busy(*args):
+        raise sqlite3.OperationalError(detail)
+    monkeypatch.setattr(convert, "resume_with", busy)
+    replies = []
+    handler = object.__new__(server.Handler)
+    handler._json = lambda status, body: replies.append((status, body))
+    with use_lang("en"):
+        handler._resume_with(corpus["conn"], {"session_id": X.CLAUDE_ID, "agent": "codex", "confirmed": True})
+    assert replies == [(503, {"error": "The catalog is busy. Please try again shortly."})]
+
+
+def test_large_history_conversion_keeps_source_and_budget(corpus):
+    sid = "c1a0de00-1111-4111-8111-0000000000ab"
+    source = X.write_claude(corpus["projects"], corpus["cwd"], sid=sid, extra_turns=5000)
+    index.index_all(corpus["conn"])
+    before = _digest(source)
+    result = convert.resume_with(corpus["conn"], sid, "codex")
+    assert result["omitted"]
+    with open(result["path"], encoding="utf-8") as fh:
+        assert "LAST-REPLY-MARKER" in fh.read()
+    assert _digest(source) == before
+
+
+def test_partial_transcript_is_removed_after_disk_error(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+
+    original = os.fdopen
+    @contextmanager
+    def broken(fd, *args, **kwargs):
+        with original(fd, *args, **kwargs) as fh:
+            fh.write("partial")
+            raise OSError("disk full")
+            yield fh
+    monkeypatch.setattr(os, "fdopen", broken)
+    path = tmp_path / "copy.jsonl"
+    with pytest.raises(OSError, match="disk full"):
+        convert_write.write_new(str(path), [{"a": 1}])
+    assert not path.exists()

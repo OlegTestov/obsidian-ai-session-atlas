@@ -241,3 +241,30 @@ test("outside Obsidian: the copy is created and its command is shown", async ({ 
     expect(status).toBe(200);
   }
 });
+
+
+test("waiting for the catalog prevents duplicate requests and allows retry after busy", async ({ page, lang }) => {
+  const frame = await openCard(page, lang, ids.claudeMain);
+  page.expectHttpError(/api\/resume-with/);
+  let finish;
+  let calls = 0;
+  await page.route("**/api/resume-with", async route => {
+    calls++;
+    await new Promise(resolve => { finish = resolve; });
+    await route.fulfill({ status: 503, contentType: "application/json",
+      body: JSON.stringify({ error: lang === "ru" ? "Каталог занят. Повтори попытку чуть позже." :
+        "The catalog is busy. Please try again shortly." }) });
+  });
+  await frame.locator("#rw-button").click();
+  await frame.locator('#rw-menu .rw-item[data-agent="codex"]').click();
+  await frame.locator("#m-ok").click();
+  await expect.poll(() => calls).toBe(1);
+  await expect(frame.locator("#m-ok")).toBeDisabled();
+  await expect(frame.locator("#m-note")).toContainText(lang === "ru" ? "жду обновления каталога" : "waiting for catalog updates");
+  await page.keyboard.press("Enter");
+  expect(calls).toBe(1);
+  finish();
+  await expect(frame.locator("#m-ok")).toBeEnabled();
+  await expect(frame.locator("#m-note")).toContainText(lang === "ru" ? "Каталог занят" : "catalog is busy");
+  expect(await sentOf(page, "resume")).toHaveLength(0);
+});

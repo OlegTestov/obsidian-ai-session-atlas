@@ -6,6 +6,7 @@ import json
 import os
 import re
 import secrets
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -688,6 +689,11 @@ class Handler(BaseHTTPRequestHandler):
             result = convert.resume_with(conn, body.get("session_id", ""), body.get("agent"))
         except convert.ConvertError as exc:
             return self._json(400, {"error": str(exc)})
+        except sqlite3.OperationalError as exc:
+            if "locked" not in str(exc).lower() and "busy" not in str(exc).lower():
+                raise
+            conn.rollback()
+            return self._json(503, {"error": msg("convert.busy")})
         if result.get("converted"):
             threading.Thread(target=_index_new, daemon=True, args=(result["path"], result["agent"])).start()
         self._json(200, result)

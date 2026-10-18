@@ -7,6 +7,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.3.2] - 2026-10-18
+
+### Fixed
+
+- Continuing a conversation in the other agent waits for background indexing to release the
+  catalog writer lock, avoiding SQLite timeout failures during large index updates.
+- The conversion dialog explains that catalog updates may take time and shows a retryable
+  message if another database writer remains busy.
+
 ## [2.3.1] - 2026-10-17
 
 ### Fixed

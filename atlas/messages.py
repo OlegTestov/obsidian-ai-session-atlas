@@ -111,6 +111,8 @@ MESSAGES: dict[str, dict] = {
                                "ru": "слишком длинный первый запрос"},
 
     # --- convert.py ("Resume with…") ---
+    "convert.busy": {"en": "The catalog is busy. Please try again shortly.",
+                     "ru": "Каталог занят. Повтори попытку чуть позже."},
     "convert.empty": {"en": "nothing to copy: the session has no messages since its last compaction",
                       "ru": "копировать нечего: после последней компактации в сессии нет сообщений"},
     "convert.no_transcript": {"en": "the session's transcript is gone", "ru": "транскрипта сессии больше нет"},

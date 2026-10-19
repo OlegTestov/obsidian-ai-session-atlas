@@ -1,6 +1,6 @@
 # AI Session Atlas
 
-**[Install from Obsidian Community Plugins](https://community.obsidian.md/plugins/session-atlas)**
+**[Install from Obsidian Community Plugins](https://community.obsidian.md/plugins/session-atlas)** · [Русская версия](README.ru.md)
 
 AI Session Atlas is an Obsidian plugin for macOS for people who work with Claude Code and Codex
 every day. It indexes the session transcripts of both agents (`~/.claude/projects` and Codex's
@@ -8,8 +8,6 @@ every day. It indexes the session transcripts of both agents (`~/.claude/project
 from, counts tokens and cost, and runs Claude Code and Codex in terminal tabs inside Obsidian that
 reopen the same session after a restart. Everything runs locally: the plugin starts a small Python
 server on `127.0.0.1`, and nothing is sent anywhere unless you turn on the optional AI features.
-
-*[Русская версия](README.ru.md)*
 
 ![AI Session Atlas: live agent cards, search, statistics, rhythm and limits (demo data)](https://github.com/OlegTestov/obsidian-ai-session-atlas/raw/main/docs/images/collage-en.png)
 

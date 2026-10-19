@@ -1,6 +1,6 @@
 # AI Session Atlas
 
-**[Установить из каталога плагинов Obsidian](https://community.obsidian.md/plugins/session-atlas)**
+**[Установить из каталога плагинов Obsidian](https://community.obsidian.md/plugins/session-atlas)** · [English version](README.md)
 
 AI Session Atlas — плагин Obsidian для macOS для тех, кто каждый день работает с Claude Code и
 Codex. Он собирает транскрипты сессий обоих агентов (`~/.claude/projects` и `~/.codex/sessions` у
@@ -9,8 +9,6 @@ Codex) в один каталог с поиском, показывает зап
 Obsidian — после перезапуска вкладка открывает ту же сессию. Всё работает локально: плагин запускает
 небольшой сервер на Python на `127.0.0.1` и ничего никуда не отправляет, пока ты не включишь
 ИИ-функции.
-
-*[English version](README.md)*
 
 ![AI Session Atlas: живые карточки агентов, поиск, статистика, ритм и лимиты (демо-данные)](https://github.com/OlegTestov/obsidian-ai-session-atlas/raw/main/docs/images/collage-ru.png)
 

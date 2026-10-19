@@ -15,7 +15,9 @@ server on `127.0.0.1`, and nothing is sent anywhere unless you turn on the optio
 
 - **Search.** Full-text search over every Claude Code and Codex session: your prompts, the answers,
   shell commands and edited files. Filters by agent, project, domain, topic and date. A session card
-  shows the prompts, cost and edited files, and has buttons to:
+  shows the cost, edited files and an expandable **Session feed** with your prompts and the agent's
+  replies, in the same format as Active. The latest 20 turns load first; scroll up for earlier turns.
+  As in Active, long messages use the feed's preview limits. The card has buttons to:
   - resume the session in an Obsidian terminal tab (`claude --resume` or `codex resume`);
   - continue it in the other agent with **Resume with…**: a Claude Code session in Codex, a Codex
     session in Claude Code (see below);

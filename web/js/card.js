@@ -200,15 +200,7 @@ async function openCard(id) {
 
   frag.appendChild(classifyBlock(s));
 
-  const prompts = el("details", "block");
-  prompts.appendChild(el("summary", null, i18n("card.userPrompts")));
-  prompts.addEventListener("toggle", async () => {
-    if (!prompts.open || prompts.dataset.loaded) return;
-    prompts.dataset.loaded = "1";
-    const data = await api("/api/prompts/" + encodeURIComponent(id));
-    data.prompts.forEach(p => prompts.appendChild(el("pre", null, p)));
-  });
-  frag.appendChild(prompts);
+  frag.appendChild(catalogFeed(s));
 
   // Technical details go down and collapsed: continuing the work does not need them.
   const tech = el("details", "block");

@@ -7,6 +7,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-10-19
+
+### Added
+
+- Search cards replace the prompt-only list with an expandable session feed, using the same dialogue
+  renderer as Active. Claude Code and Codex conversations load on demand, with earlier turns in pages,
+  stable scrolling and retry buttons after a failed request.
+
+### Fixed
+
+- Already submitted Codex prompts follow light and dark terminal themes as well as the input panel,
+  including messages revisited in scrollback. Changing themes preserves the draft and terminal input.
+
 ## [2.3.4] - 2026-10-19
 
 ### Fixed

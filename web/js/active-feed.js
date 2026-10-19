@@ -161,7 +161,7 @@ $("#feed-body").addEventListener("scroll", () => {
   if ($("#feed-body").scrollTop < 80) loadOlderTurns();
 });
 
-function feedTurn(t, last) {
+function feedTurn(t, last, session = activeSessions.find(x => x.session_id === feedSid)) {
   const box = el("section", "fturn");
   const you = el("div", "fwho", i18n("feed.you", { time: fmtShort(t.prompt_at) }));
   box.appendChild(you);
@@ -180,7 +180,7 @@ function feedTurn(t, last) {
   }
   if (t.interrupted && !t.reply) box.appendChild(el("div", "fwho bad", i18n("feed.interrupted")));
   if (t.reply) {
-    const who = agentShort(activeSessions.find(x => x.session_id === feedSid));
+    const who = agentShort(session);
     box.appendChild(el("div", "fwho", `${who} · ${fmtShort(t.reply_at)}`
       + (t.interrupted ? " · " + i18n("feed.interrupted") : "")));
     const reply = el("div", "ftxt md");

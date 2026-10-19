@@ -124,14 +124,17 @@ test("full-text search finds text that only one agent's transcript has", async (
   await expect(page.locator("#list .empty")).toBeVisible();
 });
 
-test("a Codex card: title from Codex's state database, prompts, files, codex resume", async ({ page, open, t }) => {
+test("a Codex card: title from Codex's state database, conversation, files, codex resume", async ({ page, open, t }) => {
   await open();
   await row(page, ids.codexLedger).click();
   const card = page.locator("#card");
   await expect(card.locator("h3")).toHaveText(PHRASES.codexTitle);
   await expect(card.locator(".sub .agent-badge.codex")).toHaveText("Codex");
-  await card.locator("summary", { hasText: t.userPrompts }).click();
-  await expect(card.locator("details pre").first()).toContainText(`Find why the ${PHRASES.codexOnly} totals drift`);
+  await expect(card.locator("summary", { hasText: t.userPrompts })).toHaveCount(0);
+  await card.locator("summary", { hasText: t.feed }).click();
+  await expect(card.locator(".catalog-feed-body .mine")).toContainText(`Find why the ${PHRASES.codexOnly} totals drift`);
+  await expect(card.locator(".catalog-feed-body .ftxt:not(.mine)")).toContainText("Rounding fixed in ledger.py.");
+  await expect(card.locator(".catalog-feed-body .fwho").last()).toContainText("Codex");
   await card.locator("summary", { hasText: t.editedFiles(1) }).click();
   await expect(card.locator("ul.files li")).toHaveText(run.corpus.cwds.billing + "/billing/ledger.py");
   await card.locator("#bar button.primary", { hasText: t.resume }).click();
@@ -150,6 +153,10 @@ test("a Claude card: compaction, edited files and claude --resume", async ({ pag
   await expect(card.locator("h3")).toHaveText("Fix the flaky login test for ABC-12");
   await expect(card.locator(".sub .agent-badge.claude")).toHaveText("Claude Code");
   await expect(card.locator(".block.lead")).toContainText("raising the retry count");
+  await card.locator("summary", { hasText: t.feed }).click();
+  await expect(card.locator(".catalog-feed-body .fturn")).toHaveCount(2);
+  await expect(card.locator(".catalog-feed-body .ftxt:not(.mine)").last()).toContainText("Documented in README.md.");
+  await expect(card.locator(".catalog-feed-body .fwho").last()).toContainText("Claude");
   await card.locator("summary", { hasText: t.editedFiles(2) }).click();
   await expect(card.locator("ul.files")).toContainText(run.corpus.cwds.demo + "/src/login.py");
   await card.locator("#bar button.primary", { hasText: t.resume }).click();
@@ -212,4 +219,79 @@ test("background search refresh preserves scrolling during the request and the v
     return row.getBoundingClientRect().top-box.getBoundingClientRect().top;
   }, before.id);
   expect(Math.abs(after-before.offset)).toBeLessThan(2);
+});
+
+// UI pagination uses a synthetic large response; the card smoke tests above read real archived files.
+test("search dialogue loads lazily, keeps the reading position when paging and retries a failed page", async ({ page, open, t }) => {
+  await page.setViewportSize({ width: 680, height: 700 });
+  const turns = Array.from({ length: 40 }, (_, i) => ({
+    prompt: `QUESTION_${i + 1} ` + "a long readable message ".repeat(12),
+    prompt_at: new Date(Date.UTC(2026, 0, 1, 0, i)).toISOString(),
+    reply: `ANSWER_${i + 1}`, reply_at: new Date(Date.UTC(2026, 0, 1, 0, i, 10)).toISOString(),
+    steps: [], images: 0, interrupted: false,
+  }));
+  let calls = 0, fail = true, release;
+  page.expectHttpError(/\/api\/active\/feed\//);
+  await page.route(`**/api/active/feed/${ids.codexLedger}?*`, async route => {
+    calls++;
+    if (!new URL(route.request().url()).searchParams.has("before")) {
+      await route.fulfill({ json: { turns: turns.slice(20), has_more: true } });
+    } else if (fail) {
+      fail = false;
+      await route.fulfill({ status: 503, json: { error: "temporary failure" } });
+    } else {
+      await new Promise(resolve => { release = resolve; });
+      await route.fulfill({ json: { turns: turns.slice(0, 20), has_more: false } });
+    }
+  });
+  await open();
+  await row(page, ids.codexLedger).click();
+  expect(calls).toBe(0);
+  const summary = page.locator("#card summary", { hasText: t.feed });
+  const body = page.locator(".catalog-feed-body");
+  await summary.click();
+  await expect(body.locator(".fturn")).toHaveCount(20);
+  await expect.poll(() => body.evaluate(e => e.scrollHeight - e.scrollTop - e.clientHeight)).toBeLessThan(3);
+  expect(await body.evaluate(e => e.clientHeight)).toBeLessThanOrEqual(456);
+  await body.evaluate(e => { e.scrollTop = 0; });
+  await expect(body.locator(".empty")).toContainText("temporary failure");
+  expect(calls).toBe(2); // a failure must not start an automatic retry loop
+  await body.locator(".fearlier").click();
+  await expect.poll(() => !!release).toBe(true);
+  const before = await body.locator(".fturn").first().evaluate(e => ({ text: e.textContent, top: e.getBoundingClientRect().top }));
+  release();
+  await expect(body.locator(".fturn")).toHaveCount(40);
+  const after = await body.locator(".fturn").nth(20).evaluate(e => ({ text: e.textContent, top: e.getBoundingClientRect().top }));
+  expect(after.text).toBe(before.text);
+  expect(Math.abs(after.top - before.top)).toBeLessThan(3);
+  await expect(body.locator(".fearlier")).toHaveCount(0);
+  await summary.click();
+  await summary.click();
+  expect(calls).toBe(3);
+  await expect(body.locator(".fturn")).toHaveCount(40);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(680);
+});
+
+test("search dialogue retries the initial failure and ignores a response for a closed card", async ({ page, open, t }) => {
+  let calls = 0, release;
+  page.expectHttpError(/\/api\/active\/feed\//);
+  await page.route(`**/api/active/feed/${ids.codexLedger}?*`, async route => {
+    if (++calls === 1) await route.fulfill({ status: 503, json: { error: "try again" } });
+    else {
+      await new Promise(resolve => { release = resolve; });
+      await route.fulfill({ json: { turns: [{prompt:"STALE_CARD_MESSAGE", prompt_at:"2026-01-01T00:00:00Z",steps:[], reply:"old"}], has_more:false } });
+    }
+  });
+  await open();
+  await row(page, ids.codexLedger).click();
+  await page.locator("#card summary", { hasText: t.feed }).click();
+  await expect(page.locator(".catalog-feed-body .empty")).toContainText("try again");
+  await page.locator(".catalog-feed-body .fearlier").click();
+  await expect.poll(() => !!release).toBe(true);
+  await row(page, ids.claudeMain).click();
+  await expect(page.locator("#card h3")).toContainText("flaky login");
+  release();
+  await page.locator("#card summary", { hasText: t.feed }).click();
+  await expect(page.locator(".catalog-feed-body .fturn")).toHaveCount(2);
+  await expect(page.locator("#card")).not.toContainText("STALE_CARD_MESSAGE");
 });

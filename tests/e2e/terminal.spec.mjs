@@ -192,6 +192,10 @@ for (const initial of ["dark", "light"]) for (const bufferType of ["normal", "al
     const draft="DRAFT_THEME_PROBE";
     const panel=cols=>`\x1b[H\x1b[48;2;${color}m${" ".repeat(cols)}\r\n› ${draft}${" ".repeat(cols-draft.length-2)}\r\n${" ".repeat(cols)}\x1b[0m`;
     await page.evaluate(data=>new Promise(r=>window.term.write(data,r)),panel(80)+"\x1b[6;1H\x1b[48;2;30;60;90m"+"COLOR_SAMPLE".padEnd(80)+"\x1b[0m");
+    const historyColor=initial==="dark"?"64;64;64":"249;249;249";
+    const history="HISTORY_THEME_PROBE";
+    await page.evaluate(data=>new Promise(r=>window.term.write(data,r)),
+      `\x1b[8;1H\x1b[48;2;${historyColor}m${" ".repeat(80)}\r\n\x1b[1;2m›\x1b[22m ${history}${" ".repeat(80-history.length-2)}\r\n${" ".repeat(80)}\x1b[0m`);
     const rendered = token => page.evaluate(token=>{
       const row=[...document.querySelectorAll(".xterm-rows > div")].find(r=>r.textContent.includes(token));
       const span=row&&[...row.querySelectorAll("span")].find(s=>s.textContent.includes(token)||s.textContent===token[0]);
@@ -201,10 +205,12 @@ for (const initial of ["dark", "light"]) for (const bufferType of ["normal", "al
       await page.evaluate(mode=>window.switchTheme(mode),mode);
       await expect.poll(()=>rendered(draft)).toEqual({bg:mode==="dark"?"rgb(55, 55, 55)":"rgb(244, 244, 244)",
                                                     fg:mode==="dark"?"rgb(221, 221, 221)":"rgb(34, 34, 34)"});
+      await expect.poll(()=>rendered(history)).toEqual({bg:mode==="dark"?"rgb(64, 64, 64)":"rgb(249, 249, 249)",
+                                                      fg:mode==="dark"?"rgb(221, 221, 221)":"rgb(34, 34, 34)"});
       expect((await rendered("COLOR_SAMPLE")).bg).toBe("rgb(30, 60, 90)");
       const selected=await page.evaluate(draft=>{window.term.select(2,1,draft.length);const s=window.term.getSelection();window.term.clearSelection();return s;},draft);
       expect(selected).toBe(draft);
-      expect(await page.evaluate(()=>window.term.markers.length)).toBeLessThanOrEqual(3);
+      expect(await page.evaluate(()=>window.term.markers.length)).toBeLessThanOrEqual(6);
     }
     // Verify resize before selection: xterm 6 can visually restore a cleared selection on resize.
     await page.evaluate(()=>window.term.resize(90,24));
@@ -260,5 +266,39 @@ for (const initial of ["dark", "light"]) {
       await expect.poll(()=>page.locator(".xterm-rows > div").first().evaluate(el=>getComputedStyle(el).color))
         .toBe(mode==="dark"?"rgb(221, 221, 221)":"rgb(34, 34, 34)");
     }
+  });
+}
+
+for (const initial of ["dark", "light"]) {
+  test(`Codex submitted prompt in scrollback follows theme from ${initial} when scrolled into view`, async ({ page }) => {
+    await terminal(page, true);
+    const source = esbuild.buildSync({entryPoints:[path.join(ROOT,"obsidian-plugin/src/term-theme.js")],
+      bundle:true,write:false,format:"iife",globalName:"AtlasTermTheme"}).outputFiles[0].text;
+    await page.addScriptTag({content:source});
+    const fill = initial === "dark" ? "64;64;64" : "249;249;249";
+    // The prompt has already left the screen when the tab attaches its colour adapter.
+    await page.evaluate(text => new Promise(resolve => window.term.write(text, resolve)),
+      `\x1b[2J\x1b[H\x1b[48;2;${fill}m${" ".repeat(80)}\r\n\x1b[1;2m›\x1b[22m SCROLLBACK_THEME_PROBE${" ".repeat(56)}\r\n${" ".repeat(80)}\x1b[0m\r\n`
+      + Array.from({length:60}, (_, i) => `normal output ${i}\r\n`).join(""));
+    await page.evaluate(() => { window.surface = window.AtlasTermTheme.followCodexSurface(window.term); });
+    for (const mode of [initial === "dark" ? "light" : "dark", initial]) {
+      await page.evaluate(mode => {
+        const box = document.getElementById("box");
+        box.style.setProperty("--background-primary", mode === "dark" ? "#1c1c1c" : "#ffffff");
+        box.style.setProperty("--text-normal", mode === "dark" ? "#dddddd" : "#222222");
+        window.AtlasTermTheme.applyTheme(window.term, box);
+        window.term.scrollToTop();
+      }, mode);
+      await expect.poll(() => page.evaluate(() => {
+        const row = [...document.querySelectorAll(".xterm-rows > div")].find(r => r.textContent.includes("SCROLLBACK_THEME_PROBE"));
+        const span = row && [...row.querySelectorAll("span")].find(s => s.textContent.includes("SCROLLBACK_THEME_PROBE") || s.textContent === "S");
+        return span ? {bg:getComputedStyle(span).backgroundColor, fg:getComputedStyle(span).color} : null;
+      })).toEqual({bg:mode === "dark" ? "rgb(64, 64, 64)" : "rgb(249, 249, 249)",
+                   fg:mode === "dark" ? "rgb(221, 221, 221)" : "rgb(34, 34, 34)"});
+      await page.evaluate(() => window.term.scrollToBottom());
+    }
+    await page.evaluate(() => window.surface.dispose());
+    expect(await page.evaluate(() => window.term.markers.length)).toBe(0);
+    expect(await page.evaluate(() => window.toProgram)).toEqual([]);
   });
 }

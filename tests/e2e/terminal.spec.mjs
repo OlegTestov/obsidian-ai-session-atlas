@@ -206,6 +206,10 @@ for (const initial of ["dark", "light"]) for (const bufferType of ["normal", "al
       expect(selected).toBe(draft);
       expect(await page.evaluate(()=>window.term.markers.length)).toBeLessThanOrEqual(3);
     }
+    // Verify resize before selection: xterm 6 can visually restore a cleared selection on resize.
+    await page.evaluate(()=>window.term.resize(90,24));
+    await page.evaluate(data=>new Promise(r=>window.term.write(data,r)),panel(90));
+    await expect.poll(()=>rendered(draft)).toEqual({bg:"rgb(55, 55, 55)",fg:"rgb(221, 221, 221)"});
     const bounds = await screen.boundingBox();
     const cell = await page.evaluate(()=>({cols:window.term.cols,rows:window.term.rows}));
     await page.mouse.move(bounds.x+bounds.width*2.1/cell.cols,bounds.y+bounds.height*1.5/cell.rows);
@@ -217,9 +221,6 @@ for (const initial of ["dark", "light"]) for (const bufferType of ["normal", "al
     await expect.poll(()=>page.evaluate(()=>navigator.clipboard.readText())).toBe(draft);
     await page.evaluate(()=>window.term.clearSelection());
     expect(await page.evaluate(()=>window.toProgram)).toEqual([]);
-    await page.evaluate(()=>window.term.resize(90,24));
-    await page.evaluate(data=>new Promise(r=>window.term.write(data,r)),panel(90));
-    await expect.poll(()=>rendered(draft)).toEqual({bg:"rgb(55, 55, 55)",fg:"rgb(221, 221, 221)"});
     // Native /permissions replaces the prompt with a narrower panel in the same cached colour.
     const menu = "PERMISSIONS_PROBE";
     await page.evaluate(data=>new Promise(r=>window.term.write(data,r)),

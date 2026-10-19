@@ -254,9 +254,9 @@ def test_stamps_never_pass_the_conversion_or_go_back():
 
 def test_an_existing_file_is_never_overwritten(tmp_path):
     path = tmp_path / "s" / "x.jsonl"
-    convert_write.write_new(str(path), [{"a": 1}])
+    convert_write.write_new(str(path), convert_write.serialize([{"a": 1}]))
     with pytest.raises(FileExistsError):
-        convert_write.write_new(str(path), [{"b": 2}])
+        convert_write.write_new(str(path), convert_write.serialize([{"b": 2}]))
     assert path.read_text() == '{"a":1}\n'
 
 
@@ -265,7 +265,8 @@ def test_written_records_are_compact_like_the_agents_own(tmp_path):
     at = datetime(2026, 10, 5, 9, 8, 50, tzinfo=timezone.utc)
     new = convert_write.uuid7()
     path = tmp_path / "r.jsonl"
-    convert_write.write_new(str(path), convert_write.codex_records([("user", "вопрос", None)], new, "/w", at))
+    convert_write.write_new(str(path), convert_write.serialize(
+        convert_write.codex_records([("user", "вопрос", None)], new, "/w", at)))
     first = path.read_text(encoding="utf-8").splitlines()[0]
     assert first.startswith('{"timestamp":"2026-10-05T09:08:50.000Z","ordinal":0,"type":"session_meta",'
                             f'"payload":{{"session_id":"{new}","id":"{new}",')
@@ -362,5 +363,5 @@ def test_partial_transcript_is_removed_after_disk_error(tmp_path, monkeypatch):
     monkeypatch.setattr(os, "fdopen", broken)
     path = tmp_path / "copy.jsonl"
     with pytest.raises(OSError, match="disk full"):
-        convert_write.write_new(str(path), [{"a": 1}])
+        convert_write.write_new(str(path), convert_write.serialize([{"a": 1}]))
     assert not path.exists()

@@ -7,6 +7,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.3.3] - 2026-10-19
+
+### Fixed
+
+- Cross-agent conversion prepares JSONL before taking the catalog writer lock. Serialization
+  failures leave no new transcript or conversion link, and serialization no longer holds up other writers.
+- Errors removing an incomplete transcript or its catalog link are logged without hiding the
+  original write failure. Failed catalog cleanup rolls back its transaction.
+
 ## [2.3.2] - 2026-10-18
 
 ### Fixed

@@ -7,6 +7,7 @@ the copied records up to `at`, as it does for a parked conversation's job: nothi
 """
 from __future__ import annotations
 
+import logging
 import os
 import sqlite3
 import uuid
@@ -84,6 +85,7 @@ def resume_with(conn: sqlite3.Connection, session_id: str, target: str) -> dict:
         path = convert_write.codex_path(index.codex_home(), new_id, at)
         records = convert_write.codex_records(messages, new_id, cwd, at,
                                               convert_write.codex_provider(index.codex_home()))
+    text = convert_write.serialize(records)
     # Share the indexer lock: a large indexing transaction can exceed SQLite's busy timeout.
     # Prepare history above, then publish the link before the discoverable transcript.
     with index.writer_lock():
@@ -92,10 +94,13 @@ def resume_with(conn: sqlite3.Connection, session_id: str, target: str) -> dict:
                      "VALUES (?,?,?,?,?,?)", (new_id, session_id, src["agent"], target, path, stamp))
         conn.commit()
         try:
-            convert_write.write_new(path, records)
+            convert_write.write_new(path, text)
         except OSError:
-            conn.execute("DELETE FROM conversions WHERE session_id=?", (new_id,))
-            conn.commit()
+            try:
+                with conn:
+                    conn.execute("DELETE FROM conversions WHERE session_id=?", (new_id,))
+            except sqlite3.Error:
+                logging.getLogger(__name__).warning("Could not remove conversion link %s", new_id, exc_info=True)
             raise
     return {"agent": target, "session_id": new_id, "cwd": cwd, "converted": True, "path": path,
             "source_session_id": session_id, "omitted": omitted, "messages": len(messages),

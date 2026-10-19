@@ -10,6 +10,7 @@ Messages alternate strictly, user first; every copied record is stamped no later
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import secrets
@@ -197,15 +198,24 @@ def codex_records(messages, new_id: str, cwd: str, at: datetime, provider: str =
     return out
 
 
-def write_new(path: str, records: list[dict]) -> None:
-    """A new file only (O_EXCL): an existing session is never overwritten. 0600, like the agents' own.
-    Compact JSON and raw UTF-8, as both agents write it: tools match their records as text."""
+def serialize(records: list[dict]) -> str:
+    """Prepare compact JSONL before taking the catalog writer lock."""
+    return "".join(json.dumps(r, ensure_ascii=False, separators=(",", ":")) + "\n" for r in records)
+
+
+def write_new(path: str, text: str) -> None:
+    """Write prepared JSONL to a new file only, with O_EXCL and private permissions."""
     os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write("".join(json.dumps(r, ensure_ascii=False, separators=(",", ":")) + "\n" for r in records))
+            fh.write(text)
     except OSError:
         # Only our newly created file: O_EXCL failures above never remove an existing session.
-        os.unlink(path)
+        try:
+            os.unlink(path)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            logging.getLogger(__name__).warning("Could not remove incomplete transcript %s", path, exc_info=True)
         raise

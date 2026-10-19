@@ -79,8 +79,8 @@ def test_current_codex_rollout_resumes_in_any_folder(tab):
 def test_converted_rollout_from_atlas_resumes(tab):
     at = datetime(2026, 10, 5, 9, 8, 50, tzinfo=timezone.utc)
     path = convert_write.codex_path(str(tab["codex"]), TID, at)
-    convert_write.write_new(path, convert_write.codex_records(
-        [("user", "вопрос", None), ("assistant", "ответ", None)], TID, str(tab["work"]), at))
+    convert_write.write_new(path, convert_write.serialize(convert_write.codex_records(
+        [("user", "вопрос", None), ("assistant", "ответ", None)], TID, str(tab["work"]), at)))
     call, _ = tab["run"]("codex", "cx-2", "resume", TID)
     assert call == ["resume", TID]
 

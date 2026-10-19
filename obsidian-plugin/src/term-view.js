@@ -9,7 +9,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import * as os from "os";
 import * as path from "path";
-import { themeFromCss, applyTheme } from "./term-theme";
+import { themeFromCss, applyTheme, followCodexSurface } from "./term-theme";
 import { spawnPty } from "./pty";
 import { AGENT_VIEW_TYPE, DEFAULT_FONT_SIZE } from "./constants";
 import { registry, keepHeldTabs, holdForReclaim } from "./held";
@@ -105,6 +105,7 @@ class AgentTerminalView extends ItemView {
     term.loadAddon(new WebLinksAddon((event, uri) => window.open(uri)));
     term.open(this.box);
     selectWithModifier(term);
+    if (this.state.kind === "codex") this.codexSurface = followCodexSurface(term);
     if (canFit(this.box)) { try { fit.fit(); } catch { /* the tab has no size yet */ } }
     // ⌘C with a selection copies; otherwise the key goes to the terminal as is.
     term.attachCustomKeyEventHandler((e) => {
@@ -229,6 +230,7 @@ class AgentTerminalView extends ItemView {
         registry().delete(this.ptyKey);
       }
     }
+    if (this.codexSurface) this.codexSurface.dispose();
     if (this.term) this.term.dispose();
     this.pty = null;
   }

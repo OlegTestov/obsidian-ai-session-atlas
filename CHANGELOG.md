@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.3.4] - 2026-10-19
+
+### Fixed
+
+- Already open Codex terminal tabs update the input and picker panel backgrounds when Obsidian
+  switches between light and dark themes. Drafts, terminal selection and running sessions are preserved.
+
 ## [2.3.3] - 2026-10-19
 
 ### Fixed

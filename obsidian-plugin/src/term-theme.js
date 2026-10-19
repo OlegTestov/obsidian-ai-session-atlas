@@ -1,3 +1,7 @@
+import { followCodexSurface as createCodexSurface } from "./term-codex-theme";
+
+const codexSurfaces = new WeakMap();
+
 /** Terminal colours come from the Obsidian theme: light and dark without configuration. */
 function themeFromCss(el) {
   const css = getComputedStyle(el);
@@ -36,7 +40,15 @@ function applyTheme(term, el) {
   const now = term.options.theme || {};
   if (Object.keys(next).every((k) => now[k] === next[k])) return false;
   term.options.theme = next;
+  codexSurfaces.get(term)?.refresh();
   return true;
 }
 
-export { themeFromCss, applyTheme };
+/** Opt in for Codex only; other agents retain their native colour handling. */
+function followCodexSurface(term) {
+  const surface = createCodexSurface(term);
+  codexSurfaces.set(term, surface);
+  return {dispose() { surface.dispose(); codexSurfaces.delete(term); }};
+}
+
+export { themeFromCss, applyTheme, followCodexSurface };

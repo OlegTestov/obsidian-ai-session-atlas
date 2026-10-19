@@ -169,3 +169,95 @@ test("Obsidian color-mix selection stays visible on the white shell after Claude
   await page.keyboard.press("Meta+c");
   await expect.poll(()=>page.evaluate(()=>navigator.clipboard.readText())).toMatch(/electable words/);
 });
+
+for (const initial of ["dark", "light"]) for (const bufferType of ["normal", "alternate"]) {
+  test(`Codex input surface follows both theme transitions from ${initial} (${bufferType}) without changing text`, async ({ page }) => {
+    const screen = await terminal(page, true);
+    const source = esbuild.buildSync({entryPoints:[path.join(ROOT,"obsidian-plugin/src/term-theme.js")],
+      bundle:true,write:false,format:"iife",globalName:"AtlasTermTheme"}).outputFiles[0].text;
+    await page.addScriptTag({content:source});
+    await page.evaluate(initial => {
+      window.switchTheme = mode => {
+        const el=document.getElementById("box");
+        el.style.setProperty("--background-primary",mode==="dark"?"#1c1c1c":"#ffffff");
+        el.style.setProperty("--text-normal",mode==="dark"?"#dddddd":"#222222");
+        return window.AtlasTermTheme.applyTheme(window.term,el);
+      };
+      window.switchTheme(initial);
+      window.surface=window.AtlasTermTheme.followCodexSurface?.(window.term);
+      window.toProgram=[];
+    },initial);
+    if(bufferType==="alternate")await page.evaluate(()=>new Promise(r=>window.term.write("\x1b[?1049h",r)));
+    const color=initial==="dark"?"55;55;55":"244;244;244";
+    const draft="DRAFT_THEME_PROBE";
+    const panel=cols=>`\x1b[H\x1b[48;2;${color}m${" ".repeat(cols)}\r\n› ${draft}${" ".repeat(cols-draft.length-2)}\r\n${" ".repeat(cols)}\x1b[0m`;
+    await page.evaluate(data=>new Promise(r=>window.term.write(data,r)),panel(80)+"\x1b[6;1H\x1b[48;2;30;60;90m"+"COLOR_SAMPLE".padEnd(80)+"\x1b[0m");
+    const rendered = token => page.evaluate(token=>{
+      const row=[...document.querySelectorAll(".xterm-rows > div")].find(r=>r.textContent.includes(token));
+      const span=row&&[...row.querySelectorAll("span")].find(s=>s.textContent.includes(token)||s.textContent===token[0]);
+      return span?{bg:getComputedStyle(span).backgroundColor,fg:getComputedStyle(span).color}:null;
+    },token);
+    for(const mode of [initial,initial==="dark"?"light":"dark",initial,"light","dark"]){
+      await page.evaluate(mode=>window.switchTheme(mode),mode);
+      await expect.poll(()=>rendered(draft)).toEqual({bg:mode==="dark"?"rgb(55, 55, 55)":"rgb(244, 244, 244)",
+                                                    fg:mode==="dark"?"rgb(221, 221, 221)":"rgb(34, 34, 34)"});
+      expect((await rendered("COLOR_SAMPLE")).bg).toBe("rgb(30, 60, 90)");
+      const selected=await page.evaluate(draft=>{window.term.select(2,1,draft.length);const s=window.term.getSelection();window.term.clearSelection();return s;},draft);
+      expect(selected).toBe(draft);
+      expect(await page.evaluate(()=>window.term.markers.length)).toBeLessThanOrEqual(3);
+    }
+    const bounds = await screen.boundingBox();
+    const cell = await page.evaluate(()=>({cols:window.term.cols,rows:window.term.rows}));
+    await page.mouse.move(bounds.x+bounds.width*2.1/cell.cols,bounds.y+bounds.height*1.5/cell.rows);
+    await page.mouse.down();
+    await page.mouse.move(bounds.x+bounds.width*(2.1+draft.length)/cell.cols,bounds.y+bounds.height*1.5/cell.rows,{steps:6});
+    await page.mouse.up();
+    expect(await page.evaluate(()=>window.term.getSelection())).toBe(draft);
+    await page.keyboard.press("Meta+c");
+    await expect.poll(()=>page.evaluate(()=>navigator.clipboard.readText())).toBe(draft);
+    await page.evaluate(()=>window.term.clearSelection());
+    expect(await page.evaluate(()=>window.toProgram)).toEqual([]);
+    await page.evaluate(()=>window.term.resize(90,24));
+    await page.evaluate(data=>new Promise(r=>window.term.write(data,r)),panel(90));
+    await expect.poll(()=>rendered(draft)).toEqual({bg:"rgb(55, 55, 55)",fg:"rgb(221, 221, 221)"});
+    // Native /permissions replaces the prompt with a narrower panel in the same cached colour.
+    const menu = "PERMISSIONS_PROBE";
+    await page.evaluate(data=>new Promise(r=>window.term.write(data,r)),
+      `\x1b[2J\x1b[H\x1b[48;2;${color}m${menu.padEnd(60)}\r\n${"Approve or cancel".padEnd(60)}\r\n\x1b[48;2;180;180;180m${"› 1. Current permission".padEnd(60)}\x1b[0m`);
+    for(const mode of ["light","dark"]){
+      await page.evaluate(mode=>window.switchTheme(mode),mode);
+      await expect.poll(()=>rendered(menu)).toEqual({bg:mode==="dark"?"rgb(55, 55, 55)":"rgb(244, 244, 244)",
+                                                   fg:mode==="dark"?"rgb(221, 221, 221)":"rgb(34, 34, 34)"});
+      expect((await rendered("Current permission")).bg).toBe("rgb(180, 180, 180)");
+    }
+    await page.evaluate(()=>new Promise(r=>window.term.write("\x1b[?1049l\x1b[2J\x1b[Hshell",r)));
+    await expect.poll(()=>page.evaluate(()=>window.term.markers.length)).toBe(0);
+    await page.evaluate(()=>{window.surface?.dispose();});
+    expect(await page.evaluate(()=>window.term.markers.length)).toBe(0);
+  });
+}
+
+for (const initial of ["dark", "light"]) {
+  test(`Claude input keeps its native background through both theme transitions from ${initial}`, async ({ page }) => {
+    await terminal(page, true);
+    const source=esbuild.buildSync({entryPoints:[path.join(ROOT,"obsidian-plugin/src/term-theme.js")],
+      bundle:true,write:false,format:"iife",globalName:"AtlasTermTheme"}).outputFiles[0].text;
+    await page.addScriptTag({content:source});
+    await page.evaluate(data=>new Promise(r=>window.term.write(data,r)),"\x1b[2J\x1b[H❯ DRAFT_THEME_PROBE");
+    for(const mode of [initial,initial==="dark"?"light":"dark",initial]){
+      const result=await page.evaluate(mode=>{
+        const el=document.getElementById("box"), t=window.term;
+        el.style.setProperty("--background-primary",mode==="dark"?"#1c1c1c":"#ffffff");
+        el.style.setProperty("--text-normal",mode==="dark"?"#dddddd":"#222222");
+        window.AtlasTermTheme.applyTheme(t,el);
+        const line=t.buffer.active.getLine(0);
+        return {bg:t.options.theme.background,explicitBg:line.getCell(2).isBgRGB(),
+                text:line.translateToString(true),markers:t.markers.length};
+      },mode);
+      expect(result).toEqual({bg:mode==="dark"?"#1c1c1c":"#ffffff",explicitBg:false,
+                             text:"❯ DRAFT_THEME_PROBE",markers:0});
+      await expect.poll(()=>page.locator(".xterm-rows > div").first().evaluate(el=>getComputedStyle(el).color))
+        .toBe(mode==="dark"?"rgb(221, 221, 221)":"rgb(34, 34, 34)");
+    }
+  });
+}

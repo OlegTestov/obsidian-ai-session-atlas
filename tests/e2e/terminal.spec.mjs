@@ -185,6 +185,7 @@ for (const initial of ["dark", "light"]) for (const bufferType of ["normal", "al
       };
       window.switchTheme(initial);
       window.surface=window.AtlasTermTheme.followCodexSurface?.(window.term);
+      window.contrast=window.AtlasTermTheme.followTextContrast(window.term);
       window.toProgram=[];
     },initial);
     if(bufferType==="alternate")await page.evaluate(()=>new Promise(r=>window.term.write("\x1b[?1049h",r)));
@@ -239,7 +240,7 @@ for (const initial of ["dark", "light"]) for (const bufferType of ["normal", "al
     }
     await page.evaluate(()=>new Promise(r=>window.term.write("\x1b[?1049l\x1b[2J\x1b[Hshell",r)));
     await expect.poll(()=>page.evaluate(()=>window.term.markers.length)).toBe(0);
-    await page.evaluate(()=>{window.surface?.dispose();});
+    await page.evaluate(()=>{window.surface?.dispose();window.contrast.dispose();});
     expect(await page.evaluate(()=>window.term.markers.length)).toBe(0);
   });
 }

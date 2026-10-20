@@ -1,6 +1,9 @@
 import { followCodexSurface as createCodexSurface } from "./term-codex-theme";
 
+import { followTextContrast as createTextContrast } from "./term-text-theme";
+
 const codexSurfaces = new WeakMap();
+const textContrasts = new WeakMap();
 
 /** Terminal colours come from the Obsidian theme: light and dark without configuration. */
 function themeFromCss(el) {
@@ -41,6 +44,7 @@ function applyTheme(term, el) {
   if (Object.keys(next).every((k) => now[k] === next[k])) return false;
   term.options.theme = next;
   codexSurfaces.get(term)?.refresh();
+  textContrasts.get(term)?.refresh();
   return true;
 }
 
@@ -51,4 +55,11 @@ function followCodexSurface(term) {
   return {dispose() { surface.dispose(); codexSurfaces.delete(term); }};
 }
 
-export { themeFromCss, applyTheme, followCodexSurface };
+/** Preserve explicit neutral agent text when it becomes unreadable against the new default background. */
+function followTextContrast(term) {
+  const contrast = createTextContrast(term);
+  textContrasts.set(term, contrast);
+  return {dispose() { contrast.dispose(); textContrasts.delete(term); }};
+}
+
+export { themeFromCss, applyTheme, followCodexSurface, followTextContrast };

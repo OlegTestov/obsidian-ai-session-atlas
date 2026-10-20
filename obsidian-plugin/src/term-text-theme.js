@@ -1,4 +1,4 @@
-// Agent UIs can keep explicit RGB black/white after the terminal changes its default palette.
+// Agent UIs can keep explicit neutral RGB colours after the terminal changes its default palette.
 // Only adapt unreadable neutral text on the default background; preserve panels and accent colours.
 function unreadableNeutrals(background) {
   let rgb;
@@ -14,8 +14,11 @@ function unreadableNeutrals(background) {
   const linear = rgb.map(c => c / 255 <= 0.04045 ? c / 255 / 12.92 : ((c / 255 + 0.055) / 1.055) ** 2.4);
   const luminance = linear[0] * 0.2126 + linear[1] * 0.7152 + linear[2] * 0.0722;
   const bad = new Set();
-  if ((luminance + 0.05) / 0.05 < 4.5) bad.add(0);
-  if (1.05 / (luminance + 0.05) < 4.5) bad.add(0xffffff);
+  for (let grey = 0; grey < 256; grey++) {
+    const c = grey / 255, level = c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+    const contrast = (Math.max(level, luminance) + 0.05) / (Math.min(level, luminance) + 0.05);
+    if (contrast < 4.5) bad.add(grey * 0x010101);
+  }
   return bad;
 }
 
@@ -26,11 +29,16 @@ function followTextContrast(term) {
     for (const { marker, decoration } of decorations) { decoration.dispose(); marker.dispose(); }
     decorations = [];
   };
+  let background = null, bad = new Set();
   const update = () => {
     frame = null;
     if (disposed) return;
     const buffer = term.buffer.active, theme = term.options.theme || {};
-    const bad = unreadableNeutrals(theme.background), spans = [];
+    if (background !== theme.background) {
+      background = theme.background;
+      bad = unreadableNeutrals(background);
+    }
+    const spans = [];
     const scratch = buffer.getNullCell();
     if (theme.foreground && bad.size) {
       for (let y = buffer.viewportY; y < Math.min(buffer.length, buffer.viewportY + term.rows); y++) {

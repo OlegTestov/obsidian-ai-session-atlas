@@ -11,9 +11,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- Explicit RGB black or white text in agent terminals stays readable when Obsidian switches themes.
+- Explicit neutral RGB text in agent terminals stays readable when Obsidian switches themes.
   This fixes Claude Code question headings remaining black on a dark background. The same contrast
-  handling runs in Codex tabs, preserving coloured text, inverse text and panels with their own background.
+  handling runs in Codex tabs, including cached grey Enter/Esc hints. Coloured text, inverse text and
+  panels with their own background are preserved.
   Terminal content, input, selection and running sessions are preserved.
 
 ## [2.4.0] - 2026-10-19

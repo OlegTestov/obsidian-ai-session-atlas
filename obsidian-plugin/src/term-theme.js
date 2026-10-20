@@ -1,5 +1,4 @@
 import { followCodexSurface as createCodexSurface } from "./term-codex-theme";
-
 import { followTextContrast as createTextContrast } from "./term-text-theme";
 
 const codexSurfaces = new WeakMap();

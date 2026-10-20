@@ -1,4 +1,4 @@
-// Claude's question heading uses explicit RGB black/white, rather than the terminal default.
+// Claude question headings and Codex key hints use explicit neutral RGB, rather than the terminal default.
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -44,8 +44,10 @@ for(const initial of ["light","dark"]) for(const buffer of ["normal","alternate"
   test(`Claude explicit question text stays readable from ${initial} in ${buffer}`,async({page})=>{
     await terminal(page,initial);
     if(buffer==="alternate")await write(page,"\x1b[?1049h");
+    const grey=initial==="light"?67:218;
     const rgb=initial==="light"?"0;0;0":"255;255;255";
     await write(page,`\x1b[1;38;2;${rgb}mQUESTION_THEME_PROBE\x1b[0m\r\n`
+      +`\x1b[38;2;${grey};${grey};${grey}mKEY_HINT_PROBE\x1b[0m\r\n`
       +"\x1b[38;2;210;50;60mRED_SAMPLE\x1b[0m\r\n"
       +"\x1b[38;2;0;0;0;48;2;240;240;240mBLACK_ON_LIGHT_PANEL\x1b[0m\r\n"
       +"\x1b[38;2;255;255;255;48;2;30;30;30mWHITE_ON_DARK_PANEL\x1b[0m\r\n"
@@ -55,6 +57,9 @@ for(const initial of ["light","dark"]) for(const buffer of ["normal","alternate"
       await page.evaluate(mode=>window.switchTheme(mode),mode);
       await expect.poll(async()=> (await color(page,"QUESTION_THEME_PROBE"))?.fg)
         .toBe(mode===initial?(initial==="light"?"rgb(0, 0, 0)":"rgb(255, 255, 255)")
+          :mode==="dark"?"rgb(221, 221, 221)":"rgb(34, 34, 34)");
+      await expect.poll(async()=> (await color(page,"KEY_HINT_PROBE"))?.fg)
+        .toBe(mode===initial?`rgb(${grey}, ${grey}, ${grey})`
           :mode==="dark"?"rgb(221, 221, 221)":"rgb(34, 34, 34)");
       expect((await color(page,"INVERSE_SAMPLE")).fg).toBe(mode==="dark"?"rgb(28, 28, 28)":"rgb(255, 255, 255)");
       expect((await color(page,"RED_SAMPLE")).fg).toBe("rgb(210, 50, 60)");

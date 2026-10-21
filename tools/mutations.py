@@ -182,7 +182,7 @@ MUT = [
   'if not include_automation and not kinds:\n        where.append("s.session_kind = \'interactive\'")',
   'if False:\n        where.append("s.session_kind = \'interactive\'")'),
  ("index: do not clear old rows before writing", "atlas/store.py",
-  '    purge(conn, session_id)\n    activity.store(', '    activity.store('),
+  '        purge(conn, session_id)\n        activity.store(', '        activity.store('),
  ("index: incremental read without clearing metadata", "atlas/store.py",
   '    purge(conn, session_id, keep_text=True)\n', ''),
  ("index: incremental read does not rewrite the last turn", "atlas/store.py",
@@ -190,18 +190,48 @@ MUT = [
  ("index: FTS mutations scan unrelated messages", "atlas/search_rows.py",
   'f"DELETE FROM {table} WHERE rowid IN "', 'f"DELETE FROM {table} WHERE session_id IN "'),
  ("db: row lookup migration drops the existing catalog", "atlas/db.py",
-  'if int(row["value"]) == 12 and SCHEMA_VERSION == 13:', 'if False:'),
+  'if int(row["value"]) in (12, 13):', 'if False:'),
  ("db: existing FTS rows are not backfilled", "atlas/db.py",
-  '        if missing_rows:', '        if False:'),
+  '        elif missing_rows:', '        elif False:'),
+ ("index: legacy writes never invalidate the lookup", "atlas/search_rows.py",
+  'WHEN (SELECT managed FROM fts_guard WHERE id=1)=0', 'WHEN 0'),
+ ("index: missing legacy guards are ignored", "atlas/search_rows.py",
+  'if not ready(conn):', 'if False:'),
+ ("index: a dirty row lookup is trusted", "atlas/search_rows.py",
+  'elif conn.execute("SELECT dirty FROM fts_guard WHERE id=1").fetchone()[0]:', 'elif False:'),
+ ("index: legacy damage never forces a full pass", "atlas/index.py",
+  'full = full or bool(recovery)', 'full = full'),
+ ("index: recovery repeats on every pass", "atlas/index.py",
+  'if full:\n                conn.execute("UPDATE fts_guard SET recovery=0',
+  'if False:\n                conn.execute("UPDATE fts_guard SET recovery=0'),
+ ("index: one broken source repeats full recovery forever", "atlas/index.py",
+  'if full:\n                conn.execute("UPDATE fts_guard SET recovery=0',
+  'if full and not stats["errors"]:\n                conn.execute("UPDATE fts_guard SET recovery=0'),
+ ("index: failed sources lose their recovery retry", "atlas/index.py",
+  '                _retry_full(conn, path)', '                pass'),
+ ("index: failed recovery reuses an incomplete tail checkpoint", "atlas/index.py",
+  '            conn.execute("DELETE FROM parse_state WHERE session_id=?", (row["session_id"],))',
+  '            pass'),
+ ("index: an older pass cancels pending upgrade recovery", "atlas/index.py",
+  'if only_if_flagged and not recovery and db.get_meta(conn, "needs_reindex") != "1":',
+  'if only_if_flagged and db.get_meta(conn, "needs_reindex") != "1":'),
+ ("index: interrupted writes mask their original error", "atlas/search_rows.py",
+  'if conn.in_transaction:\n            conn.execute("ROLLBACK TO atlas_fts_write")',
+  'if True:\n            conn.execute("ROLLBACK TO atlas_fts_write")'),
+ ("db: a waiting migrator uses a stale pre-lock snapshot", "atlas/db.py",
+  '        conn.execute("BEGIN IMMEDIATE")\n'
+  '        # Another migrator may have finished while we waited for the writer lock.\n'
+  '        if _schema_is_current(conn):\n            conn.commit()\n            return conn\n'
+  '        missing_rows = not conn.execute("SELECT 1 FROM sqlite_master WHERE name=\'fts_rows\'").fetchone()',
+  '        missing_rows = not conn.execute("SELECT 1 FROM sqlite_master WHERE name=\'fts_rows\'").fetchone()\n'
+  '        conn.execute("BEGIN IMMEDIATE")'),
+ ("tests: runtime mutations omit indexer cleanup", "tools/mutations.py",
+  ',\n                                       "tests/js/indexer-cleanup.test.mjs"', ''),
  ("server: indexer survives shutdown", "atlas/server.py",
   '                _catchup_proc.stop()', '                pass'),
  ("server: SIGTERM skips shutdown cleanup", "atlas/server.py",
   '        raise SystemExit(0)                # run cleanup also when the plugin sends SIGTERM',
   '        os._exit(0)'),
- ("runtime: a still-owned indexer is reaped", "obsidian-plugin/src/runtime.js",
-  'Number(m[2]) === 1 && holders.has(Number(m[1]))', 'holders.has(Number(m[1]))'),
- ("runtime: an orphan from another catalog is reaped", "obsidian-plugin/src/runtime.js",
-  '&& holders.has(Number(m[1]))', ''),
  ("jobs: interrupted tasks stay running after restart", "atlas/actions.py",
   "WHERE state IN ('queued','running','cancel_requested')", "WHERE 0"),
  ("index: read incrementally after a rewritten file", "atlas/store.py",
@@ -831,6 +861,10 @@ MUT = [
   "    printf '\\e]7770;close;%s\\a' \"$instance\"\n", ""),
 ]
 JS_MUT = [
+ ("runtime: a still-owned indexer is reaped", "obsidian-plugin/src/runtime.js",
+  'Number(m[2]) === 1 && holders.has(Number(m[1]))', 'holders.has(Number(m[1]))'),
+ ("runtime: an orphan from another catalog is reaped", "obsidian-plugin/src/runtime.js",
+  '&& holders.has(Number(m[1]))', ''),
  ("plugin: a reload ends agents in background tabs", "obsidian-plugin/src/held.js",
   "    window.clearTimeout(held.timer);\n    held.timer = null;\n    kept.push(key);", "    kept.push(key);"),
  ("plugin: reload treated as «disabled by user» (closes tabs)", "obsidian-plugin/src/reload.js",
@@ -1290,7 +1324,8 @@ JS_TESTS = [
     ("obsidian-plugin/src/startup.js", ["tests/js/startup.test.mjs"]),
     ("obsidian-plugin/src/config-form.js", ["tests/js/config-form.test.mjs"]),
     ("obsidian-plugin/src/statusline.js", ["tests/js/statusline.test.mjs"]),
-    ("obsidian-plugin/src/runtime.js", ["tests/js/bundle.test.mjs", "tests/js/plugin.test.mjs"]),
+    ("obsidian-plugin/src/runtime.js", ["tests/js/bundle.test.mjs", "tests/js/plugin.test.mjs",
+                                       "tests/js/indexer-cleanup.test.mjs"]),
     ("obsidian-plugin/src/attach.js", ["tests/js/attach.test.mjs"]),
     ("obsidian-plugin/src/agents.js", ["tests/js/attach.test.mjs", "tests/js/plugin.test.mjs"]),
     ("obsidian-plugin/src/terminal.js", ["tests/js/attach.test.mjs", "tests/js/plugin.test.mjs"]),
@@ -1336,8 +1371,18 @@ def run_python():
     return _run([sys.executable, "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider"])
 
 
-def run_node(path):
-    return _run(["node", "--test", "--test-force-exit", "--test-timeout=120000", *js_tests(path)])
+SELECTOR_MUTATIONS = {
+    "runtime: a still-owned indexer is reaped",
+    "runtime: an orphan from another catalog is reaped",
+}
+
+
+def run_node(path, name=None):
+    # A deliberately widened process selector must never run the real cleanup integration test
+    # or a bundled server on the host. Its pure selector test catches both mutations directly.
+    tests = (["--test-name-pattern=cleanup selects only", "tests/js/indexer-cleanup.test.mjs"]
+             if name in SELECTOR_MUTATIONS else js_tests(path))
+    return _run(["node", "--test", "--test-force-exit", "--test-timeout=120000", *tests])
 
 
 def mutate(path, old, new, run):
@@ -1375,6 +1420,9 @@ def main():
     jobs = ([] if args.js else [(m, False) for m in MUT]) + ([] if args.python else [(m, True) for m in JS_MUT])
     if args.only:
         jobs = [job for job in jobs if args.only in job[0][0]]
+        if not jobs:
+            print(f"No mutations match {args.only!r} with the selected language filter")
+            return 1
     if args.shard:
         index, count = (int(x) for x in args.shard.split("/"))
         jobs = jobs[index - 1::count]
@@ -1387,7 +1435,7 @@ def main():
                 continue
         if args.check:
             continue
-        ok = mutate(path, old, new, functools.partial(run_node, path) if is_js else run_python)
+        ok = mutate(path, old, new, functools.partial(run_node, path, name) if is_js else run_python)
         caught += ok
         missed += not ok
         print(f"  {'caught' if ok else 'MISSED':12} {name}", flush=True)

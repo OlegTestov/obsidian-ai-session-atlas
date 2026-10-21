@@ -33,13 +33,14 @@ def tail_sig(path: str, offset: int) -> str:
 
 
 def purge(conn: sqlite3.Connection, session_id: str, keep_text: bool = False) -> None:
-    for table in ("sessions", "session_projects", "session_domains",
-                  "session_tickets", "session_files", "session_links", "session_continuations"):
-        conn.execute(f"DELETE FROM {table} WHERE session_id=?", (session_id,))
-    if not keep_text:
-        search_rows.delete(conn, session_id)
-        conn.execute("DELETE FROM parse_state WHERE session_id=?", (session_id,))
-        conn.execute("DELETE FROM activity WHERE session_id=?", (session_id,))
+    with search_rows.writing(conn):
+        for table in ("sessions", "session_projects", "session_domains",
+                      "session_tickets", "session_files", "session_links", "session_continuations"):
+            conn.execute(f"DELETE FROM {table} WHERE session_id=?", (session_id,))
+        if not keep_text:
+            search_rows.delete(conn, session_id)
+            conn.execute("DELETE FROM parse_state WHERE session_id=?", (session_id,))
+            conn.execute("DELETE FROM activity WHERE session_id=?", (session_id,))
 
 
 def _write_meta(conn, session_id: str, path: str, st, sig: str, facts: SessionFacts,
@@ -198,20 +199,21 @@ def store_full(conn, path: str, st, sig: str, subagents: list[str], sub_sig: str
         facts.tickets |= sub.tickets
         sub_rows.update(sub.activity)
     resolved = _resolved(facts)
-    purge(conn, session_id)
-    activity.store(conn, session_id, facts.activity)
-    activity.store(conn, session_id, sub_rows, sub=True)
-    title = _write_meta(conn, session_id, path, st, sig, facts, resolved)
-    _write_meta_row(conn, session_id, title, facts, resolved)
-    if facts.subagent_text or sub_commands or sub_paths:
-        _insert_row(conn, session_id, SUBAGENT_TURN, subagent_text="\n".join(facts.subagent_text),
-                    commands="\n".join(sub_commands), paths="\n".join(sub_paths))
-        if sub_commands or sub_paths:
-            _insert_paths(conn, session_id, SUBAGENT_TURN, "\n".join(sub_paths + sub_commands))
-    _write_turns(conn, session_id, facts)
-    _save_state(conn, session_id, path, st, sub_sig, facts)
-    _record_source(conn, path, session_id, st, sig, facts)
-    return session_id
+    with search_rows.writing(conn):
+        purge(conn, session_id)
+        activity.store(conn, session_id, facts.activity)
+        activity.store(conn, session_id, sub_rows, sub=True)
+        title = _write_meta(conn, session_id, path, st, sig, facts, resolved)
+        _write_meta_row(conn, session_id, title, facts, resolved)
+        if facts.subagent_text or sub_commands or sub_paths:
+            _insert_row(conn, session_id, SUBAGENT_TURN, subagent_text="\n".join(facts.subagent_text),
+                        commands="\n".join(sub_commands), paths="\n".join(sub_paths))
+            if sub_commands or sub_paths:
+                _insert_paths(conn, session_id, SUBAGENT_TURN, "\n".join(sub_paths + sub_commands))
+        _write_turns(conn, session_id, facts)
+        _save_state(conn, session_id, path, st, sub_sig, facts)
+        _record_source(conn, path, session_id, st, sig, facts)
+        return session_id
 
 
 def store_codex(conn, path: str, st, sig: str, title: str | None = None) -> str:
@@ -223,15 +225,16 @@ def store_codex(conn, path: str, st, sig: str, title: str | None = None) -> str:
     if not session_id:
         raise ValueError("no thread id in the rollout name or its session_meta")
     resolved = _resolved(facts)
-    purge(conn, session_id)
-    activity.store(conn, session_id, facts.activity)
-    title = _write_meta(conn, session_id, path, st, sig, facts, resolved)
-    _write_meta_row(conn, session_id, title, facts, resolved)
-    _write_turns(conn, session_id, facts)
-    _record_source(conn, path, session_id, st, sig, facts)
-    # "New from this one" for Codex: the thread's id is known only now (atlas/actions.py).
-    actions.link_codex_launch(conn, session_id, facts.first_user_text)
-    return session_id
+    with search_rows.writing(conn):
+        purge(conn, session_id)
+        activity.store(conn, session_id, facts.activity)
+        title = _write_meta(conn, session_id, path, st, sig, facts, resolved)
+        _write_meta_row(conn, session_id, title, facts, resolved)
+        _write_turns(conn, session_id, facts)
+        _record_source(conn, path, session_id, st, sig, facts)
+        # "New from this one" for Codex: the thread's id is known only now (atlas/actions.py).
+        actions.link_codex_launch(conn, session_id, facts.first_user_text)
+        return session_id
 
 
 def store_tail(conn, path: str, st, sig: str, sub_sig: str) -> bool:
@@ -247,11 +250,12 @@ def store_tail(conn, path: str, st, sig: str, sub_sig: str) -> bool:
     if facts.subagent_text:
         return False          # a subagent wrote to the main file: its row must be rebuilt
     resolved = _resolved(facts)
-    purge(conn, session_id, keep_text=True)
-    activity.store(conn, session_id, facts.activity)
-    title = _write_meta(conn, session_id, path, st, sig, facts, resolved)
-    _write_meta_row(conn, session_id, title, facts, resolved)
-    _write_turns(conn, session_id, facts)
-    _save_state(conn, session_id, path, st, sub_sig, facts)
-    _record_source(conn, path, session_id, st, sig, facts)
-    return True
+    with search_rows.writing(conn):
+        purge(conn, session_id, keep_text=True)
+        activity.store(conn, session_id, facts.activity)
+        title = _write_meta(conn, session_id, path, st, sig, facts, resolved)
+        _write_meta_row(conn, session_id, title, facts, resolved)
+        _write_turns(conn, session_id, facts)
+        _save_state(conn, session_id, path, st, sub_sig, facts)
+        _record_source(conn, path, session_id, st, sig, facts)
+        return True

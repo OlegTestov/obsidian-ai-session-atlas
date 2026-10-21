@@ -5,7 +5,9 @@ import os
 import re
 import sqlite3
 
-SCHEMA_VERSION = 13   # 13: indexed lookup of FTS rowids; existing catalogs are preserved
+from . import search_rows
+
+SCHEMA_VERSION = 14   # 14: invalidate row lookup on legacy writes, recover existing search damage
 
 # Three tiers, and they must not be mixed up.
 # 1) Edited by hand; cannot be restored from transcripts.
@@ -19,7 +21,7 @@ EXPENSIVE = ("enrichment", "classification")
 DERIVED = (
     "sources", "sessions", "session_projects", "session_files",
     "session_links", "session_tickets", "session_domains", "fts", "fts_paths", "parse_state",
-    "activity", "session_continuations", "fts_rows",
+    "activity", "session_continuations", "fts_rows", "fts_guard",
 )
 
 SCHEMA = """
@@ -142,12 +144,6 @@ CREATE VIRTUAL TABLE IF NOT EXISTS fts_paths USING fts5(
 
 -- FTS5 cannot index its UNINDEXED session_id column. Address updates by rowid instead of
 -- scanning all message bodies while holding SQLite's only writer lock.
-CREATE TABLE IF NOT EXISTS fts_rows (
-  index_name TEXT NOT NULL, row_id INTEGER NOT NULL,
-  session_id TEXT NOT NULL, turn INTEGER NOT NULL,
-  PRIMARY KEY (index_name, row_id)
-);
-CREATE INDEX IF NOT EXISTS ix_fts_rows_session ON fts_rows(session_id, turn, index_name, row_id);
 
 -- Parse state: the byte to resume reading from and what the tail was. Derived.
 CREATE TABLE IF NOT EXISTS parse_state (
@@ -241,7 +237,7 @@ CREATE TABLE IF NOT EXISTS egress_grants (
 );
 
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
-"""
+""" + search_rows.SCHEMA
 
 
 def atlas_home() -> str:
@@ -273,14 +269,22 @@ def connect(path: str | None = None) -> sqlite3.Connection:
     # per request) waits for the background indexer to finish a large file's transaction.
     if _schema_is_current(conn):
         return conn
-    missing_rows = not conn.execute("SELECT 1 FROM sqlite_master WHERE name='fts_rows'").fetchone()
     try:
         # Schema, backfill and version are atomic: a crash must not leave an empty lookup marked ready.
-        conn.executescript("BEGIN IMMEDIATE;\n" + SCHEMA)
-        if missing_rows:
-            for table in ("fts", "fts_paths"):
-                conn.execute("INSERT OR REPLACE INTO fts_rows "
-                             f"SELECT ?, rowid, session_id, turn FROM {table}", (table,))
+        conn.execute("BEGIN IMMEDIATE")
+        # Another migrator may have finished while we waited for the writer lock.
+        if _schema_is_current(conn):
+            conn.commit()
+            return conn
+        missing_rows = not conn.execute("SELECT 1 FROM sqlite_master WHERE name='fts_rows'").fetchone()
+        previous = get_meta(conn, "schema_version")
+        guarded = search_rows.ready(conn)
+        search_rows.run_schema(conn, SCHEMA)
+        if previous is not None and int(previous) >= 13 and not guarded:
+            # A v13 lookup can already be stale; a legacy rebuild can also remove the guards.
+            search_rows.repair(conn)
+        elif missing_rows:
+            search_rows.backfill(conn)
         # An old process must never lower the version and make the next connection wipe the index.
         conn.execute(
             "INSERT INTO meta(key, value) VALUES('schema_version', ?) "
@@ -298,7 +302,7 @@ def connect(path: str | None = None) -> sqlite3.Connection:
 
 
 _SCHEMA_OBJECTS = set(re.findall(
-    r"CREATE (?:VIRTUAL |UNIQUE )?(?:TABLE|INDEX) IF NOT EXISTS (\w+)", SCHEMA))
+    r"CREATE (?:VIRTUAL |UNIQUE )?(?:TABLE|INDEX|TRIGGER) IF NOT EXISTS (\w+)", SCHEMA))
 
 
 def _schema_is_current(conn: sqlite3.Connection) -> bool:
@@ -318,7 +322,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
         return                                   # fresh database: the script creates everything
     if int(row["value"]) >= SCHEMA_VERSION:
         return
-    if int(row["value"]) == 12 and SCHEMA_VERSION == 13:
+    if int(row["value"]) in (12, 13):
         return                                   # additive row lookup: no transcript reindex is needed
     _add_missing_columns(conn)
     for table in DERIVED:

@@ -7,6 +7,23 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.4.3] - 2026-10-21
+
+### Fixed
+
+- Search updates remain safe when different plugin versions share the same catalog. Older writers
+  invalidate the row lookup transactionally; the next new index pass repairs it and refreshes search
+  from transcripts. Upgrading from 2.4.2 also repairs existing missing or orphaned search rows in the
+  background, preserving manual edits and paid AI results.
+- Unreadable sources are retried separately, so one broken transcript cannot repeat a full catalog
+  recovery or prevent healthy sessions from catching up.
+- Concurrent database upgrades recheck the schema after acquiring the writer lock, so only one
+  process fills the search row lookup.
+
+### Changed
+
+- Runtime mutation checks include the indexer cleanup behavior tests.
+
 ## [2.4.2] - 2026-10-21
 
 ### Fixed

@@ -10,7 +10,7 @@ import sys
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
-from . import codex_parse, config, db, paths, store
+from . import codex_parse, config, db, paths, search_rows, store
 
 PROJECTS_ROOT = os.environ.get("ATLAS_PROJECTS_ROOT", os.path.join(paths.claude_dir(), "projects"))
 
@@ -126,8 +126,14 @@ def index_all(conn: sqlite3.Connection, root: str = PROJECTS_ROOT,
     stats = {"seen": 0, "indexed": 0, "skipped": 0, "removed": 0, "errors": 0,
              "subagent_files": 0, "full": 0, "tail": 0, "codex": 0}
     with writer_lock():
+        # An old indexer can invalidate the lookup even when every source signature is unchanged.
+        with search_rows.writing(conn):
+            recovery, generation = conn.execute(
+                "SELECT recovery,generation FROM fts_guard WHERE id=1").fetchone()
+        conn.commit()
+        full = full or bool(recovery)
         # Recheck the flag under the lock: another process may have rebuilt while we waited.
-        if only_if_flagged and db.get_meta(conn, "needs_reindex") != "1":
+        if only_if_flagged and not recovery and db.get_meta(conn, "needs_reindex") != "1":
             return stats
         known = {r["path"]: r for r in conn.execute("SELECT * FROM sources")}
         present = set()
@@ -159,6 +165,7 @@ def index_all(conn: sqlite3.Connection, root: str = PROJECTS_ROOT,
                 conn.rollback()
                 stats["errors"] += 1
                 print(f"atlas index: {path}: {type(exc).__name__}: {exc}", file=sys.stderr)
+                _retry_full(conn, path)
 
         _relink_continuations(conn, stats)
         _index_codex(conn, codex_root or codex_home(), known, present, stats, full)
@@ -168,14 +175,34 @@ def index_all(conn: sqlite3.Connection, root: str = PROJECTS_ROOT,
                 # An archived Codex rollout moves to another folder: its session lives on there.
                 moved = conn.execute("SELECT 1 FROM sources WHERE session_id=? AND path<>?",
                                      (row["session_id"], path)).fetchone()
-                if not moved:
-                    _purge(conn, row["session_id"])
-                conn.execute("DELETE FROM sources WHERE path=?", (path,))
+                with search_rows.writing(conn):
+                    if not moved:
+                        _purge(conn, row["session_id"])
+                    conn.execute("DELETE FROM sources WHERE path=?", (path,))
                 stats["removed"] += 1
         db.set_meta(conn, "indexed_through", _now())
-        db.set_meta(conn, "needs_reindex", "0")
+        with search_rows.writing(conn):
+            if full:
+                conn.execute("UPDATE fts_guard SET recovery=0 WHERE id=1 AND generation=?",
+                             (generation,))
+            remaining = conn.execute("SELECT recovery FROM fts_guard WHERE id=1").fetchone()[0]
+            db.set_meta(conn, "needs_reindex", "1" if remaining else "0")
         conn.commit()
     return stats
+
+
+def _retry_full(conn: sqlite3.Connection, path: str) -> None:
+    """A broken source must not repeat the whole recovery. Retry just it, even after chmod only.
+
+    Forget the tail checkpoint too: missing turns in an old catalog need a full parse when the
+    source becomes readable again. Authoritative and paid data remain untouched.
+    """
+    with search_rows.writing(conn):
+        row = conn.execute("SELECT session_id FROM sources WHERE path=?", (path,)).fetchone()
+        if row:
+            conn.execute("UPDATE sources SET sig=NULL WHERE path=?", (path,))
+            conn.execute("DELETE FROM parse_state WHERE session_id=?", (row["session_id"],))
+    conn.commit()
 
 
 def _relink_continuations(conn: sqlite3.Connection, stats: dict) -> None:
@@ -198,6 +225,7 @@ def _relink_continuations(conn: sqlite3.Connection, stats: dict) -> None:
             conn.rollback()
             stats["errors"] += 1
             print(f"atlas index: {path}: {type(exc).__name__}: {exc}", file=sys.stderr)
+            _retry_full(conn, path)
 
 
 def _index_codex(conn, home: str, known: dict, present: set, stats: dict, full: bool) -> None:
@@ -225,6 +253,7 @@ def _index_codex(conn, home: str, known: dict, present: set, stats: dict, full: 
             conn.rollback()
             stats["errors"] += 1
             print(f"atlas index: {path}: {type(exc).__name__}: {exc}", file=sys.stderr)
+            _retry_full(conn, path)
 
 
 def reindex_due(conn: sqlite3.Connection) -> bool:
@@ -235,7 +264,7 @@ def reindex_due(conn: sqlite3.Connection) -> bool:
         db.set_meta(conn, "config_fingerprint", fingerprint)
         db.set_meta(conn, "needs_reindex", "1")
         conn.commit()
-    return db.get_meta(conn, "needs_reindex") == "1"
+    return db.get_meta(conn, "needs_reindex") == "1" or search_rows.pending(conn)
 
 
 def ensure_indexed(conn: sqlite3.Connection, root: str = PROJECTS_ROOT) -> dict | None:

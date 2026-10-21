@@ -7,6 +7,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.4.2] - 2026-10-21
+
+### Fixed
+
+- Updating an indexed session now addresses its search rows directly. Large catalogs no longer
+  scan every message inside the indexing write transaction, blocking classification and other saves.
+  The database upgrade preserves the catalog, manual edits and previously paid AI results.
+- Server shutdown also stops its background indexer. Upgrades reclaim abandoned indexers from
+  older builds that hold this catalog's lock; running agents and owned indexing processes are preserved.
+- Jobs interrupted by a server restart become retryable instead of remaining stuck as running.
+
 ## [2.4.1] - 2026-10-20
 
 ### Fixed

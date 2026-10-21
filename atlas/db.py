@@ -5,7 +5,7 @@ import os
 import re
 import sqlite3
 
-SCHEMA_VERSION = 12   # 12: parked conversations (sessions.continued_*, session_continuations)
+SCHEMA_VERSION = 13   # 13: indexed lookup of FTS rowids; existing catalogs are preserved
 
 # Three tiers, and they must not be mixed up.
 # 1) Edited by hand; cannot be restored from transcripts.
@@ -19,7 +19,7 @@ EXPENSIVE = ("enrichment", "classification")
 DERIVED = (
     "sources", "sessions", "session_projects", "session_files",
     "session_links", "session_tickets", "session_domains", "fts", "fts_paths", "parse_state",
-    "activity", "session_continuations",
+    "activity", "session_continuations", "fts_rows",
 )
 
 SCHEMA = """
@@ -139,6 +139,15 @@ CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(
 CREATE VIRTUAL TABLE IF NOT EXISTS fts_paths USING fts5(
   session_id UNINDEXED, blob, turn UNINDEXED, tokenize='trigram'
 );
+
+-- FTS5 cannot index its UNINDEXED session_id column. Address updates by rowid instead of
+-- scanning all message bodies while holding SQLite's only writer lock.
+CREATE TABLE IF NOT EXISTS fts_rows (
+  index_name TEXT NOT NULL, row_id INTEGER NOT NULL,
+  session_id TEXT NOT NULL, turn INTEGER NOT NULL,
+  PRIMARY KEY (index_name, row_id)
+);
+CREATE INDEX IF NOT EXISTS ix_fts_rows_session ON fts_rows(session_id, turn, index_name, row_id);
 
 -- Parse state: the byte to resume reading from and what the tail was. Derived.
 CREATE TABLE IF NOT EXISTS parse_state (
@@ -264,16 +273,27 @@ def connect(path: str | None = None) -> sqlite3.Connection:
     # per request) waits for the background indexer to finish a large file's transaction.
     if _schema_is_current(conn):
         return conn
-    conn.executescript(SCHEMA)
-    # Only raise the version. Otherwise an old long-lived process (server under launchd)
-    # rolls it back to its own, and the next start of the new version drops derived tables.
-    conn.execute(
-        "INSERT INTO meta(key, value) VALUES('schema_version', ?) "
-        "ON CONFLICT(key) DO UPDATE SET value=excluded.value "
-        "WHERE CAST(excluded.value AS INTEGER) > CAST(meta.value AS INTEGER)",
-        (str(SCHEMA_VERSION),),
-    )
-    conn.commit()
+    missing_rows = not conn.execute("SELECT 1 FROM sqlite_master WHERE name='fts_rows'").fetchone()
+    try:
+        # Schema, backfill and version are atomic: a crash must not leave an empty lookup marked ready.
+        conn.executescript("BEGIN IMMEDIATE;\n" + SCHEMA)
+        if missing_rows:
+            for table in ("fts", "fts_paths"):
+                conn.execute("INSERT OR REPLACE INTO fts_rows "
+                             f"SELECT ?, rowid, session_id, turn FROM {table}", (table,))
+        # An old process must never lower the version and make the next connection wipe the index.
+        conn.execute(
+            "INSERT INTO meta(key, value) VALUES('schema_version', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value "
+            "WHERE CAST(excluded.value AS INTEGER) > CAST(meta.value AS INTEGER)",
+            (str(SCHEMA_VERSION),),
+        )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
+
     return conn
 
 
@@ -298,6 +318,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
         return                                   # fresh database: the script creates everything
     if int(row["value"]) >= SCHEMA_VERSION:
         return
+    if int(row["value"]) == 12 and SCHEMA_VERSION == 13:
+        return                                   # additive row lookup: no transcript reindex is needed
     _add_missing_columns(conn)
     for table in DERIVED:
         conn.execute(f"DROP TABLE IF EXISTS {table}")

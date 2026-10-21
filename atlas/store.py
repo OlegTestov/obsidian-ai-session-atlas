@@ -12,7 +12,7 @@ import os
 import sqlite3
 from datetime import datetime, timezone
 
-from . import actions, activity, codex_parse, resolve
+from . import actions, activity, codex_parse, resolve, search_rows
 from .parse import SessionFacts, facts_state, parse_file, parse_tail
 
 META_TURN = -2        # title, tickets, paths from file history
@@ -37,8 +37,7 @@ def purge(conn: sqlite3.Connection, session_id: str, keep_text: bool = False) ->
                   "session_tickets", "session_files", "session_links", "session_continuations"):
         conn.execute(f"DELETE FROM {table} WHERE session_id=?", (session_id,))
     if not keep_text:
-        conn.execute("DELETE FROM fts WHERE session_id=?", (session_id,))
-        conn.execute("DELETE FROM fts_paths WHERE session_id=?", (session_id,))
+        search_rows.delete(conn, session_id)
         conn.execute("DELETE FROM parse_state WHERE session_id=?", (session_id,))
         conn.execute("DELETE FROM activity WHERE session_id=?", (session_id,))
 
@@ -95,37 +94,40 @@ def _write_meta(conn, session_id: str, path: str, st, sig: str, facts: SessionFa
 
 
 def _insert_row(conn, session_id: str, turn: int, **cols) -> None:
-    conn.execute(
+    cursor = conn.execute(
         "INSERT INTO fts (session_id, title, user_text, assistant_text, commands, paths, "
         "tickets, summaries, subagent_text, turn) VALUES (?,?,?,?,?,?,?,?,?,?)",
         (session_id, cols.get("title", ""), cols.get("user_text", ""),
          cols.get("assistant_text", ""), cols.get("commands", ""), cols.get("paths", ""),
          cols.get("tickets", ""), cols.get("summaries", ""), cols.get("subagent_text", ""), turn))
+    search_rows.track(conn, "fts", cursor.lastrowid, session_id, turn)
+
+
+def _insert_paths(conn, session_id: str, turn: int, blob: str) -> None:
+    cursor = conn.execute("INSERT INTO fts_paths (session_id, blob, turn) VALUES (?,?,?)",
+                          (session_id, blob, turn))
+    search_rows.track(conn, "fts_paths", cursor.lastrowid, session_id, turn)
 
 
 def _write_meta_row(conn, session_id: str, title: str, facts: SessionFacts,
                     resolved_files) -> None:
-    conn.execute("DELETE FROM fts WHERE session_id=? AND turn=?", (session_id, META_TURN))
-    conn.execute("DELETE FROM fts_paths WHERE session_id=? AND turn=?", (session_id, META_TURN))
+    search_rows.delete(conn, session_id, turn=META_TURN)
     paths = "\n".join(dict.fromkeys(r for _, r in resolved_files))
     _insert_row(conn, session_id, META_TURN, title=title or "",
                 tickets=" ".join(sorted(facts.tickets)), paths=paths)
-    conn.execute("INSERT INTO fts_paths (session_id, blob, turn) VALUES (?,?,?)",
-                 (session_id, paths, META_TURN))
+    _insert_paths(conn, session_id, META_TURN, paths)
 
 
 def _write_turns(conn, session_id: str, facts: SessionFacts) -> None:
     """Turns from the first one in facts.turns: the previous last turn is rewritten, new ones are added."""
     first = facts.turn_base + 1
-    conn.execute("DELETE FROM fts WHERE session_id=? AND turn>=?", (session_id, first))
-    conn.execute("DELETE FROM fts_paths WHERE session_id=? AND turn>=?", (session_id, first))
+    search_rows.delete(conn, session_id, first=first)
     for k, turn in enumerate(facts.turns):
         number = first + k
         _insert_row(conn, session_id, number, **{name: "\n".join(turn[name]) for name in turn})
         blob = "\n".join(turn["paths"] + turn["commands"])
         if blob:
-            conn.execute("INSERT INTO fts_paths (session_id, blob, turn) VALUES (?,?,?)",
-                         (session_id, blob, number))
+            _insert_paths(conn, session_id, number, blob)
 
 
 def _save_state(conn, session_id: str, path: str, st, sub_sig: str, facts: SessionFacts) -> None:
@@ -205,8 +207,7 @@ def store_full(conn, path: str, st, sig: str, subagents: list[str], sub_sig: str
         _insert_row(conn, session_id, SUBAGENT_TURN, subagent_text="\n".join(facts.subagent_text),
                     commands="\n".join(sub_commands), paths="\n".join(sub_paths))
         if sub_commands or sub_paths:
-            conn.execute("INSERT INTO fts_paths (session_id, blob, turn) VALUES (?,?,?)",
-                         (session_id, "\n".join(sub_paths + sub_commands), SUBAGENT_TURN))
+            _insert_paths(conn, session_id, SUBAGENT_TURN, "\n".join(sub_paths + sub_commands))
     _write_turns(conn, session_id, facts)
     _save_state(conn, session_id, path, st, sub_sig, facts)
     _record_source(conn, path, session_id, st, sig, facts)

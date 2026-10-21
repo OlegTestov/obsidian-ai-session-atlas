@@ -53,6 +53,15 @@ function parseShellProbe(stdout) {
   return out;
 }
 
+/** Only abandoned Atlas index passes holding this data folder's lock may be reclaimed. */
+function orphanIndexers(output, holders) {
+  return output.split("\n").flatMap((line) => {
+    const m = /^\s*(\d+)\s+(\d+)\s+(.+)$/.exec(line);
+    return m && Number(m[2]) === 1 && holders.has(Number(m[1]))
+      && /\s-m atlas\.cli index\s*$/.test(m[3]) ? [Number(m[1])] : [];
+  });
+}
+
 class RuntimeMethods {
   dataDir() { return this.dataDirOverride || (this.isDevInstall() ? DEV_DATA_DIR : DATA_DIR); }
   runtimeDir() { return path.join(this.dataDir(), RUNTIME_SUBDIR); }
@@ -210,6 +219,8 @@ class RuntimeMethods {
       this.setupProblem = "python";
       return { ok: false, reason: this.t("server.noPython") };
     }
+    // Before 2.4.2 the server could leave an indexer behind on unload, blocking the next DB migration.
+    await this.reapOrphanIndexers();
     const dir = this.extractRuntime(payload);
     const shell = await this.shellProbe();
     this.writeServerConfig();
@@ -230,6 +241,18 @@ class RuntimeMethods {
     return { ok: false, reason: this.t("server.failedLog", { log: path.join(this.dataDir(), "server.log") }) };
   }
 
+  async reapOrphanIndexers() {
+    const lock = path.join(this.dataDir(), "index.lock");
+    if (!fsSync.existsSync(lock)) return;
+    const listed = await run("/usr/sbin/lsof", ["-t", "--", lock]);
+    const holders = new Set(listed.stdout.split(/\s+/).filter((s) => /^\d+$/.test(s)).map(Number));
+    if (!holders.size) return;
+    const table = await run("/bin/ps", ["-p", [...holders].join(","), "-o", "pid=,ppid=,command="]);
+    for (const pid of orphanIndexers(table.stdout, holders)) {
+      try { process.kill(pid, "SIGTERM"); } catch { /* already exited */ }
+    }
+  }
+
   stopServer() {
     if (this.serverProcess) {
       this.serverProcess.kill("SIGTERM");
@@ -248,4 +271,4 @@ function walk(root, prefix = "") {
   return out;
 }
 
-export { RuntimeMethods, versionOk, parseShellProbe, PYTHON_PROBE, DATA_DIR, DEV_DATA_DIR };
+export { RuntimeMethods, orphanIndexers, versionOk, parseShellProbe, PYTHON_PROBE, DATA_DIR, DEV_DATA_DIR };

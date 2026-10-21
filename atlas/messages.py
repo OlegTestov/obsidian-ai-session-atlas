@@ -87,6 +87,9 @@ MESSAGES: dict[str, dict] = {
         "ru": "CLI может продолжить эту же сессию, а может открыть её копию — "
               "гарантии в обе стороны нет."},
 
+    "job.interrupted": {"en": "Atlas restarted before this task finished. Please try again.",
+                        "ru": "Atlas перезапустился до завершения задачи. Запустите её повторно."},
+
     # --- folders.py (the folder field of "+ Session") ---
     "folder.not_text": {"en": "the folder must be text", "ru": "папка должна быть текстом"},
     "folder.empty": {"en": "type a folder or pick one", "ru": "впиши папку или выбери из списка"},

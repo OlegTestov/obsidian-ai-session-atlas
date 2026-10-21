@@ -203,6 +203,14 @@ def set_job_state(conn: sqlite3.Connection, job_id: str, state: str,
     conn.commit()
 
 
+def interrupt_jobs(conn: sqlite3.Connection) -> None:
+    """The server's worker threads cannot survive its restart; completed results stay intact."""
+    conn.execute("UPDATE jobs SET state='failed', error=?, updated_at=? "
+                 "WHERE state IN ('queued','running','cancel_requested')",
+                 (msg("job.interrupted"), _now()))
+    conn.commit()
+
+
 def get_job(conn: sqlite3.Connection, job_id: str) -> dict | None:
     row = conn.execute("SELECT * FROM jobs WHERE job_id=?", (job_id,)).fetchone()
     return dict(row) if row else None

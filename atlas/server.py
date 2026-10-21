@@ -6,6 +6,7 @@ import json
 import os
 import re
 import secrets
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -93,6 +94,17 @@ class _Pass:
                 print(f"atlas index: exit code {self.proc.returncode}\n{err}", file=sys.stderr)
             self.err.close()  # report once
         return False
+
+    def stop(self) -> None:
+        """An old indexing process must not keep writing after the server is replaced."""
+        if self.proc.poll() is None:
+            self.proc.terminate()
+            try:
+                self.proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+                self.proc.wait()
+        self.err.close()
 
     def join(self, timeout: float | None = None) -> None:
         with contextlib.suppress(subprocess.TimeoutExpired):
@@ -756,9 +768,27 @@ def serve(port: int = PORT) -> None:
     ALLOWED_HOSTS = {f"127.0.0.1:{port}", f"localhost:{port}"}
     ALLOWED_ORIGINS = {f"http://127.0.0.1:{port}", f"http://localhost:{port}"}
     httpd = Server((HOST, port), Handler)
-    autoclassify.start_scheduler()          # does nothing while auto-classification is off
-    print(f"session-atlas listening on http://{HOST}:{port}", flush=True)
+    stop = threading.Event()
+    main_thread = threading.current_thread() is threading.main_thread()
+
+    def terminate(_signum, _frame):
+        raise SystemExit(0)                # run cleanup also when the plugin sends SIGTERM
+
+    previous_term = signal.signal(signal.SIGTERM, terminate) if main_thread else None
     try:
+        conn = db.connect()
+        try:
+            actions.interrupt_jobs(conn)
+        finally:
+            conn.close()
+        autoclassify.start_scheduler(stop)  # does nothing while auto-classification is off
+        print(f"session-atlas listening on http://{HOST}:{port}", flush=True)
         httpd.serve_forever()
     finally:
+        stop.set()
+        with _catchup_lock:
+            if _catchup_proc is not None:
+                _catchup_proc.stop()
         httpd.server_close()         # after /api/shutdown the port is free at once
+        if main_thread:
+            signal.signal(signal.SIGTERM, previous_term)

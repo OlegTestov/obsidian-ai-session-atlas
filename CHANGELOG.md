@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.4.4] - 2026-10-21
+
+### Fixed
+
+- A commit inside a guarded search write can no longer silently switch off detection of older
+  plugin versions for every process. The guard is restored and the error is reported plainly.
+
 ## [2.4.3] - 2026-10-21
 
 ### Fixed

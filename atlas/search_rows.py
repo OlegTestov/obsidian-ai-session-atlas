@@ -87,15 +87,42 @@ def writing(conn: sqlite3.Connection):
             repair(conn)
         conn.execute("UPDATE fts_guard SET managed=1 WHERE id=1")
         yield
-        conn.execute("UPDATE fts_guard SET managed=0 WHERE id=1")
-        conn.execute("RELEASE atlas_fts_write")
     except BaseException:
         # SQLITE_INTERRUPT can already have rolled back the entire transaction and its savepoints.
         if conn.in_transaction:
-            conn.execute("ROLLBACK TO atlas_fts_write")
-            conn.execute("RELEASE atlas_fts_write")
+            _close(conn, "ROLLBACK TO atlas_fts_write", "RELEASE atlas_fts_write")
+        else:
+            _clear_committed_marker(conn)
         raise
+    if not _close(conn, "UPDATE fts_guard SET managed=0 WHERE id=1", "RELEASE atlas_fts_write"):
+        raise RuntimeError("commit inside search_rows.writing() would disable the legacy-writer guard")
 
+
+def _close(conn: sqlite3.Connection, *statements: str) -> bool:
+    """False when the body committed: the savepoint is gone and managed=1 is visible to everyone.
+
+    Later writes of that body are discarded; the marker is reset in a transaction of its own.
+    """
+    try:
+        for statement in statements:
+            conn.execute(statement)
+        return True
+    except sqlite3.OperationalError as exc:
+        if "no such savepoint" not in str(exc):
+            raise
+    conn.rollback()
+    _clear_committed_marker(conn)
+    return False
+
+
+def _clear_committed_marker(conn: sqlite3.Connection) -> None:
+    # Best effort: it must never replace the error that is already propagating.
+    try:
+        if conn.execute("SELECT managed FROM fts_guard WHERE id=1").fetchone()[0]:
+            conn.execute("UPDATE fts_guard SET managed=0 WHERE id=1")
+            conn.commit()
+    except sqlite3.Error:
+        pass
 
 def run_schema(conn: sqlite3.Connection, script: str) -> None:
     """executescript implicitly commits, so execute complete statements in the caller's transaction."""

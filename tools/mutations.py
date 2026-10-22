@@ -215,9 +215,13 @@ MUT = [
  ("index: an older pass cancels pending upgrade recovery", "atlas/index.py",
   'if only_if_flagged and not recovery and db.get_meta(conn, "needs_reindex") != "1":',
   'if only_if_flagged and db.get_meta(conn, "needs_reindex") != "1":'),
- ("index: interrupted writes mask their original error", "atlas/search_rows.py",
-  'if conn.in_transaction:\n            conn.execute("ROLLBACK TO atlas_fts_write")',
-  'if True:\n            conn.execute("ROLLBACK TO atlas_fts_write")'),
+ ("index: a failed marker cleanup masks the original error", "atlas/search_rows.py",
+  '    except sqlite3.Error:\n        pass', '    except ZeroDivisionError:\n        pass'),
+ ("index: a commit inside a managed write publishes the bypass", "atlas/search_rows.py",
+  '        if "no such savepoint" not in str(exc):\n            raise\n    conn.rollback()\n    _clear_committed_marker(conn)\n    return False',
+  '        if "no such savepoint" not in str(exc):\n            raise\n    return False'),
+ ("index: commit-then-raise keeps the committed bypass", "atlas/search_rows.py",
+  '        else:\n            _clear_committed_marker(conn)\n        raise', '        raise'),
  ("db: a waiting migrator uses a stale pre-lock snapshot", "atlas/db.py",
   '        conn.execute("BEGIN IMMEDIATE")\n'
   '        # Another migrator may have finished while we waited for the writer lock.\n'

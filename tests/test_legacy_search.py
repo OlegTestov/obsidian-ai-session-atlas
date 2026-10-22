@@ -240,3 +240,53 @@ def test_failed_recovery_retries_only_failed_source_and_eventually_restores_it(w
     assert not index.reindex_due(conn)
     assert_lookup(conn)
     conn.close()
+
+
+def _commit_then_write(conn):
+    conn.commit()
+    conn.execute("UPDATE sessions SET title='later' WHERE session_id='aa'")
+
+
+def _commit_then_raise(conn):
+    conn.commit()
+    raise ValueError("injected")
+
+
+@pytest.mark.parametrize("body,error", [
+    (lambda conn: conn.commit(), RuntimeError),
+    (_commit_then_write, RuntimeError),
+    (_commit_then_raise, ValueError),
+], ids=["commit", "commit-then-write", "commit-then-raise"])
+def test_commit_inside_managed_block_cannot_publish_bypass(write_session, body, error):
+    write_session("p", [user_text("preserved")], session_id="aa")
+    conn = db.connect()
+    index.ensure_indexed(conn)
+    with pytest.raises(error), search_rows.writing(conn):
+        store.purge(conn, "aa")
+        body(conn)  # a commit would publish managed=1 and silence the triggers for every writer
+    conn.rollback()
+    conn.close()
+    other = db.connect()
+    assert other.execute("SELECT managed FROM fts_guard").fetchone()[0] == 0
+    other.execute("DELETE FROM sources")
+    other.commit()
+    assert index.reindex_due(other)
+    other.close()
+
+
+def test_failed_cleanup_never_replaces_the_original_error(write_session):
+    write_session("p", [user_text("preserved")], session_id="aa")
+    conn = db.connect()
+    index.ensure_indexed(conn)
+    with pytest.raises(ValueError, match="injected"), search_rows.writing(conn):
+        conn.commit()
+        conn.set_progress_handler(lambda: 1, 1)  # the marker cleanup is interrupted
+        raise ValueError("injected")
+    conn.set_progress_handler(None, 0)
+    conn.close()
+    other = db.connect()
+    with search_rows.writing(other):  # the next guarded write resets the leftover marker
+        pass
+    other.commit()
+    assert other.execute("SELECT managed FROM fts_guard").fetchone()[0] == 0
+    other.close()

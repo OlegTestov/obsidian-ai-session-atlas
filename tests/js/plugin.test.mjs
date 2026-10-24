@@ -111,6 +111,7 @@ const stubs = {
         this.items.push(item);
         return this;
       }
+      addSeparator() { this.items.push({ title: "---" }); return this; }
       showAtMouseEvent(e) { this.shownAt = e; }
     },
     addIcon: () => {},
@@ -2341,6 +2342,44 @@ describe("terminal copy", () => {
     assert.equal(menu.shownAt, event);
     const withSelection = tv.showMenu(event, { hasSelection: () => true });
     assert.equal(withSelection.items[0].disabled, false);
+  });
+
+  it("right-click over a path: Open, Show in Finder and Copy path come first", async () => {
+    const opened = [];
+    const plugin = Object.assign(Object.create(alone), { openLocalPath: async (p, o) => { opened.push([p, o.reveal]); } });
+    const tv = new AgentTerminalView({}, plugin);
+    tv.hoveredPath = "/Users/alex/Code/app/README.md";
+    const menu = tv.showMenu({ preventDefault() {} }, { hasSelection: () => false });
+    assert.deepEqual(menu.items.map((i) => i.title), ["Open", "Show in Finder", "Copy path", "---", "Copy", "Paste"]);
+    menu.items[0].click();
+    menu.items[1].click();
+    await settle();
+    assert.deepEqual(opened, [["/Users/alex/Code/app/README.md", false], ["/Users/alex/Code/app/README.md", true]]);
+    tv.hoveredPath = null;
+    assert.deepEqual(tv.showMenu({ preventDefault() {} }, { hasSelection: () => false }).items.map((i) => i.title), ["Copy", "Paste"]);
+  });
+
+  it("a link the program marks: a file opens here, a web page in the browser, a missing file says so", async () => {
+    const opened = [];
+    const plugin = Object.assign(Object.create(alone), { openLocalPath: async (p, o) => { opened.push([p, o.reveal]); } });
+    const tv = new AgentTerminalView({}, plugin);
+    tv.state = { cwd: os.tmpdir() };
+    const realOpen = window.open;
+    const browser = [];
+    window.open = (u) => browser.push(u);
+    const before = noticeObjects.length;
+    try {
+      tv.openLink({ metaKey: false }, `vscode://file${TEST_DATA}:12`);
+      tv.openLink({ metaKey: true }, `file://${encodeURI(TEST_DATA)}`);
+      tv.openLink({}, "https://example.com/a");
+      tv.openLink({}, "file:///no/such/file.md");
+    } finally {
+      window.open = realOpen;
+    }
+    await settle();
+    assert.deepEqual(opened, [[TEST_DATA, false], [TEST_DATA, true]]);
+    assert.deepEqual(browser, ["https://example.com/a"]);
+    assert.equal(noticeObjects.length - before, 1, "one notice for the missing file");
   });
 });
 

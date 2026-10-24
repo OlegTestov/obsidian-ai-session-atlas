@@ -43,7 +43,9 @@ server on `127.0.0.1`, and nothing is sent anywhere unless you turn on the optio
 - **Agent terminals.** Ribbon buttons and commands open Claude Code or Codex in a terminal tab inside
   Obsidian. Each tab remembers the session it holds; after Obsidian restarts every agent tab brings its
   session back by itself, one at a time, without opening each tab. Closing a tab with a running agent
-  asks for confirmation.
+  asks for confirmation. Paths the agents print (`~/…`, `/…`, `src/main.rs:12`) are links: a click opens
+  the file in its default app (a note of this vault in Obsidian, a folder in Finder), ⌘-click shows it
+  in Finder, and the right-click menu can copy the path.
 - **Notifications.** A notice when a session finishes its turn or waits for a decision, and a macOS
   notification when Obsidian is in the background. Notices stack, one per session; they hide after
   10 s, 30 s or 1 min, or stay until you click or close them, and go by themselves once the session
@@ -218,6 +220,12 @@ from the paste event. In Codex terminal tabs, image paste (keyboard or context m
 local file in the plugin uploads folder and pastes its path without submitting the prompt.
 The plugin does not poll the clipboard or keep a clipboard history. Pasted
 content can become part of the agent's transcript or an attached image, as with ordinary input.
+
+**Paths in terminal tabs.** While the pointer is over a terminal line, the plugin checks whether the
+paths printed on it exist on disk; for relative paths it finds the agent's working folder with `ps`
+and `lsof`. Nothing is opened until you click: a click runs macOS `open` on that path, or opens a note
+of this vault in Obsidian. Apps, scripts, installers and executable files are only shown in Finder,
+never started.
 
 **Files outside the vault.**
 

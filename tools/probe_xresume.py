@@ -32,9 +32,10 @@ KEY = "sk-ant-api03-probe-" + "x" * 60
 ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07|\x1b[()][0-9A-Za-z]|\r")
 
 
-def standin(requests: list, tool_use=None) -> ThreadingHTTPServer:
+def standin(requests: list, tool_use=None, text_for=None) -> ThreadingHTTPServer:
     """Anthropic Messages and OpenAI Responses, streamed; every request body is kept.
-    tool_use(body) may return {"name", "input"} to answer a Messages request with that tool call."""
+    tool_use(body) may return {"name", "input"} to answer a Messages request with that tool call;
+    text_for(body) may return the reply text instead of PROBE-OK."""
     def sse(events):
         return "".join(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n" for e in events).encode()
 
@@ -60,6 +61,7 @@ def standin(requests: list, tool_use=None) -> ThreadingHTTPServer:
             if "count_tokens" in self.path:
                 return self._send(b'{"input_tokens": 100}')
             call = tool_use(body) if tool_use and self.path.startswith("/v1/messages") else None
+            text = (text_for(body) if text_for else None) or "PROBE-OK"
             if call:
                 usage = {"input_tokens": 10, "output_tokens": 1}
                 return self._send(sse([
@@ -82,13 +84,13 @@ def standin(requests: list, tool_use=None) -> ThreadingHTTPServer:
                                                           "model": body.get("model"), "content": [], "usage": usage,
                                                           "stop_reason": None, "stop_sequence": None}},
                     {"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
-                    {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "PROBE-OK"}},
+                    {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": text}},
                     {"type": "content_block_stop", "index": 0},
                     {"type": "message_delta", "delta": {"stop_reason": "end_turn", "stop_sequence": None},
                      "usage": {"output_tokens": 2}},
                     {"type": "message_stop"}]), "text/event-stream")
             item = {"type": "message", "role": "assistant", "id": "msg_probe", "status": "completed",
-                    "content": [{"type": "output_text", "text": "PROBE-OK", "annotations": []}]}
+                    "content": [{"type": "output_text", "text": text, "annotations": []}]}
             usage = {"input_tokens": 10, "input_tokens_details": {"cached_tokens": 0}, "output_tokens": 2,
                      "output_tokens_details": {"reasoning_tokens": 0}, "total_tokens": 12}
             self._send(sse([

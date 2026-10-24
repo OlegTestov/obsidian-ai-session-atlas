@@ -29,8 +29,8 @@ function orphanTabProcesses(psText, scriptPath) {
   return out;
 }
 
-/** True when a process under root runs an agent (`claude …`, `codex …`), in a `ps` listing. */
-function agentUnder(psText, root) {
+/** The first process under root that runs an agent (`claude …`, `codex …`) in a `ps` listing; 0 if none. */
+function agentPidUnder(psText, root) {
   const children = new Map();
   const commands = new Map();
   for (const line of String(psText).split("\n")) {
@@ -44,10 +44,15 @@ function agentUnder(psText, root) {
   const queue = [...(children.get(root) || [])];
   while (queue.length) {
     const pid = queue.shift();
-    if (AGENT.test(commands.get(pid) || "")) return true;
+    if (AGENT.test(commands.get(pid) || "")) return pid;
     queue.push(...(children.get(pid) || []));
   }
-  return false;
+  return 0;
+}
+
+/** True when a process under root runs an agent. */
+function agentUnder(psText, root) {
+  return agentPidUnder(psText, root) > 0;
 }
 
 /** Agent tabs Obsidian has restored but not loaded yet. */
@@ -142,4 +147,4 @@ class StartupMethods {
   }
 }
 
-export { StartupMethods, orphanTabProcesses, deferredAgentLeaves, agentUnder, LOAD_GAP_MS };
+export { StartupMethods, orphanTabProcesses, deferredAgentLeaves, agentUnder, agentPidUnder, LOAD_GAP_MS };

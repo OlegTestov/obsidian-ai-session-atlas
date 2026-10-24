@@ -27,6 +27,7 @@ import { resolveLanguage, obsidianLanguage, translate } from "./i18n";
 import { NotifyMethods } from "./notify";
 import { RestoreMethods } from "./restore";
 import { StartupMethods } from "./startup";
+import { OpenPathMethods } from "./open-path";
 import { AtlasSettingTab, DEFAULT_SETTINGS } from "./settings";
 
 /** A port written into the dev marker (a live test Obsidian next to the test vault), else none. */
@@ -321,7 +322,7 @@ class SessionAtlasPlugin extends Plugin {
 // Methods from the other files are mixed into the plugin class and run with the plugin as `this`.
 for (const methods of [TerminalMethods, InputMethods, CodexInputMethods, NotifyMethods, RestoreMethods, HeldMethods,
                        AgentMethods, GuardMethods, ExplorerMethods, RuntimeMethods, StatusLineMethods, ReloadMethods,
-                       StartupMethods]) {
+                       StartupMethods, OpenPathMethods]) {
   for (const name of Object.getOwnPropertyNames(methods.prototype)) {
     if (name === "constructor") continue;
     Object.defineProperty(SessionAtlasPlugin.prototype, name,

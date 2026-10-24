@@ -13,7 +13,9 @@ import { themeFromCss, applyTheme, followCodexSurface, followTextContrast } from
 import { spawnPty } from "./pty";
 import { AGENT_VIEW_TYPE, DEFAULT_FONT_SIZE } from "./constants";
 import { registry, keepHeldTabs, holdForReclaim } from "./held";
-import { selectWithModifier, isCopyKey, copySelection, pasteClipboard, menuItems, copyTarget } from "./term-copy";
+import { selectWithModifier, isCopyKey, copySelection, pasteClipboard, menuItems, copyTarget, writeClipboard } from "./term-copy";
+import { pathLinkProvider, pathClicks, localTarget } from "./term-links";
+import { resolvePath } from "./open-path";
 
 import { pasteImageEvent } from "./term-paste";
 import { saveClipboardImage } from "./term-image";
@@ -99,11 +101,24 @@ class AgentTerminalView extends ItemView {
       macOptionClickForcesSelection: true,
       rightClickSelectsWord: true,
       allowProposedApi: true,
+      // Links the program marks itself (OSC 8): a file one opens here; xterm's default asks in a dialog.
+      // The target shows on hover: the text the link sits on may name something else.
+      linkHandler: { allowNonHttpProtocols: true, activate: (event, uri) => this.openLink(event, uri),
+                     hover: (event, uri) => { if (this.term) this.term.element.title = uri; },
+                     leave: () => { if (this.term) this.term.element.removeAttribute("title"); } },
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.loadAddon(new WebLinksAddon((event, uri) => window.open(uri)));
     term.open(this.box);
+    // Paths Claude Code and Codex print as plain text: a click opens, ⌘-click shows in Finder.
+    const paths = { check: (raw, dir) => resolvePath(raw, dir), cwd: () => this.plugin.tabCwd(this) };
+    term.registerLinkProvider(pathLinkProvider(term, Object.assign({
+      hover: (full) => { this.hoveredPath = full; term.element.title = this.plugin.t("terminal.pathHint"); },
+      leave: () => { this.hoveredPath = null; term.element.removeAttribute("title"); },
+    }, paths)));
+    this.stopPathClicks = pathClicks(term, Object.assign({ open: (full, event) => this.openPath(full, event),
+                                                           taken: (event) => event === this.linkEvent }, paths));
     selectWithModifier(term);
     if (this.state.kind === "codex") this.codexSurface = followCodexSurface(term);
     this.textContrast = followTextContrast(term);
@@ -199,10 +214,38 @@ class AgentTerminalView extends ItemView {
     if (this.state.focus !== false && !this.plugin.loadingInBackground) term.focus();
   }
 
+  /** A path clicked on the screen: opened, or shown in Finder with ⌘ held. */
+  openPath(full, event) {
+    this.plugin.openLocalPath(full, { reveal: !!(event && event.metaKey) })
+      .catch(() => new Notice(this.plugin.t("terminal.openFailed", { path: full })));
+  }
+
+  /** A link the program marked: a file opens like a path on the screen, a web page in the browser. */
+  openLink(event, uri) {
+    this.linkEvent = event;                         // this click is taken: not opened again as a path
+    if (event && event.button) return;              // the left button only, as for paths
+    const raw = localTarget(uri);
+    if (raw === null) { window.open(uri); return; }
+    const full = resolvePath(raw, this.state.cwd);
+    if (full) this.openPath(full, event);
+    else new Notice(this.plugin.t("terminal.openFailed", { path: raw }));
+  }
+
   /** Copy and paste on the right click; xterm has already selected the word under the pointer. */
   showMenu(event, term) {
     event.preventDefault();
     const menu = new Menu();
+    // Over a path: open it, show it in Finder, copy it.
+    const target = this.hoveredPath;
+    if (target) {
+      menu.addItem((entry) => entry.setTitle(this.plugin.t("terminal.openPath")).setIcon("file-symlink")
+        .onClick(() => this.openPath(target, null)));
+      menu.addItem((entry) => entry.setTitle(this.plugin.t("terminal.revealPath")).setIcon("folder-open")
+        .onClick(() => this.openPath(target, { metaKey: true })));
+      menu.addItem((entry) => entry.setTitle(this.plugin.t("terminal.copyPath")).setIcon("clipboard-copy")
+        .onClick(() => writeClipboard(target)));
+      menu.addSeparator();
+    }
     for (const item of menuItems(term)) {
       menu.addItem((entry) => entry.setTitle(this.plugin.t(`terminal.${item.id}`)).setIcon(item.icon)
         .setDisabled(item.disabled)
@@ -231,6 +274,7 @@ class AgentTerminalView extends ItemView {
         registry().delete(this.ptyKey);
       }
     }
+    if (this.stopPathClicks) this.stopPathClicks();
     if (this.codexSurface) this.codexSurface.dispose();
     if (this.textContrast) this.textContrast.dispose();
     if (this.term) this.term.dispose();

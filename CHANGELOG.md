@@ -7,6 +7,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.4.5] - 2026-10-24
+
+### Added
+
+- Paths that Claude Code and Codex print in terminal tabs are links. A click opens the file in its
+  default app, a note of this vault in Obsidian, a folder in Finder; ⌘-click shows the file in
+  Finder; the right-click menu adds Open, Show in Finder and Copy path. A path is a link only when
+  it exists: relative paths are read from the agent's working folder, a line number (`:12`) and a
+  closing full stop are left out, and paths with spaces or broken across lines work. Apps, scripts,
+  installers and other executable files are never started by a click: they are shown in Finder.
+  File links the program marks itself (OSC 8, including Codex's editor links) open the same way,
+  without a browser dialog, and show their target on hover.
+
 ## [2.4.4] - 2026-10-21
 
 ### Fixed

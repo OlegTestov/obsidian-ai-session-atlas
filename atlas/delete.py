@@ -20,7 +20,7 @@ from .messages import msg
 
 HISTORY = "history.jsonl"            # Claude Code input history (up arrow)
 DB_TABLES = ("sources", "user_overrides", "enrichment", "classification", "jobs", "egress_grants",
-             "conversions")
+             "conversions", "index_costs")
 
 
 class DeleteError(RuntimeError):

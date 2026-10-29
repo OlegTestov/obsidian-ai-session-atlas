@@ -39,7 +39,7 @@ def _refresh(conn, args) -> None:
 
 def cmd_index(conn, args) -> int:
     # The server's background pass is this command: it also runs a full pass that is due.
-    stats = index.ensure_indexed(conn) or index.index_all(conn, full=args.full)
+    stats = index.ensure_indexed(conn) or index.index_all(conn, full=args.full, paced=args.paced)
     _emit(_envelope(conn, {"command": "index", "stats": stats}))
     return EXIT_OK
 
@@ -200,6 +200,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("index", help="index changed transcripts")
     p.add_argument("--full", action="store_true", help="reread all files")
+    p.add_argument("--paced", action="store_true",
+                   help="background pass: a session whose full reread is slow waits (see index.py)")
     p.set_defaults(func=cmd_index)
 
     p = sub.add_parser("rebuild", help="rebuild derived tables")

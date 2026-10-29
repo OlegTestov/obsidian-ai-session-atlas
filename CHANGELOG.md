@@ -7,6 +7,28 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.4.6] - 2026-10-29
+
+### Changed
+
+- Search with common words on a large catalog answers in about a second instead of tens of seconds
+  (31 s → 0.5–2 s for two common words on 9,600 sessions); results are unchanged.
+- The Stats view opens at once: the last counted numbers come immediately with their time, and newer
+  ones replace them when ready ("as of 18:20, updating…"). The default view is counted in the page's
+  language as soon as the plugin connects.
+- The cost tile caption is one short line; how the cost is estimated and which models have no price
+  are behind ⓘ (hover or keyboard focus).
+- The background index no longer keeps the computer busy while a large session's subagents write. A
+  session whose full re-read is slow waits up to ten times as long as that read took (at most 15
+  minutes) before it is re-read again, and the next pass rests as long as the last one ran. On a
+  9,600-session catalog with a 644 MB live session, a pass went from 60–81 s to 3–11 s.
+
+### Fixed
+
+- The Topic filter offers the topic set by hand, not the model's one it replaced: picking the
+  offered topic no longer hides that session. A session matched by several path rules counts for
+  each of their domains in the filters, as on its card.
+
 ## [2.4.5] - 2026-10-24
 
 ### Added

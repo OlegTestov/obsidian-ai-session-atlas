@@ -11,6 +11,9 @@ let statsPrefs = Object.assign({ period: "7d", metric: "cost", auto: false },
   (() => { try { return JSON.parse(window.localStorage.getItem(STATS_KEY) || "{}"); } catch { return {}; } })());
 let statsData = null;
 let statsSeq = 0;
+let statsUpdating = false;     // a stale snapshot is shown while the server counts a newer one
+const STATS_POLL_MS = 2000;
+const STATS_POLL_TRIES = 15;
 let statsAgents = null;        // built once: the bar redraws on every load, an open list must survive it
 
 function saveStatsPrefs() {
@@ -25,8 +28,9 @@ function renderStatsBar() {
   box.addEventListener("change", () => { statsPrefs.auto = box.checked; saveStatsPrefs(); loadStats(); });
   auto.append(box, " " + i18n("stats.auto"));
   auto.title = i18n("stats.auto.hint");
-  const note = el("span", "shown", statsData ? i18n("stats.updated", { time: new Date().toLocaleTimeString(I18N.locale(),
-    { hour: "2-digit", minute: "2-digit" }) }) : "");
+  // The time of the numbers, not of the request: a snapshot may be a minute or more old.
+  const asOf = statsData && new Date(statsData.until).toLocaleTimeString(I18N.locale(), { hour: "2-digit", minute: "2-digit" });
+  const note = el("span", "shown", statsData ? i18n(statsUpdating ? "stats.updating" : "stats.updated", { time: asOf }) : "");
   if (!statsAgents) statsAgents = agentFilter("stats", loadStats);
   $("#stats-bar").replaceChildren(
     segButtons(S.PERIODS, statsPrefs.period, v => { statsPrefs.period = v; saveStatsPrefs(); loadStats(); }),
@@ -36,22 +40,47 @@ function renderStatsBar() {
     note);
 }
 
+function statsUrl() {
+  const agent = agentQuery("stats");
+  return `/api/stats?period=${encodeURIComponent(statsPrefs.period)}&auto=${statsPrefs.auto ? 1 : 0}`
+    + (agent ? `&agent=${encodeURIComponent(agent)}` : "");
+}
+
 async function loadStats() {
+  statsUpdating = false;
   renderStatsBar();
   const seq = ++statsSeq;
   if (!statsData) $("#stats-body").replaceChildren(el("p", "empty", i18n("stats.loading")));
+  let data;
   try {
-    const agent = agentQuery("stats");
-    const data = await api(`/api/stats?period=${encodeURIComponent(statsPrefs.period)}&auto=${statsPrefs.auto ? 1 : 0}`
-      + (agent ? `&agent=${encodeURIComponent(agent)}` : ""));
+    data = await api(statsUrl());
     if (seq !== statsSeq) return;                 // another period was picked while waiting
     statsData = data;
   } catch (e) {
     if (seq === statsSeq && !statsData) $("#stats-body").replaceChildren(el("p", "empty", i18n("stats.error", { msg: e.message })));
     return;
   }
+  statsUpdating = data.stale && !data.refresh_failed;
   renderStatsBar();
   renderStats();
+  if (statsUpdating) pollStats(seq, data.until, 1);
+}
+
+// The server answered with an older snapshot and counts a newer one: ask again until it is there.
+function pollStats(seq, shownAsOf, tries) {
+  window.setTimeout(async () => {
+    if (seq !== statsSeq) return;                 // the period or a filter changed meanwhile
+    let data = null;
+    try { data = await api(statsUrl()); } catch { /* keep the shown snapshot and ask again */ }
+    if (seq !== statsSeq) return;
+    const newer = data && data.until !== shownAsOf;
+    if (newer) statsData = data;
+    const waiting = data ? data.stale && !data.refresh_failed : true;   // a busy server may time out once
+    statsUpdating = !newer && waiting && tries < STATS_POLL_TRIES;
+    renderStatsBar();
+    if (newer) renderStats();
+    if (statsUpdating) pollStats(seq, shownAsOf, tries + 1);
+  }, STATS_POLL_MS);
 }
 
 // --- total tiles -----------------------------------------------------------------
@@ -95,7 +124,19 @@ function tokenBar(tk) {
 function renderTiles(d) {
   const t = d.totals, p = d.previous;
   const diff = key => p ? S.delta(key(t), key(p)) : null;
-  const unpriced = t.unpriced_models.length ? i18n("stats.unpriced", { list: t.unpriced_models.join(", ") }) : "";
+  // The caption stays one short line; how the price is counted and which models have none sit behind ⓘ.
+  const costHint = [i18n("stats.tile.cost.hint"),
+                    ...(t.unpriced_models.length ? [i18n("stats.unpriced", { list: t.unpriced_models.join(", ") })] : [])]
+    .join("\n\n");
+  const costSub = el("div", "ts", i18n("stats.tile.cost.sub"));
+  const info = el("button", "info", "ⓘ");
+  info.type = "button";
+  info.setAttribute("aria-label", i18n("stats.tile.cost.info"));
+  info.setAttribute("aria-describedby", "cost-tip");
+  const tip = el("span", "tip", costHint);
+  tip.id = "cost-tip";
+  tip.setAttribute("role", "tooltip");
+  costSub.append(" ", info, tip);
   const box = el("div", "tiles");
   box.append(
     tile(i18n("stats.tile.sessions"), S.bigNum(t.sessions),
@@ -105,8 +146,7 @@ function renderTiles(d) {
          i18n("stats.tile.tokens.hint")),
     tile(i18n("stats.tile.time"), S.hoursText(t.wall_s), i18n("stats.tile.time.sub", { time: S.hoursText(t.active_s) }),
          diff(x => x.wall_s), i18n("stats.tile.time.hint")),
-    tile(i18n("stats.tile.cost"), S.money(t.cost), i18n("stats.tile.cost.sub") + unpriced,
-         diff(x => x.cost), i18n("stats.tile.cost.hint")),
+    tile(i18n("stats.tile.cost"), S.money(t.cost), costSub, diff(x => x.cost), null),   // the hint is behind ⓘ
     tile(i18n("stats.tile.cache"), t.cache_hit == null ? "—" : S.decimal(Math.round(t.cache_hit * 1000) / 10) + "%",
          i18n("stats.tile.cache.sub"), null, i18n("stats.tile.cache.hint")));
   return box;

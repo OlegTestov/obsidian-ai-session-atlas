@@ -21,7 +21,7 @@ EXPENSIVE = ("enrichment", "classification")
 DERIVED = (
     "sources", "sessions", "session_projects", "session_files",
     "session_links", "session_tickets", "session_domains", "fts", "fts_paths", "parse_state",
-    "activity", "session_continuations", "fts_rows", "fts_guard",
+    "activity", "session_continuations", "fts_rows", "fts_guard", "index_costs",
 )
 
 SCHEMA = """
@@ -155,6 +155,14 @@ CREATE TABLE IF NOT EXISTS parse_state (
   sub_sig    TEXT NOT NULL,
   version    INTEGER NOT NULL,
   state      TEXT NOT NULL
+);
+
+-- How long the last full parse of a session took: an expensive one is not repeated every pass
+-- while its subagents write (atlas/index.py). Derived.
+CREATE TABLE IF NOT EXISTS index_costs (
+  session_id TEXT PRIMARY KEY,
+  full_s     REAL NOT NULL,
+  at         REAL NOT NULL
 );
 
 -- LLM layer cache. Derived: the key includes the extractor and prompt versions.

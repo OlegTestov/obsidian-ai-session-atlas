@@ -166,3 +166,14 @@ def test_api_stats_takes_the_agent_parameter(mixed, live_server):
     assert {r["name"] for r in get("agent=claude,unknown")["by_agent"]} == {"claude"}
     assert {r["name"] for r in get("agent=claude,codex")["by_agent"]} == {"claude", "codex"}
     assert get("")["agent_filter"] is None
+
+
+def test_explicit_prices_are_used_for_every_row_not_the_config(mixed, atlas_env, monkeypatch):
+    """A count gets the prices once (atlas/stats_cache.py): config.json is not read row by row."""
+    from atlas import config
+    monkeypatch.setattr(config, "get", lambda name: {"gpt-6-sol": None} if name == "openai_prices" else None)
+    t = stats.summary(mixed, "all", now=NOW, agents=["codex"], prices={})["totals"]
+    assert t["cost"] == round(CODEX_COST, 2)                  # built-in prices: the config says unpriced
+    doubled = stats.summary(mixed, "all", now=NOW, agents=["codex"],
+                            prices={"gpt-6-sol": [4.0, 0.4, 5.0, 20.0]})["totals"]
+    assert doubled["cost"] == round(2 * CODEX_COST, 2)

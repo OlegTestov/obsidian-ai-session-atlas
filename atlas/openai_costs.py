@@ -36,14 +36,16 @@ def _override(value):
     return price
 
 
-def price_for(model: str | None) -> dict | None:
-    """{input, cached_input, cache_write, output} per 1M tokens, or None when unpriced."""
+def price_for(model: str | None, overrides: dict | None = None) -> dict | None:
+    """{input, cached_input, cache_write, output} per 1M tokens, or None when unpriced.
+    `overrides`: `openai_prices` read once by the caller; None reads config.json."""
     if not model:
         return None
     name = _DATED.sub("", model)
     built_in = PRICES.get(name)
     price = dict(zip(FIELDS, built_in)) if built_in else {}
-    overrides = config.get("openai_prices") or {}
+    if overrides is None:
+        overrides = config.get("openai_prices") or {}
     if isinstance(overrides, dict) and name in overrides:
         fixed = _override(overrides[name])
         if fixed is None:
@@ -54,11 +56,12 @@ def price_for(model: str | None) -> dict | None:
     return price
 
 
-def reply_cost(model: str | None, fresh: int, cached: int, written: int, output: int) -> float | None:
+def reply_cost(model: str | None, fresh: int, cached: int, written: int, output: int,
+               overrides: dict | None = None) -> float | None:
     """`fresh` is input without cache reads and writes, as stored in the activity rows."""
     if not (fresh or cached or written or output):
         return 0.0              # Codex writes empty token_counts, some before any turn_context names a model
-    price = price_for(model)
+    price = price_for(model, overrides)
     if price is None:
         return None
     pin = price["input"]

@@ -15,6 +15,11 @@
 .tile .tv{font-size:clamp(19px,2.1vw,26px);white-space:nowrap;font-weight:650;line-height:1.3;display:flex;align-items:baseline;gap:8px;
   font-variant-numeric:tabular-nums}
 .tile .ts{font-size:12px;color:var(--dim)}
+.tile .ts{position:relative}
+.tile .ts .info{font:inherit;line-height:1;padding:0 2px;border:0;background:none;cursor:help;color:var(--dim);border-radius:4px}
+.tile .ts .info:hover,.tile .ts .info:focus-visible{color:var(--ink)}
+.tile .ts .tip{display:none;position:absolute;z-index:5;left:0;top:calc(100% + 6px);width:min(320px,80vw);padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink);font-size:12px;line-height:1.45;white-space:pre-line;box-shadow:0 4px 14px rgba(0,0,0,.18)}
+.tile .ts .info:hover+.tip,.tile .ts .info:focus-visible+.tip{display:block}
 .delta{font-size:12px;font-weight:600;color:var(--dim)}
 .tbar{display:flex;height:6px;border-radius:3px;overflow:hidden;background:var(--line);margin:4px 0}
 .tbar span,.legend i{background:var(--accent)}

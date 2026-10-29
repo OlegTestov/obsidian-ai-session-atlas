@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from . import agents as agents_mod, query as q
+from . import agents as agents_mod, query as q, search_rows
 from .query import (  # noqa: F401
     FTS_COLUMNS,
     IDENTIFIER_RE,
@@ -52,16 +52,64 @@ def _scoped(columns: tuple[str, ...], expr: str) -> str:
     return expr if columns == FTS_COLUMNS else "{" + " ".join(columns) + "} : (" + expr + ")"
 
 
-def _best_per_session(conn, match: str, where: list[str], args: list) -> dict[str, float]:
+# The session id of an FTS row comes from `fts_rows` when the mapping is complete: reading the
+# UNINDEXED `session_id` column loads the whole content row (KBs to MBs), 8 s for 6,000 matches.
+# Rows go in rowid order, the order FTS5 returns a MATCH in: ties keep the order they had.
+def _sid_join(table: str, alias: str, mapped: bool) -> tuple[str, str]:
+    """(join clause, session id expression) for an FTS table aliased `alias`."""
+    if not mapped:
+        return "", f"{alias}.session_id"
+    return (f" JOIN fts_rows r ON r.index_name = '{table}' AND r.row_id = {alias}.rowid",
+            "r.session_id")
+
+
+def _rows_of(conn, session_ids: list[str]) -> dict[int, str]:
+    """FTS rowid → session id for the given sessions. A rowid filter inside the MATCH query makes
+    FTS5 test every row the slow way (1.2 s for 4 rows): the match runs alone, this filters it."""
+    marks = ",".join("?" * len(session_ids))
+    return {r[0]: r[1] for r in conn.execute(
+        f"SELECT row_id, session_id FROM fts_rows WHERE index_name = 'fts' AND session_id IN ({marks})",
+        session_ids)}
+
+
+def _matching_rows(conn, match: str, rows: dict[int, str]) -> list[int]:
+    """Rowids of the given rows that match, in rowid order (the order FTS5 returns a MATCH in)."""
+    return [rowid for rowid in _all_matching(conn, match) if rowid in rows]
+
+
+def _all_matching(conn, match: str) -> list[int]:
+    return [r[0] for r in conn.execute("SELECT rowid FROM fts WHERE fts MATCH ? ORDER BY rowid", (match,))]
+
+
+def _runs(matching: list[int], rows: dict[int, str]) -> list[tuple[int, int]]:
+    """Ranges of matching rowids with no other session's match in between: each is one query.
+    A query per row costs ~3 ms just to expand a prefix like "session"* again."""
+    runs, start, end = [], None, None
+    for rowid in matching:
+        if rowid in rows:
+            start = rowid if start is None else start
+            end = rowid
+        elif start is not None:
+            runs.append((start, end))
+            start = None
+    if start is not None:
+        runs.append((start, end))
+    return runs
+
+
+def _best_per_session(conn, match: str, where: list[str], args: list,
+                      mapped: bool = False) -> dict[str, float]:
     """Best bm25 score over the session's turn rows: a row is a turn, the best turn decides.
 
     The minimum is taken in Python: bm25 cannot be called inside a SQLite GROUP BY.
     """
     weights = _weights()
+    join, sid = _sid_join("fts", "f", mapped)
     sql = f"""
-        SELECT f.session_id AS session_id, bm25(fts, {', '.join('?' for _ in weights)}) AS score
-        FROM fts f JOIN sessions s ON s.session_id = f.session_id
+        SELECT {sid} AS session_id, bm25(fts, {', '.join('?' for _ in weights)}) AS score
+        FROM fts f{join} JOIN sessions s ON s.session_id = {sid}
         WHERE {' AND '.join(["fts MATCH ?", *where])}
+        {"ORDER BY f.rowid" if mapped else ""}
     """
     best: dict[str, float] = {}
     for sid, score in conn.execute(sql, (*weights, match, *args)):
@@ -71,7 +119,7 @@ def _best_per_session(conn, match: str, where: list[str], args: list) -> dict[st
 
 
 def _candidates(conn: sqlite3.Connection, parsed: q.Parsed, columns: tuple[str, ...], *, kinds,
-                include_automation, since, order, agents=None) -> list[tuple[str, float]]:
+                include_automation, since, order, agents=None, mapped=False) -> list[tuple[str, float]]:
     """Sessions containing every word group of the query, in any turns, not necessarily one.
 
     A group is a word or an OR chain; excluded words are subtracted over the whole session.
@@ -80,12 +128,12 @@ def _candidates(conn: sqlite3.Connection, parsed: q.Parsed, columns: tuple[str, 
     total: dict[str, float] | None = None
     for group in parsed.groups:
         expr = group[0].fts() if len(group) == 1 else "(" + " OR ".join(t.fts() for t in group) + ")"
-        found = _best_per_session(conn, _scoped(columns, expr), where, args)
+        found = _best_per_session(conn, _scoped(columns, expr), where, args, mapped)
         total = found if total is None else {sid: total[sid] + score for sid, score in found.items() if sid in total}
         if not total:
             return []
     for term in parsed.excluded:
-        for sid in _best_per_session(conn, _scoped(columns, term.fts()), where, args):
+        for sid in _best_per_session(conn, _scoped(columns, term.fts()), where, args, mapped):
             total.pop(sid, None)
     if not total:
         return []
@@ -101,37 +149,56 @@ def _candidates(conn: sqlite3.Connection, parsed: q.Parsed, columns: tuple[str, 
 
 
 def _trigram_extra(conn, query: str, known: set[str], limit: int, *, kinds,
-                   include_automation, since, agents=None) -> list[tuple[str, float]]:
+                   include_automation, since, agents=None, mapped=False) -> list[tuple[str, float]]:
     """Substring search over paths and commands: `release.mjs` inside `deploy-release.mjs`."""
     extra, extra_args = _session_where(kinds, include_automation, since, agents)
     where = " AND ".join(["fts_paths MATCH ?", *extra])
+    join, sid = _sid_join("fts_paths", "p", mapped)
     out = []
     for token in query.split():
         if not q.PATHLIKE_RE.search(token):
             continue
-        for row in conn.execute(
+        if mapped:
+            # The first `limit` distinct sessions in match order, as SELECT DISTINCT … LIMIT takes them.
+            rows, seen = conn.execute(
+                f"SELECT {sid} AS session_id FROM fts_paths p{join} JOIN sessions s "
+                f"ON s.session_id = {sid} WHERE {where} ORDER BY p.rowid",
+                (q._quote(token), *extra_args)), []
+            for row in rows:
+                if row[0] not in seen:
+                    seen.append(row[0])
+                    if len(seen) >= limit:
+                        break
+        else:
+            seen = [row[0] for row in conn.execute(
                 "SELECT DISTINCT p.session_id FROM fts_paths p JOIN sessions s "
                 f"ON s.session_id = p.session_id WHERE {where} LIMIT ?",
-                (q._quote(token), *extra_args, limit)):
-            if row["session_id"] not in known:
-                known.add(row["session_id"])
-                out.append((row["session_id"], 0.0))
+                (q._quote(token), *extra_args, limit))]
+        for session_id in seen:
+            if session_id not in known:
+                known.add(session_id)
+                out.append((session_id, 0.0))
     return out
 
 
-def _sessions_matching(conn, match: str, session_ids: list[str]) -> dict[str, int]:
+def _sessions_matching(conn, match: str, session_ids: list[str], mapped: bool = False) -> dict[str, int]:
     """How many session rows match the expression, for each of the given sessions."""
     if not session_ids:
         return {}
-    marks = ",".join("?" * len(session_ids))
     out: dict[str, int] = {}
+    if mapped:
+        rows = _rows_of(conn, session_ids)
+        for rowid in _matching_rows(conn, match, rows):
+            out[rows[rowid]] = out.get(rows[rowid], 0) + 1
+        return out
+    marks = ",".join("?" * len(session_ids))
     for r in conn.execute(f"SELECT session_id FROM fts WHERE fts MATCH ? AND session_id IN ({marks})",
                           (match, *session_ids)):
-        out[r["session_id"]] = out.get(r["session_id"], 0) + 1
+        out[r[0]] = out.get(r[0], 0) + 1
     return out
 
 
-def _by_relevance(conn, parsed: q.Parsed, cands, columns) -> list[tuple[str, float]]:
+def _by_relevance(conn, parsed: q.Parsed, cands, columns, mapped=False) -> list[tuple[str, float]]:
     """Title with all words first, then words close together in one turn, then bm25.
 
     bm25 alone ranks first huge sessions with query words scattered over megabytes.
@@ -140,10 +207,10 @@ def _by_relevance(conn, parsed: q.Parsed, cands, columns) -> list[tuple[str, flo
     ids = [sid for sid, _ in cands]
     if not ids:
         return cands
-    in_title = set(_sessions_matching(conn, q.title_match(parsed), ids))
+    in_title = set(_sessions_matching(conn, q.title_match(parsed), ids, mapped))
     pairs = dict.fromkeys(ids, 0)
     for near in q.near_pairs(parsed, columns):
-        for sid in _sessions_matching(conn, near, ids):
+        for sid in _sessions_matching(conn, near, ids, mapped):
             pairs[sid] += 1
     position = {sid: i for i, sid in enumerate(ids)}      # within a tier, bm25 order
     return sorted(cands, key=lambda c: (c[0] not in in_title, -pairs[c[0]], position[c[0]]))
@@ -170,19 +237,34 @@ def _filtered(conn, candidates, cache: dict, *, projects, domains,
 
 
 def _highlight(conn, parsed: q.Parsed, session_ids: list[str],
-               columns: tuple[str, ...]) -> dict[str, list[dict]]:
+               columns: tuple[str, ...], mapped: bool = False) -> dict[str, list[dict]]:
     """Highlighting over turn rows of the visible sessions: matches are summed, the snippet comes
         from the turn where most distinct query words meet."""
     found: dict[str, dict[str, dict]] = {sid: {} for sid in session_ids}
     if not session_ids:
         return {sid: [] for sid in session_ids}
     marks = ",".join("?" * len(session_ids))
-    for column in columns:
+    rows = _rows_of(conn, session_ids) if mapped else {}
+
+    def marked(column):
         i = FTS_COLUMNS.index(column) + 1
-        for r in conn.execute(
+        match = q.column_match(parsed, column)
+        if not mapped:
+            yield from conn.execute(
                 f"SELECT session_id, highlight(fts, {i}, ?, ?) AS h FROM fts "
                 f"WHERE fts MATCH ? AND session_id IN ({marks})",
-                (q.MARK_OPEN, q.MARK_CLOSE, q.column_match(parsed, column), *session_ids)):
+                (q.MARK_OPEN, q.MARK_CLOSE, match, *session_ids))
+            return
+        # Only the rows that need it are highlighted: highlight() reads and tokenizes the whole text.
+        for start, end in _runs(_all_matching(conn, match), rows):
+            for rowid, h in conn.execute(
+                    f"SELECT rowid, highlight(fts, {i}, ?, ?) FROM fts WHERE fts MATCH ? "
+                    "AND rowid BETWEEN ? AND ? ORDER BY rowid",
+                    (q.MARK_OPEN, q.MARK_CLOSE, match, start, end)):
+                yield {"session_id": rows[rowid], "h": h}
+
+    for column in columns:
+        for r in marked(column):
             segs, hits = q.segments(r["h"] or "")
             if not hits:
                 continue
@@ -216,6 +298,21 @@ def run(conn: sqlite3.Connection, query: str, limit: int = 20,
         scope: str = "prompts", order: str = "date", agents: list[str] | None = None) -> dict:
     """Results plus how the query was understood, the full count and a hint about another scope.
     `agents` narrows to sessions of these agents (claude, codex); None means all."""
+    # One snapshot for the whole search: an old writer committing midway cannot leave the rowid
+    # mapping checked as complete but read as incomplete.
+    own = not conn.in_transaction
+    if own:
+        conn.execute("BEGIN")
+    try:
+        return _run(conn, query, limit, projects, domains, kinds, since, include_automation,
+                    topics, scope, order, agents, mapped=not search_rows.pending(conn))
+    finally:
+        if own and conn.in_transaction:
+            conn.rollback()
+
+
+def _run(conn, query, limit, projects, domains, kinds, since, include_automation, topics, scope,
+         order, agents, *, mapped: bool) -> dict:
     parsed = q.parse(query)
     out = {"results": [], "total": 0, "plan": q.describe(parsed), "elsewhere": None,
            "error": None}
@@ -228,21 +325,21 @@ def run(conn: sqlite3.Connection, query: str, limit: int = 20,
         return out
     scope = scope if scope in SCOPE_COLUMNS else "prompts"
     opts = {"kinds": kinds, "include_automation": include_automation, "since": since,
-            "agents": agents}
+            "agents": agents, "mapped": mapped}
     filters = {"projects": projects, "domains": domains, "topics": topics}
     cache: dict = {}
 
     columns = SCOPE_COLUMNS[scope]
     cands = _candidates(conn, parsed, columns, order=order, **opts)
     if order == "relevance":
-        cands = _by_relevance(conn, parsed, cands, columns)
+        cands = _by_relevance(conn, parsed, cands, columns, mapped)
     if scope == "all" and is_pathlike(query):
         cands += _trigram_extra(conn, query, {c[0] for c in cands}, limit * 2, **opts)
     rows = _filtered(conn, cands, cache, **filters)
     out["total"] = len(rows)
 
     page = rows[:limit]
-    found = _highlight(conn, parsed, [sid for sid, _, _ in page], columns)
+    found = _highlight(conn, parsed, [sid for sid, _, _ in page], columns, mapped)
     for sid, meta, score in page:
         matches = found.get(sid)
         if not matches:

@@ -12,8 +12,9 @@ import sqlite3
 import time
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
+from functools import lru_cache
 
-from . import openai_costs
+from . import config, openai_costs
 from .agents import CODEX
 from .messages import msg
 
@@ -54,7 +55,7 @@ SELECT d.*, strftime('%Y-%m-%d %H', d.ts, 'localtime') AS lh,
 
 
 def _rows(conn: sqlite3.Connection, since: datetime | None, until: datetime, auto: bool,
-          agents: list[str] | None = None) -> list[dict]:
+          agents: list[str] | None = None, prices: dict | None = None) -> list[dict]:
     params = {"since": _utc(since), "until": _utc(until) or "9", "auto": 1 if auto else 0}
     where = ""
     if agents:
@@ -63,7 +64,7 @@ def _rows(conn: sqlite3.Connection, since: datetime | None, until: datetime, aut
     rows = [dict(r) for r in conn.execute(_ROWS.format(agents=where), params)]
     for r in rows:
         if r["agent"] == CODEX and r["kind"] == "a":
-            r["cost"] = openai_costs.reply_cost(r["model"], r["inp"], r["cr"], r["cw"], r["out"])
+            r["cost"] = openai_costs.reply_cost(r["model"], r["inp"], r["cr"], r["cw"], r["out"], prices)
     return rows
 
 
@@ -90,6 +91,7 @@ def wall_seconds(rows) -> float:
     return total
 
 
+@lru_cache(maxsize=4096)      # a few hundred distinct names over 200k replies
 def tool_group(name: str) -> tuple[str, str]:
     """(panel, row). MCP is grouped by server, not by call; skills and agents separately."""
     if name.startswith("mcp__"):
@@ -243,6 +245,7 @@ def _breakdowns(conn: sqlite3.Connection, rows) -> dict:
     }
 
 
+@lru_cache(maxsize=1024)
 def _short_model(model: str | None) -> str:
     return (model or "?").replace("claude-", "").split("[")[0]
 
@@ -253,19 +256,34 @@ def _chunks(seq, n):
 
 
 def summary(conn: sqlite3.Connection, period: str = "7d", automation: bool = False,
-            now: datetime | None = None, agents: list[str] | None = None) -> dict:
-    """`agents`: claude and/or codex (atlas.agents.parse_filter); None means every agent."""
+            now: datetime | None = None, agents: list[str] | None = None,
+            prices: dict | None = None) -> dict:
+    """`agents`: claude and/or codex (atlas.agents.parse_filter); None means every agent.
+    `prices`: `openai_prices` read once by the caller; None reads config.json now."""
+    # One snapshot of the data and one of the prices: the current and the previous span agree.
+    own = not conn.in_transaction
+    if own:
+        conn.execute("BEGIN")
+    try:
+        return _summary(conn, period, automation, now, agents,
+                        config.get("openai_prices") or {} if prices is None else prices)
+    finally:
+        if own and conn.in_transaction:
+            conn.rollback()
+
+
+def _summary(conn, period, automation, now, agents, prices) -> dict:
     period = period if period in PERIODS else "7d"
     started = time.monotonic()
     since, until = window(period, now)
-    rows = _rows(conn, since, until, automation, agents)
+    rows = _rows(conn, since, until, automation, agents, prices)
     out = {"period": period, "since": since.isoformat() if since else None,
            "until": until.isoformat(), "automation": automation, "agent_filter": agents,
            "totals": _totals(rows), "series": _series(rows, since, until)}
     out.update(_breakdowns(conn, rows))
     # The previous span of equal length, for "more / less than usual" comparison.
     if since is not None:
-        prev = _rows(conn, since - (until - since), since, automation, agents)
+        prev = _rows(conn, since - (until - since), since, automation, agents, prices)
         out["previous"] = _totals(prev)
     out["took_ms"] = round((time.monotonic() - started) * 1000)
     return out

@@ -1,7 +1,6 @@
 """Local stdlib server. 127.0.0.1 is not a trust boundary, so there are many checks here."""
 from __future__ import annotations
 
-import contextlib
 import json
 import os
 import re
@@ -40,7 +39,7 @@ from . import (
     relocate,
     runner,
     search,
-    stats,
+    stats_cache,
     touched,
     uploads,
 )
@@ -72,6 +71,17 @@ _catchup_proc = None
 _catchup_at = 0.0
 
 
+_warmed: set = set()
+
+
+def _warm_stats(lang: str) -> None:
+    """The default Stats view is counted before anyone opens it, in the page's language: the server
+    learns it from the plugin's first request, so a restart does not warm the wrong one."""
+    if lang not in _warmed:
+        _warmed.add(lang)
+        stats_cache.SNAPSHOTS.warm(stats_cache.key_for("7d", False, None, lang))
+
+
 class _Pass:
     """Indexer pass in a separate process: in a thread it holds the GIL, and search during
         the pass answers in 0.5-0.8 s instead of 0.1."""
@@ -81,11 +91,19 @@ class _Pass:
         # stderr goes to a file, not a pipe: nobody reads a pipe until exit, and a full pipe
         # buffer would stall the indexer forever.
         self.err = tempfile.TemporaryFile()  # noqa: SIM115 — lives as long as the pass, closed in is_alive
-        command = command or [sys.executable, "-m", "atlas.cli", "index"]
+        command = command or [sys.executable, "-m", "atlas.cli", "index", "--paced"]
         self.proc = subprocess.Popen(command, cwd=REPO_ROOT, env=env, stdout=subprocess.DEVNULL, stderr=self.err)
+        self.started, self.ended = time.monotonic(), None
+        self._done = threading.Event()
+        threading.Thread(target=self._note_end, name="index-pass", daemon=True).start()
+
+    def _note_end(self) -> None:
+        self.proc.wait()
+        self.ended = time.monotonic()
+        self._done.set()
 
     def is_alive(self) -> bool:
-        if self.proc.poll() is None:
+        if not self._done.is_set():     # alive until its end time is known: the rest rule needs it
             return True
         if not self.err.closed:
             if self.proc.returncode:
@@ -107,22 +125,27 @@ class _Pass:
         self.err.close()
 
     def join(self, timeout: float | None = None) -> None:
-        with contextlib.suppress(subprocess.TimeoutExpired):
-            self.proc.wait(timeout)
+        self._done.wait(timeout)        # the waiter thread holds the process: no polling here
 
 
-def catch_up(now: bool = False) -> bool:
+def catch_up(now: bool = False, wait: bool = True) -> bool:
     """Catch up the index. True: a pass still runs in the background, response data may be stale.
-    `now` skips the pause between passes: a full pass is due."""
+    `now` skips the pause between passes: a full pass is due. `wait` False starts a pass without
+    giving it CATCHUP_WAIT to finish (stats answer from a snapshot anyway)."""
     global _catchup_proc, _catchup_at
     with _catchup_lock:
         if _catchup_proc is not None and _catchup_proc.is_alive():
             return True     # do not wait for another pass: each keystroke would add 0.3 s
         if time.monotonic() - _catchup_at < (DUE_RETRY if now else CATCHUP_EVERY):
             return False
+        # Passes do not run back to back: after a long one the index rests as long as it ran.
+        ended = getattr(_catchup_proc, "ended", None)
+        if not now and ended is not None and time.monotonic() - ended < ended - _catchup_proc.started:
+            return False
         _catchup_at = time.monotonic()
         current = _catchup_proc = _Pass()
-    current.join(CATCHUP_WAIT)
+    if wait:
+        current.join(CATCHUP_WAIT)
     return current.is_alive()
 
 
@@ -291,7 +314,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def _lang(self) -> None:
         """Response language is the page language: a header on every request, English without it."""
-        messages.set_lang(self.headers.get("X-Atlas-Lang"))
+        lang = self.headers.get("X-Atlas-Lang")
+        messages.set_lang(lang)
+        if lang:
+            _warm_stats(messages.request_lang())
 
     def do_GET(self) -> None:
         self._lang()
@@ -312,6 +338,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, {"ok": True, "app": APP, "port": PORT,
                                         "python": "{}.{}".format(*sys.version_info[:2]),
                                         "version": runtime_version()})
+            if url.path == "/api/stats":
+                # A count over a large index takes seconds: the last snapshot comes at once. Before
+                # any database access here: the reindex check below may wait for the indexer's
+                # writer lock, and the index pass itself runs a due full pass.
+                catch_up(wait=False)
+                return self._json(200, stats_cache.SNAPSHOTS.get(stats_cache.key_for(
+                    (query.get("period") or ["7d"])[0], (query.get("auto") or ["0"])[0] == "1",
+                    agents.parse_filter(query.get("agent")), messages.request_lang())))
             conn = db.connect()
             try:
                 # A full pass after a schema upgrade or a settings change takes minutes on a large
@@ -379,12 +413,6 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(200, {"workdirs": [dict(w, text=folders.field_text(w["path"]))
                                                          for w in launch.workdirs(conn)],
                                             "roots": folders.roots()})
-                if url.path == "/api/stats":
-                    catch_up()
-                    return self._json(200, stats.summary(
-                        conn, (query.get("period") or ["7d"])[0],
-                        automation=(query.get("auto") or ["0"])[0] == "1",
-                        agents=agents.parse_filter(query.get("agent"))))
                 if url.path == "/api/facets":
                     return self._json(200, self._facets(conn))
                 if url.path.startswith("/api/prompts/"):
@@ -470,7 +498,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _list(self, conn, query) -> dict:
         q = (query.get("q") or [""])[0].strip()
-        limit = min(int((query.get("limit") or ["60"])[0]), 200)
+        limit = max(1, min(int((query.get("limit") or ["60"])[0]), 200))
         projects = query.get("project") or None
         domains = query.get("domain") or None
         include_automation = (query.get("automation") or ["0"])[0] == "1"
@@ -500,40 +528,41 @@ class Handler(BaseHTTPRequestHandler):
 
     def _facets(self, conn) -> dict:
         """Also returns the project→domains map: the project filter narrows to selected domains."""
+        # The same order as a card (search._load_session): manual, then the model, then path rules,
+        # which may give a session several domains.
+        rules: dict[str, list] = {}
+        for row in conn.execute("SELECT session_id, domain FROM session_domains"):
+            rules.setdefault(row["session_id"], []).append(row["domain"])
         effective = {}
         for row in conn.execute("""
-            SELECT s.session_id,
-                   COALESCE((SELECT u.domain FROM user_overrides u WHERE u.session_id=s.session_id),
-                            (SELECT c.domain FROM classification c WHERE c.session_id=s.session_id),
-                            (SELECT d.domain FROM session_domains d WHERE d.session_id=s.session_id
-                             LIMIT 1)
-                   ) AS domain,
-                   (SELECT c.topic FROM classification c WHERE c.session_id=s.session_id) AS topic
-            FROM sessions s WHERE s.session_kind='interactive'"""):
-            effective[row["session_id"]] = (row["domain"], row["topic"])
+            SELECT s.session_id, u.domain AS manual_domain, u.topic AS manual_topic,
+                   c.domain AS model_domain, c.topic AS model_topic
+            FROM sessions s
+            LEFT JOIN user_overrides u ON u.session_id = s.session_id
+            LEFT JOIN classification c ON c.session_id = s.session_id
+            WHERE s.session_kind='interactive'"""):
+            domains = ([row["manual_domain"]] if row["manual_domain"]
+                       else [row["model_domain"]] if row["model_domain"]
+                       else rules.get(row["session_id"], []))
+            effective[row["session_id"]] = (domains, row["manual_topic"] or row["model_topic"])
 
         project_domains: dict[str, set] = {}
         project_count: dict[str, int] = {}
         for row in conn.execute("SELECT session_id, project_id FROM session_projects"):
             if row["session_id"] not in effective:
                 continue
-            domain = effective[row["session_id"]][0]
-            project_domains.setdefault(row["project_id"], set())
+            project_domains.setdefault(row["project_id"], set()).update(effective[row["session_id"]][0])
             project_count[row["project_id"]] = project_count.get(row["project_id"], 0) + 1
-            if domain:
-                project_domains[row["project_id"]].add(domain)
 
         topics: dict[str, set] = {}
-        for domain, topic in effective.values():
+        for domains, topic in effective.values():
             if topic:
-                topics.setdefault(topic, set())
-                if domain:
-                    topics[topic].add(domain)
+                topics.setdefault(topic, set()).update(domains)
 
         return {
             "projects": sorted(project_domains, key=lambda p: -project_count.get(p, 0)),
             "project_domains": {k: sorted(v) for k, v in project_domains.items()},
-            "domains": sorted({d for d, _ in effective.values() if d}),
+            "domains": sorted({d for domains, _ in effective.values() for d in domains}),
             "domain_options": list(config.domain_ids()),
             "topics": sorted(topics),
             "topic_domains": {k: sorted(v) for k, v in topics.items()},

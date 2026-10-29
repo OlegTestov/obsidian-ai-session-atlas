@@ -120,10 +120,12 @@ def write_session(atlas_env):
 
 
 @pytest.fixture
-def live_server(atlas_env):
+def live_server(atlas_env, monkeypatch):
     import socket
 
-    from atlas import server
+    from atlas import messages, server
+    # No Stats warm-up: it would count in the background against an index the next test removes.
+    monkeypatch.setattr(server, "_warmed", set(messages.LANGS))
     with socket.socket() as probe:              # free port: parallel runs do not collide
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]

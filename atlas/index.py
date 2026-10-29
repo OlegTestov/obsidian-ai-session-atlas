@@ -7,6 +7,7 @@ import hashlib
 import os
 import sqlite3
 import sys
+import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
@@ -100,6 +101,31 @@ def _changed(row: sqlite3.Row | None, sig: str) -> bool:
 
 def _purge(conn: sqlite3.Connection, session_id: str) -> None:
     store.purge(conn, session_id)
+    conn.execute("DELETE FROM index_costs WHERE session_id=?", (session_id,))
+
+
+# A live session with subagents cannot be read on from the last offset when a subagent file
+# changed: it is parsed in full. For a large one (644 MB with 260 subagents: ~60 s) that would
+# repeat every pass while its agents work, so it waits a multiple of what its last full parse took.
+FULL_COST_MIN_S = 5.0        # a cheaper full parse is never put off
+FULL_SPACING = 10            # put off for at most this many times its last cost…
+FULL_SPACING_MAX_S = 900.0   # …and never longer than this
+
+
+def _clock() -> float:
+    return time.time()       # wall clock: each pass is a new process
+
+
+def _deferred(conn: sqlite3.Connection, session_id: str) -> bool:
+    row = conn.execute("SELECT full_s, at FROM index_costs WHERE session_id=?", (session_id,)).fetchone()
+    if row is None or row[0] < FULL_COST_MIN_S:
+        return False
+    # A clock set back must not stretch the wait: the time since is never negative.
+    return 0 <= _clock() - row[1] < min(FULL_SPACING * row[0], FULL_SPACING_MAX_S)
+
+
+def _note_cost(conn: sqlite3.Connection, session_id: str, seconds: float) -> None:
+    conn.execute("INSERT OR REPLACE INTO index_costs VALUES (?,?,?)", (session_id, seconds, _clock()))
 
 
 def _codex_signature(path: str, title: str | None) -> str:
@@ -121,10 +147,12 @@ def index_one(conn: sqlite3.Connection, path: str, agent: str) -> None:
 
 def index_all(conn: sqlite3.Connection, root: str = PROJECTS_ROOT,
               full: bool = False, only_if_flagged: bool = False,
-              codex_root: str | None = None) -> dict:
-    """Returns a run summary. Each file is its own transaction: a failure does not break the whole index."""
+              codex_root: str | None = None, paced: bool = False) -> dict:
+    """Returns a run summary. Each file is its own transaction: a failure does not break the whole index.
+    `paced`: the server's background pass, which may put off an expensive full re-parse. A refresh
+    someone asked for (the update button, `atlas search`) is never put off."""
     stats = {"seen": 0, "indexed": 0, "skipped": 0, "removed": 0, "errors": 0,
-             "subagent_files": 0, "full": 0, "tail": 0, "codex": 0}
+             "subagent_files": 0, "full": 0, "tail": 0, "codex": 0, "deferred": 0}
     with writer_lock():
         # An old indexer can invalidate the lookup even when every source signature is unchanged.
         with search_rows.writing(conn):
@@ -155,7 +183,13 @@ def index_all(conn: sqlite3.Connection, root: str = PROJECTS_ROOT,
                 # An appended file is read from where the last pass stopped; otherwise in full.
                 if full or known.get(path) is None \
                         or not store.store_tail(conn, path, st, sig, sub_sig):
+                    session_id = os.path.splitext(os.path.basename(path))[0]
+                    if paced and not full and known.get(path) is not None and _deferred(conn, session_id):
+                        stats["deferred"] += 1        # its sources row is kept: seen as changed again
+                        continue
+                    started = time.monotonic()
                     store.store_full(conn, path, st, sig, subagents, sub_sig)
+                    _note_cost(conn, session_id, time.monotonic() - started)   # same transaction
                     stats["full"] += 1
                 else:
                     stats["tail"] += 1

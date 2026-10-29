@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 
 from .messages import msg
@@ -250,12 +251,28 @@ def _unmark(marked: str) -> tuple[str, list[tuple[int, int]]]:
 
 
 def _best_window(text: str, spans: list[tuple[int, int]], width: int) -> int:
-    """The window where most distinct query words meet: "news window" beats two "window"s."""
+    """The window where most distinct query words meet: "news window" beats two "window"s.
+
+    Spans are sorted and do not overlap, so the ones inside a window are a contiguous run and both
+    ends only move right: one pass, not a scan per span (a reply with 3,000 matches took 0.3 s).
+    """
     best, best_key = 0, (-1, -1)
+    words = [text[a:b].lower() for a, b in spans]
+    inside: Counter = Counter()
+    lo = hi = 0                                    # spans[lo:hi] lie inside the current window
     for s, _ in spans:
         left = max(0, s - width // 3)
-        inside = [text[a:b].lower() for a, b in spans if left <= a and b <= left + width]
-        key = (len(set(inside)), len(inside))
+        while lo < len(spans) and spans[lo][0] < left:
+            if lo < hi:
+                inside[words[lo]] -= 1
+                if not inside[words[lo]]:
+                    del inside[words[lo]]
+            lo += 1
+        hi = max(hi, lo)
+        while hi < len(spans) and spans[hi][1] <= left + width:
+            inside[words[hi]] += 1
+            hi += 1
+        key = (len(inside), hi - lo)
         if key > best_key:
             best, best_key = left, key
     return best

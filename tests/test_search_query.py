@@ -207,6 +207,17 @@ def test_server_list_carries_plan_total_and_segments(atlas_env, write_session, l
     assert _hit_texts(data["results"][0]["matches"][0]) == ["1359"]
 
 
+def test_server_list_reads_a_limit_below_one_as_one(atlas_env, write_session, live_server):
+    """limit=0 or a negative one is not passed on: SQLite reads LIMIT -1 as no limit at all."""
+    _indexed(atlas_env, write_session, [user_text("webpack один")], [user_text("webpack два")])
+    base, _ = live_server
+    for limit in ("0", "-1"):
+        url = f"{base}/api/sessions?" + urllib.parse.urlencode({"q": "webpack", "scope": "all", "limit": limit})
+        with urllib.request.urlopen(url, timeout=5) as r:
+            data = json.loads(r.read())
+        assert data["shown"] == 1 and len(data["results"]) == 1
+
+
 # --- server-side index catch-up ---------------------------------------------
 
 def _list(base, **params):
@@ -383,3 +394,32 @@ def test_the_index_command_runs_a_due_full_pass(atlas_env, write_session):
     assert conn.execute("SELECT COUNT(*) FROM session_tickets WHERE ticket='ZZZ-77'").fetchone()[0] == 1
     assert db.get_meta(conn, "needs_reindex") == "0"
     conn.close()
+
+
+def test_best_window_is_the_window_with_most_distinct_words_first_on_ties():
+    """One pass over sorted spans gives what checking every window gives."""
+    import random
+
+    from atlas.query import _best_window
+
+    def every_window(text, spans, width):
+        best, best_key = 0, (-1, -1)
+        for s, _ in spans:
+            left = max(0, s - width // 3)
+            inside = [text[a:b].lower() for a, b in spans if left <= a and b <= left + width]
+            key = (len(set(inside)), len(inside))
+            if key > best_key:
+                best, best_key = left, key
+        return best
+
+    rng = random.Random(7)
+    for _ in range(3000):
+        pos, spans, parts = 0, [], []
+        for _ in range(rng.randint(0, 30)):
+            gap, word = rng.randint(0, 90), rng.choice(["news", "News", "window", "x", "ab"])
+            parts += ["." * gap, word]
+            spans.append((pos + gap, pos + gap + len(word)))
+            pos += gap + len(word)
+        text = "".join(parts) + "." * rng.randint(0, 40)
+        width = rng.choice([1, 3, 30, 220])
+        assert _best_window(text, spans, width) == every_window(text, spans, width)

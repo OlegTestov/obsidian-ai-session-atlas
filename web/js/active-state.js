@@ -27,9 +27,10 @@ const ACTIVE_FILTERS = [
   { key:"project", label:i18n("active.filter.project"), hash:"ap" },
   { key:"topic", label:i18n("active.filter.topic"), hash:"at" },
   { key:"period", label:i18n("active.filter.period"), hash:"aw" },
+  { key:"group", label:i18n("active.filter.group"), hash:"ag" },
 ];
 const PERIODS = AtlasLogic.PERIODS;
-const activeFilter = { domain:new Set(), project:new Set(), topic:new Set(), period:new Set() };
+const activeFilter = { domain:new Set(), project:new Set(), topic:new Set(), period:new Set(), group:new Set() };
 const filterUI = {};
 let activeMode = "compact";           // compact | full
 // Columns × rows layout, per view; null means auto.
@@ -115,6 +116,7 @@ window.addEventListener("message", e => {
     .map(t => [t.ptyPid, typeof t.screen === "string" ? t.screen : null]));
   hostHeld = new Map((Array.isArray(d.held) ? d.held : []).filter(t => t && Number.isInteger(t.ptyPid))
     .map(t => [t.ptyPid, String(t.title || "")]));
+  readTabGroups(d);
   activeSessions = screenSessions();
   hostReady = true;
   tabsAskedAt = null;
@@ -133,11 +135,11 @@ window.addEventListener("message", e => {
   renderActive();
 });
 
-// A Codex session whose tab shows a prompt waits for you: only the screen knows it.
+// A Codex session whose tab shows a prompt waits for you: only the screen knows it. The tab's group comes along.
 function screenSessions() {
   return activeRaw.map(s => {
     const pid = tabFor(s);
-    return withTabScreen(s, pid ? hostScreens.get(pid) : null);
+    return withTabGroup(withTabScreen(s, pid ? hostScreens.get(pid) : null), pid);
   });
 }
 

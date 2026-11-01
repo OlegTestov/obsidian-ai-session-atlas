@@ -628,3 +628,23 @@ button.feedbtn[aria-pressed="true"]{background:var(--accent-soft);border-color:v
 
 /* A bounded conversation inside the search card, independent of the Active side panel. */
 .catalog-feed-body{max-height:65vh;overflow:auto;overscroll-behavior:contain;overflow-anchor:none;padding:8px 0}
+
+/* Session groups (active-groups.js): the plugin's group colours, the same nine as Chrome's. */
+:root{ --g-blue:#1a73e8; --g-red:#d93025; --g-yellow:#e8a600; --g-green:#188038; --g-pink:#d01884;
+       --g-purple:#a142f4; --g-cyan:#007b83; --g-orange:#e8710a; --g-grey:#5f6368; --g-on:#fff; --g-on-light:#202124 }
+@media (prefers-color-scheme:dark){
+  :root{ --g-blue:#8ab4f8; --g-red:#f28b82; --g-yellow:#fdd663; --g-green:#81c995; --g-pink:#ff8bcb;
+         --g-purple:#d7aefb; --g-cyan:#78d9ec; --g-orange:#fcad70; --g-grey:#bdc1c6; --g-on:#202124 }
+}
+.g-blue{--grp:var(--g-blue);--grp-on:var(--g-on)} .g-red{--grp:var(--g-red);--grp-on:var(--g-on)}
+.g-yellow{--grp:var(--g-yellow);--grp-on:var(--g-on-light)} .g-green{--grp:var(--g-green);--grp-on:var(--g-on)}
+.g-pink{--grp:var(--g-pink);--grp-on:var(--g-on)} .g-purple{--grp:var(--g-purple);--grp-on:var(--g-on)}
+.g-cyan{--grp:var(--g-cyan);--grp-on:var(--g-on)} .g-orange{--grp:var(--g-orange);--grp-on:var(--g-on-light)}
+.g-grey{--grp:var(--g-grey);--grp-on:var(--g-on)}
+.acard.grouped{box-shadow:inset 3px 0 0 var(--grp)}
+.pill.grp{flex:0 0 auto;font:inherit;font-size:11.5px;font-weight:600;cursor:pointer;
+  background:var(--grp);border-color:var(--grp);color:var(--grp-on);max-width:14em;overflow:hidden;text-overflow:ellipsis}
+.pill.grp.add{background:transparent;border-style:dashed;color:var(--dim);font-weight:400;opacity:0}
+.acard:hover .pill.grp.add,.pill.grp.add:focus-visible{opacity:1}
+.pill.grp:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.ms.off{display:none}

@@ -259,6 +259,9 @@ function refreshFilterButtons(skipKey) {
     ui.btn.replaceChildren(...buttonContent(f));
     ui.btn.title = buttonHint(f);
     ui.btn.classList.toggle("on", activeFilter[f.key].size > 0);
+    // Groups come from the Obsidian tabs: no groups, no filter (unless one is still picked).
+    if (f.key === "group") ui.btn.parentElement.classList.toggle("off",
+      !activeFilter.group.size && !activeSessions.some(s => s.tab_group));
     // An open list updates in place: the 5-second poll must not close it.
     if (f.key !== skipKey && !ui.pop.classList.contains("hidden")) {
       const top = ui.list.scrollTop;

@@ -62,3 +62,261 @@
   background: var(--background-modifier-hover);
   border-radius: var(--radius-s);
 }
+
+/* Session groups (groups-strip.js): Chrome's nine group colours, one palette per theme. */
+body.theme-light {
+  --sa-g-blue: #1a73e8; --sa-g-red: #d93025; --sa-g-yellow: #e8a600; --sa-g-green: #188038; --sa-g-pink: #d01884;
+  --sa-g-purple: #a142f4; --sa-g-cyan: #007b83; --sa-g-orange: #e8710a; --sa-g-grey: #5f6368;
+  --sa-g-text: #ffffff; --sa-g-text-light: #202124;
+}
+body.theme-dark {
+  --sa-g-blue: #8ab4f8; --sa-g-red: #f28b82; --sa-g-yellow: #fdd663; --sa-g-green: #81c995; --sa-g-pink: #ff8bcb;
+  --sa-g-purple: #d7aefb; --sa-g-cyan: #78d9ec; --sa-g-orange: #fcad70; --sa-g-grey: #bdc1c6;
+  --sa-g-text: #202124; --sa-g-text-light: #202124;
+}
+.sa-c-blue { --sa-group: var(--sa-g-blue); --sa-group-fg: var(--sa-g-text); }
+.sa-c-red { --sa-group: var(--sa-g-red); --sa-group-fg: var(--sa-g-text); }
+.sa-c-yellow { --sa-group: var(--sa-g-yellow); --sa-group-fg: var(--sa-g-text-light); }
+.sa-c-green { --sa-group: var(--sa-g-green); --sa-group-fg: var(--sa-g-text); }
+.sa-c-pink { --sa-group: var(--sa-g-pink); --sa-group-fg: var(--sa-g-text); }
+.sa-c-purple { --sa-group: var(--sa-g-purple); --sa-group-fg: var(--sa-g-text); }
+.sa-c-cyan { --sa-group: var(--sa-g-cyan); --sa-group-fg: var(--sa-g-text); }
+.sa-c-orange { --sa-group: var(--sa-g-orange); --sa-group-fg: var(--sa-g-text-light); }
+.sa-c-grey { --sa-group: var(--sa-g-grey); --sa-group-fg: var(--sa-g-text); }
+
+/* A grouped tab: a line of the group's colour along its bottom, joined from tab to tab, and on the
+   first tab from the chip's left edge, as in Chrome. Above the active tab's rounded corners. */
+.workspace-tab-header-container .sa-group-line {
+  position: absolute;
+  inset-inline-start: 0;
+  inset-inline-end: 0;
+  bottom: 0;
+  height: 2px;
+  background-color: var(--sa-group);
+  pointer-events: none;
+  /* Above a neighbouring active tab too (z-index 1), whose rounded corner reaches into this tab. */
+  z-index: 2;
+}
+.workspace-tab-header-container .workspace-tab-header.sa-group-first > .sa-group-line {
+  inset-inline-start: min(0px, calc(3px - var(--sa-chip-width, 0px)));
+}
+/* The tab in front, as in Chrome: the line goes round it instead of under it. It rises along the
+   tab's curved feet and sides and runs over its rounded top; the bottom stays open. */
+.mod-root .workspace-tab-header-container .workspace-tab-header.sa-grouped.is-active > .sa-group-line {
+  top: 0;
+  bottom: var(--tab-curve, 6px);
+  inset-inline-start: 0;
+  inset-inline-end: 0;
+  height: auto;
+  border: 2px solid var(--sa-group);
+  border-block-end: none;
+  border-radius: var(--tab-radius-active, 6px 6px 0 0);
+  corner-shape: var(--tab-corner-shape, round);
+  background: transparent;
+}
+.mod-root .workspace-tab-header-container .workspace-tab-header.sa-grouped.is-active > .sa-group-line::before,
+.mod-root .workspace-tab-header-container .workspace-tab-header.sa-grouped.is-active > .sa-group-line::after {
+  content: "";
+  position: absolute;
+  top: 100%;
+  box-sizing: border-box;
+  width: var(--tab-curve, 6px);
+  height: var(--tab-curve, 6px);
+  border: 0 solid var(--sa-group);
+  border-block-end-width: 2px;
+  corner-shape: var(--tab-corner-shape, round);
+}
+.mod-root .workspace-tab-header-container .workspace-tab-header.sa-grouped.is-active > .sa-group-line::before {
+  inset-inline-start: calc(-1 * var(--tab-curve, 6px));
+  border-inline-end-width: 2px;
+  border-end-end-radius: var(--tab-curve, 6px);
+}
+.mod-root .workspace-tab-header-container .workspace-tab-header.sa-grouped.is-active > .sa-group-line::after {
+  inset-inline-end: calc(-1 * var(--tab-curve, 6px));
+  border-inline-start-width: 2px;
+  border-end-start-radius: var(--tab-curve, 6px);
+}
+/* The group's first tab in front: its left foot reaches back to the chip. */
+.mod-root .workspace-tab-header-container .workspace-tab-header.sa-group-first.is-active > .sa-group-line::before {
+  inset-inline-start: min(calc(-1 * var(--tab-curve, 6px)), calc(1px - var(--sa-chip-width, 0px)));
+  width: max(var(--tab-curve, 6px), calc(var(--sa-chip-width, 0px) - 1px));
+}
+/* Next to the tab in front, a line stops where that tab's foot begins (curve − 2px out from its side):
+   it does not fill the foot's curve, nor touch another group's foot. */
+.mod-root .workspace-tab-header-container
+  .workspace-tab-header.sa-grouped:has(+ .workspace-tab-header.is-active:not(.sa-group-first)) > .sa-group-line {
+  inset-inline-end: calc(var(--tab-curve, 6px) - 2px);
+}
+.mod-root .workspace-tab-header-container .workspace-tab-header.is-active + .workspace-tab-header.sa-grouped > .sa-group-line {
+  inset-inline-start: calc(var(--tab-curve, 6px) - 2px);
+}
+.mod-root .workspace-tab-header-container .workspace-tab-header.is-active + .workspace-tab-header.sa-group-first > .sa-group-line {
+  inset-inline-start: min(0px, calc(max(3px, var(--tab-curve, 6px) - 2px) - var(--sa-chip-width, 0px)));
+}
+.workspace-tab-header.sa-group-folded-head > .sa-group-line {
+  display: none;
+}
+/* The first tab of a group leaves room on its left for the chip, which is drawn there. */
+.workspace-tab-header-container .workspace-tab-header.sa-group-first {
+  margin-inline-start: var(--sa-chip-width, 0px);
+}
+.sa-group-chip {
+  -webkit-app-region: no-drag;
+  position: absolute;
+  inset-inline-end: calc(100% + 3px);
+  top: var(--sa-chip-top, 50%);
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 20px;
+  max-width: 160px;
+  padding: 0 8px;
+  border-radius: 6px;
+  background-color: var(--sa-group);
+  color: var(--sa-group-fg);
+  font-size: var(--font-ui-smaller);
+  font-weight: var(--font-semibold);
+  line-height: 20px;
+  white-space: nowrap;
+  cursor: var(--cursor);
+  z-index: 2;
+}
+.sa-group-chip.is-unnamed {
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  border-radius: 50%;
+}
+.sa-group-chip.is-unnamed:has(.sa-group-chip-count) {
+  width: auto;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: 6px;
+}
+.sa-group-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sa-group-chip-count {
+  opacity: 0.8;
+  font-variant-numeric: tabular-nums;
+}
+.sa-group-chip:hover { filter: brightness(1.08); }
+/* The chip sits inside its first tab's header: hovering it lights only the chip, not that tab. Obsidian
+   and themes paint a hovered tab through these variables (header, its inner box, its curved feet). */
+.workspace-tab-header-container .workspace-tab-header:not(.is-active):has(> .sa-group-chip:hover) {
+  --tab-background-hover: transparent;
+  --tab-outline-color-hover: transparent;
+  --tab-inner-background-hover: transparent;
+  --tab-inner-border-color-hover: transparent;
+}
+/* Obsidian shows a hovered tab's × with .workspace .mod-root .workspace-tabs:not(.mod-stacked) …: outrank it. */
+.workspace .mod-root .workspace-tabs:not(.mod-stacked) .workspace-tab-header-container
+  .workspace-tab-header:not(.is-active):has(> .sa-group-chip:hover) .workspace-tab-header-inner-close-button {
+  display: none;
+}
+.sa-group-chip:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+}
+/* A folded group: its tabs are hidden, the first one keeps only the chip in its margin. */
+.workspace-tab-header-container .workspace-tab-header.sa-group-folded {
+  display: none;
+}
+.workspace .workspace-tab-header-container .workspace-tab-header.sa-group-folded-head {
+  flex: 0 0 0;
+  width: 0;
+  min-width: 0;
+  max-width: 0;
+  padding: 0;
+  background-image: none;
+  box-shadow: none;
+}
+.workspace-tab-header.sa-group-folded-head > .workspace-tab-header-inner,
+.workspace-tab-header.sa-group-folded-head::before,
+.workspace-tab-header.sa-group-folded-head::after {
+  display: none;
+}
+.sa-group-menu-item .menu-item-icon svg {
+  color: var(--sa-group);
+  fill: var(--sa-group);
+}
+
+/* The group editor under a chip (groups-editor.js). */
+.sa-group-editor {
+  position: fixed;
+  left: var(--sa-editor-left, 0px);
+  top: var(--sa-editor-top, 0px);
+  z-index: var(--layer-menu);
+  /* As wide as its longest line (a longer language, a bigger font), within the window. */
+  width: max-content;
+  min-width: 248px;
+  max-width: min(360px, calc(100vw - 16px));
+  box-sizing: border-box;
+  padding: 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background-color: var(--background-primary);
+  box-shadow: var(--shadow-s);
+}
+.sa-group-editor-name {
+  width: 100%;
+}
+.sa-group-editor-colors {
+  display: grid;
+  grid-template-columns: repeat(9, 1fr);
+  gap: 4px;
+  margin: 10px 0 8px;
+}
+.sa-group-editor .sa-group-swatch {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background-color: var(--sa-group);
+  box-shadow: none;
+  cursor: var(--cursor);
+}
+.sa-group-editor .sa-group-swatch.is-selected {
+  box-shadow: 0 0 0 2px var(--background-primary), 0 0 0 4px var(--sa-group);
+}
+.sa-group-editor .sa-group-swatch:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 3px;
+}
+.sa-group-editor-actions {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--background-modifier-border);
+  padding-top: 6px;
+}
+.sa-group-editor .sa-group-editor-action {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  width: 100%;
+  height: auto;
+  padding: 5px 6px;
+  border: none;
+  border-radius: var(--radius-s);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-normal);
+  font-size: var(--font-ui-small);
+  text-align: left;
+  white-space: normal;
+  cursor: var(--cursor);
+}
+.sa-group-editor .sa-group-editor-action:hover,
+.sa-group-editor .sa-group-editor-action:focus-visible {
+  background-color: var(--background-modifier-hover);
+}
+.sa-group-editor .sa-group-editor-action.mod-warning { color: var(--text-error); }
+.sa-group-editor-icon {
+  display: flex;
+  color: var(--icon-color);
+  --icon-size: var(--icon-s);
+}

@@ -72,6 +72,12 @@ class AgentTerminalView extends ItemView {
     if (workspace && workspace.requestSaveLayout) workspace.requestSaveLayout();
   }
   getIcon() { return this.state.kind === "codex" ? "codex-bot" : "bot"; }
+
+  /** The tab's own menu (Obsidian builds it for background tabs too): the session group items. */
+  onTabMenu(menu) {
+    if (super.onTabMenu) super.onTabMenu(menu);
+    this.plugin.addGroupItems(menu, this.leaf);
+  }
   getState() { return Object.assign({}, this.state); }
 
   async setState(state, result) {

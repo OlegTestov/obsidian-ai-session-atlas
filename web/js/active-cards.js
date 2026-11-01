@@ -45,6 +45,10 @@ function activeCard(s) {
   if (tasks && full) card.appendChild(tasksLine(tasks));
 
   const tags = el("div", "tags");
+  const pid = tabFor(s);
+  const group = groupPill(s, pid);
+  if (group) tags.appendChild(group);
+  if (s.tab_group) card.classList.add("grouped", `g-${s.tab_group.color}`);
   tags.appendChild(agentBadge(s));
   if (tasks && !full) {                  // compact view has no room for a separate line: the label goes into the tags
     const pill = el("span", "pill task" + (tasks.finished ? " done" : ""),
@@ -85,7 +89,6 @@ function activeCard(s) {
     : s.cost_now != null ? i18n("active.costCodex", { cost: s.cost_now.toFixed(2) })
     : i18n("active.costCodexNone");
 
-  const pid = tabFor(s);
   const go = el("button", "primary", i18n("active.go"));
   const close = el("button", null, i18n("active.close"));
   go.title = i18n("active.goHint");

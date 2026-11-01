@@ -84,6 +84,8 @@ class GuardMethods {
   onMiddleClick(event) {
     if (event.button !== 1) return;
     const target = event.target;
+    // A middle click on a group chip (or its label) is the chip's, not a close of the group's first tab.
+    if ([target, target && target.parentElement].some((el) => el && el.classList && el.classList.contains("sa-group-chip"))) return;
     const header = target && typeof target.closest === "function" ? target.closest(TAB_HEADER_SELECTOR) : null;
     const leaf = this.findLeafByTabHeader(header);
     if (!this.guardKind(leaf)) return;

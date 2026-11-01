@@ -7,6 +7,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-11-01
+
+### Added
+
+- Session groups, as Chrome's tab groups. Right-click a tab → **Add to new group**: the group gets a
+  name and one of nine colours, a chip before its tabs and a line of its colour under the chip and
+  the tabs, going round the tab in front as in Chrome. A click on the chip folds the group to the chip
+  and back; a right-click opens the editor (name, colour, a new Claude Code or Codex tab in the group,
+  fold, ungroup, close group). A tab dropped onto a group's tab or chip joins the group (a one-tab
+  group too); one dropped onto a tab outside the group, or dragged away, leaves it. Groups survive an
+  Obsidian restart and a workspace switch. Active shows each card's group, filters by group, and the
+  card's label opens the same group menu.
+
 ## [2.4.6] - 2026-10-29
 
 ### Changed

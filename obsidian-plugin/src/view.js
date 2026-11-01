@@ -20,6 +20,11 @@ class AtlasView extends ItemView {
   getDisplayText() { return atlasTitle(this.plugin.waitingCount || 0); }
   getIcon() { return "library"; }
 
+  onTabMenu(menu) {
+    if (super.onTabMenu) super.onTabMenu(menu);
+    this.plugin.addGroupItems(menu, this.leaf);
+  }
+
   /** The tab is restored with the selected session: the state lives in the hash. */
   async setState(state, result) {
     if (state && typeof state.hash === "string") this.hash = state.hash;

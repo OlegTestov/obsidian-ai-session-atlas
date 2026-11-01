@@ -38,6 +38,7 @@
     if (key === "domain") return s.domains || [];
     if (key === "project") return s.projects || [];
     if (key === "topic") return s.topic ? [s.topic] : [];
+    if (key === "group") return s.tab_group_label ? [s.tab_group_label] : [];
     return [periodOf(s.last_message_at, now)];
   }
 

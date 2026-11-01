@@ -1,0 +1,235 @@
+// Session groups: the rules on plain strips (groups-model.js) and the plugin's moves on a stand-in
+// workspace (groups.js). The drawing on Obsidian's real tab strip is checked live (tools/live, tabGroups).
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+import Module from "node:module";
+import { loadSrc } from "./helpers/load-src.mjs";
+import { setGlobal } from "./helpers/globals.mjs";
+
+setGlobal("window", { setTimeout: () => 0, clearTimeout() {} });
+
+const realLoad = Module._load;
+class Menu {}
+class Modal { constructor(app) { this.app = app; } open() { this.onOpen && this.onOpen(); } }
+Module._load = (r, p, i) => (r === "obsidian" ? { Menu, Modal, View: class {}, setIcon() {} } : realLoad(r, p, i));
+const model = loadSrc("groups-model");
+const { GroupMethods } = loadSrc("groups");
+Module._load = realLoad;
+const { COLORS, GONE_KEEP_MS, cleanGroups, nextColor, createGroup, runs, joinIndex, changedLeaves, dropChanges, prune, liveGroups,
+        tabOutside } = model;
+
+describe("group model", () => {
+  it("drops malformed saved data and unknown colours", () => {
+    const g = cleanGroups({ groups: { a: { name: " Back\nend ", color: "teal", collapsed: "yes" }, b: null },
+                            members: { x: "a", y: "missing", z: 5 } });
+    assert.deepEqual(g.groups.a, { id: "a", name: "Back end", color: COLORS[0], collapsed: false });
+    assert.deepEqual(g.members, { x: "a" });
+    assert.deepEqual(cleanGroups(null), { groups: {}, members: {}, gone: {} });
+    assert.deepEqual(cleanGroups({ groups: { a: {} }, members: { x: "a" }, gone: { x: 5, y: 6, z: "no" } }).gone, { x: 5 });
+  });
+
+  it("a new group takes the first free colour, then the least used one; groups of gone tabs do not count", () => {
+    const state = { groups: {}, members: {}, gone: {} };
+    const picked = Array.from({ length: COLORS.length + 2 }, (_, i) => {
+      const g = createGroup(state);
+      state.members[`t${i}`] = g.id;
+      return g.color;
+    });
+    assert.deepEqual(picked.slice(0, COLORS.length), COLORS);
+    assert.equal(picked[COLORS.length], COLORS[0]);
+    assert.equal(nextColor({ groups: { a: { id: "a", color: "blue" } }, members: { t: "a" }, gone: {} }), "red");
+    assert.equal(nextColor({ groups: { a: { id: "a", color: "blue" } }, members: { t: "a" }, gone: { t: 1 } }), "blue");
+  });
+
+  it("runs are side-by-side tabs of one group", () => {
+    assert.deepEqual(runs(["n", "a", "b", "c", "d"], { a: "G", b: "G", d: "G", c: "H" }),
+                     [{ group: "G", start: 1, end: 2 }, { group: "H", start: 3, end: 3 }, { group: "G", start: 4, end: 4 }]);
+  });
+
+  it("a joining tab goes right after the group's last tab, or stays when the group is elsewhere", () => {
+    assert.equal(joinIndex(["a", "b", "n", "x"], { a: "G", b: "G" }, "x", "G"), 2);
+    assert.equal(joinIndex(["x", "a", "b"], { a: "G", b: "G" }, "x", "G"), 2);
+    assert.equal(joinIndex(["a", "x"], { a: "G" }, "x", "G"), 1);           // already in place
+    assert.equal(joinIndex(["x", "n"], {}, "x", "G"), null);
+  });
+
+  it("only the dragged tab counts as moved; tabs new to the strip are added", () => {
+    assert.deepEqual(changedLeaves(["a", "b", "x", "y"], ["a", "x", "b", "y"], "x"), { moved: ["x"], added: [] });
+    assert.deepEqual(changedLeaves(["a", "b", "x", "y"], ["a", "x", "b", "y"], null), { moved: [], added: [] });
+    assert.deepEqual(changedLeaves(["a", "b"], ["a", "b"], "a"), { moved: [], added: [] });       // dropped in place
+    assert.deepEqual(changedLeaves(["a", "b"], ["a", "x", "b"], "x"), { moved: ["x"], added: [] }); // from another strip
+    assert.deepEqual(changedLeaves(["a", "b"], ["a", "n", "b"], null), { moved: [], added: ["n"] });
+  });
+
+  it("dropped between two tabs of a group, a tab joins; dragged away from its group, it leaves", () => {
+    const m = { a: "G", b: "G" };
+    assert.deepEqual(dropChanges(["a", "x", "b"], m, ["x"], []), { x: "G" });
+    assert.deepEqual(dropChanges(["x", "a", "b"], m, ["x"], []), {});                // at the edge: stays out
+    assert.deepEqual(dropChanges(["b", "n", "a"], m, ["b"], []), { b: null });       // away from a: leaves
+    assert.deepEqual(dropChanges(["n", "a", "b"], m, ["b"], []), {});                // still next to a
+    assert.deepEqual(dropChanges(["a", "n", "b"], m, [], ["n"]), { n: "G" });        // a new tab inside the group
+    assert.deepEqual(dropChanges(["y", "z"], { y: "H" }, ["y"], []), {});            // alone here: keeps its group
+    assert.deepEqual(dropChanges(["c", "x", "d"], { c: "H", d: "H", x: "G" }, ["x"], []), { x: "H" });
+  });
+
+  it("at a group's edge the tab under the pointer decides: a group's tab joins, a loose tab leaves", () => {
+    assert.deepEqual(dropChanges(["a", "x"], { a: "G" }, ["x"], [], "x", "G"), { x: "G" });          // one-tab group grows
+    assert.deepEqual(dropChanges(["x", "a", "b"], { a: "G", b: "G" }, ["x"], [], "x", "G"), { x: "G" });
+    assert.deepEqual(dropChanges(["a", "x"], { a: "G" }, ["x"], [], "x", ""), {});                   // dropped on a loose tab
+    assert.deepEqual(dropChanges(["a", "x"], { a: "G" }, ["x"], [], "x", undefined), {});            // on the empty strip
+    assert.deepEqual(dropChanges(["a", "x"], { a: "G" }, ["x"], [], "y", "G"), {});                  // not the dragged tab
+    assert.deepEqual(dropChanges(["b", "a", "n"], { a: "G", b: "G" }, ["a"], [], "a", ""), { a: null }); // onto n: leaves
+    assert.deepEqual(dropChanges(["b", "a", "n"], { a: "G", b: "G" }, ["a"], [], "a", "G"), {});        // onto b: stays
+    assert.deepEqual(dropChanges(["a", "x", "h"], { a: "G", h: "H", x: "H" }, ["x"], [], "x", "G"), { x: "G" });
+    assert.deepEqual(dropChanges(["n", "a"], { a: "G" }, ["a"], [], "a", ""), {});                     // the group's only tab
+  });
+
+  it("keeps a missing tab's group for another layout, forgets it after two weeks; a group without tabs goes", () => {
+    const state = { groups: { G: { id: "G" }, H: { id: "H" }, E: { id: "E" } }, members: { a: "G", b: "H" }, gone: {} };
+    assert.equal(prune(state, new Set(["a"]), 1000), true);
+    assert.deepEqual(state.members, { a: "G", b: "H" });
+    assert.deepEqual(state.gone, { b: 1000 });
+    assert.deepEqual(Object.keys(state.groups), ["G", "H"]);
+    assert.deepEqual(liveGroups(state).map((g) => g.id), ["G"]);
+    assert.equal(prune(state, new Set(["a"]), 2000), false);
+    assert.equal(prune(state, new Set(["a", "b"]), 3000), true);   // the layout came back
+    assert.deepEqual(state.gone, {});
+    prune(state, new Set(["a"]), 4000);
+    prune(state, new Set(["a"]), 4000 + GONE_KEEP_MS + 1);
+    assert.deepEqual(state.members, { a: "G" });
+    assert.deepEqual(Object.keys(state.groups), ["G"]);
+  });
+
+  it("folding over the tab in front shows the nearest tab after the group, else before", () => {
+    const m = { a: "G", b: "G" };
+    assert.equal(tabOutside(["n", "a", "b", "z"], m, "G", 1), 3);
+    assert.equal(tabOutside(["n", "a", "b"], m, "G", 2), 0);
+    assert.equal(tabOutside(["a", "b"], m, "G", 0), -1);
+  });
+});
+
+/** A stand-in strip: leaves with ids in a parent that moves children as Obsidian does. */
+function world(ids) {
+  const parent = { children: [], currentTab: 0,
+    removeChild(l) { const i = this.children.indexOf(l); this.children.splice(i, 1); if (this.currentTab >= this.children.length) this.currentTab = this.children.length - 1; },
+    insertChild(i, l) { this.children.splice(i, 0, l); l.parent = this; },
+    selectTabIndex(i) { this.currentTab = i; } };
+  for (const id of ids) parent.insertChild(parent.children.length, { id, tabHeaderEl: {}, parent, detach() {} });
+  const workspace = { iterateAllLeaves(fn) { parent.children.slice().forEach(fn); } };
+  const plugin = Object.create(GroupMethods.prototype);
+  Object.assign(plugin, { app: { workspace }, settings: {}, groups: cleanGroups(null), stripOrder: new Map(),
+                          groupMenus: new WeakSet(), groupsReady: true, saved: 0,
+                          saveData: async () => { plugin.saved++; }, renderGroups() {}, scheduleGroupRender() {},
+                          editGroup() {}, t: (k) => k });
+  plugin.snapshot = () => plugin.stripOrder.set(parent, parent.children.map((l) => l.id));
+  const leaf = (id) => parent.children.find((l) => l.id === id);
+  const order = () => parent.children.map((l) => l.id);
+  return { plugin, parent, leaf, order };
+}
+
+describe("group moves in the strip", () => {
+  it("a tab joining a group moves next to it; the tab in front stays in front", () => {
+    const { plugin, parent, leaf, order } = world(["atlas", "a", "n", "b"]);
+    parent.currentTab = 2;                                  // n in front
+    const g = createGroup(plugin.groups, { name: "Backend" });
+    plugin.joinGroup(leaf("a"), g.id);
+    plugin.joinGroup(leaf("b"), g.id);
+    assert.deepEqual(order(), ["atlas", "a", "b", "n"]);
+    assert.equal(parent.children[parent.currentTab].id, "n");
+    assert.deepEqual(plugin.groups.members, { a: g.id, b: g.id });
+    g.collapsed = true;
+    plugin.joinGroup(leaf("n"), g.id);                       // a tab joining a folded group would vanish
+    assert.equal(g.collapsed, false);
+  });
+
+  it("a tab taken out of the middle goes after the group, and an emptied group is gone", () => {
+    const { plugin, leaf, order } = world(["a", "b", "c", "n"]);
+    const g = createGroup(plugin.groups);
+    for (const id of ["a", "b", "c"]) plugin.joinGroup(leaf(id), g.id);
+    plugin.leaveGroup(leaf("b"));
+    assert.deepEqual(order(), ["a", "c", "b", "n"]);
+    plugin.leaveGroup(leaf("a"));
+    plugin.leaveGroup(leaf("c"));
+    assert.deepEqual(plugin.groups, { groups: {}, members: {}, gone: {} });
+  });
+
+  it("a layout change applies Chrome's drop rule to the dragged tab only", () => {
+    const { plugin, parent, leaf, order } = world(["a", "b", "x", "y"]);
+    const g = createGroup(plugin.groups);
+    plugin.joinGroup(leaf("a"), g.id);
+    plugin.joinGroup(leaf("b"), g.id);
+    plugin.snapshot();
+    const x = leaf("x");
+    parent.removeChild(x);
+    parent.insertChild(1, x);                               // dropped between a and b of a folded group
+    g.collapsed = true;
+    plugin.draggedTab = "x";
+    plugin.onGroupLayout();
+    assert.equal(plugin.groups.members.x, g.id);
+    assert.equal(g.collapsed, false);
+    assert.equal(plugin.groups.members.y, undefined);
+    assert.deepEqual(order(), ["a", "x", "b", "y"]);
+  });
+
+  it("a tab dropped where it stood follows the tab under the pointer; a cancelled drag changes nothing", () => {
+    const { plugin, leaf, order } = world(["n", "a", "b"]);
+    const g = createGroup(plugin.groups);
+    plugin.joinGroup(leaf("a"), g.id);
+    plugin.joinGroup(leaf("b"), g.id);
+    const drop = (id, over, dropped = true) => {
+      plugin.snapshot();
+      Object.assign(plugin, { draggedTab: id, dragOver: over, droppedTab: dropped ? id : null, dragging: false });
+      plugin.onGroupLayout();
+    };
+    drop("n", g.id, false);                                  // Escape over the chip
+    assert.equal(plugin.groups.members.n, undefined);
+    drop("n", g.id);                                         // onto the chip: joins at the group's start
+    assert.equal(plugin.groups.members.n, g.id);
+    assert.deepEqual(order(), ["n", "a", "b"]);
+    assert.equal(plugin.droppedTab, null);
+    delete plugin.groups.members.n;                          // loose again, in the same place
+    drop("a", "");                                           // the first tab onto the loose tab beside it
+    assert.equal(plugin.groups.members.a, undefined);
+    assert.equal(plugin.groups.members.b, g.id);
+  });
+
+  it("a closed tab's group is no longer offered; moving to another group keeps the old one whole", () => {
+    const { plugin, parent, leaf, order } = world(["a", "b", "c", "d"]);
+    const g = createGroup(plugin.groups, { name: "G" });
+    const h = createGroup(plugin.groups, { name: "H" });
+    for (const id of ["a", "b", "c"]) plugin.joinGroup(leaf(id), g.id);
+    plugin.joinGroup(leaf("b"), h.id);                      // from the middle of G to H
+    assert.deepEqual(order(), ["a", "c", "b", "d"]);
+    plugin.joinGroup(leaf("a"), h.id);
+    assert.deepEqual(order(), ["c", "b", "a", "d"]);
+    assert.deepEqual(Object.keys(plugin.groups.groups).sort(), [g.id, h.id].sort());
+    plugin.snapshot();
+    parent.removeChild(leaf("c"));                          // G's last tab closes
+    plugin.onGroupLayout();
+    const titles = [];
+    const item = () => { const it = { setSection: () => it, setTitle: (t) => { titles.push(t); return it; }, setIcon: () => it,
+                                      onClick: () => it, setSubmenu: () => ({ addItem: (fn) => fn(item()) }) }; return it; };
+    plugin.addGroupItems({ addItem: (fn) => fn(item()) }, leaf("d"));
+    assert.ok(!titles.includes("G"), titles.join());
+  });
+
+  it("the menu offers a new group, the other groups and leaving, once per menu", () => {
+    const { plugin, leaf } = world(["a", "b"]);
+    const g = createGroup(plugin.groups, { name: "Backend" });
+    const docs = createGroup(plugin.groups, { name: "Docs" });
+    plugin.joinGroup(leaf("a"), g.id);
+    plugin.joinGroup(leaf("b"), docs.id);
+    const titles = [];
+    const sub = [];
+    const item = (into) => {
+      const it = { setSection: () => it, setTitle: (t) => { into.push(t); return it; }, setIcon: () => it, onClick: () => it,
+                   setSubmenu: () => ({ addItem: (fn) => fn(item(sub)) }) };
+      return it;
+    };
+    const menu = { addItem: (fn) => fn(item(titles)) };
+    plugin.addGroupItems(menu, leaf("a"));
+    plugin.addGroupItems(menu, leaf("a"));
+    assert.deepEqual(titles, ["group.menu.new", "group.menu.move", "group.menu.remove"]);
+    assert.deepEqual(sub, ["Docs"]);
+  });
+});

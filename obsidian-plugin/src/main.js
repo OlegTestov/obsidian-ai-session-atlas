@@ -28,6 +28,8 @@ import { NotifyMethods } from "./notify";
 import { RestoreMethods } from "./restore";
 import { StartupMethods } from "./startup";
 import { OpenPathMethods } from "./open-path";
+import { GroupMethods } from "./groups";
+import { GroupStripMethods } from "./groups-strip";
 import { AtlasSettingTab, DEFAULT_SETTINGS } from "./settings";
 
 /** A port written into the dev marker (a live test Obsidian next to the test vault), else none. */
@@ -79,6 +81,7 @@ class SessionAtlasPlugin extends Plugin {
     this.app.workspace.onLayoutReady(() => this.ensureServer().catch(() => {}));
     this.installExplorerClicks();
     this.patchCloseTabCommand();
+    this.initGroups();
 
     // Messages come from the catalog iframe. The origin is checked strictly: the page shows text
     // from other sessions, and only the catalog itself may trigger commands.
@@ -255,6 +258,12 @@ class SessionAtlasPlugin extends Plugin {
       done.then(() => this.replyTabs(event.source)).catch((error) => console.error("AI Session Atlas:", error));
       return;
     }
+    if (data.type === "group-menu") {
+      if (Number.isInteger(data.ptyPid) && data.ptyPid > 1) {
+        this.groupMenuForPage(event.source, data).catch((error) => console.error("AI Session Atlas:", error));
+      }
+      return;
+    }
     if (data.type === "interrupt") {
       this.interrupt(event.source, data);
       return;
@@ -281,6 +290,7 @@ class SessionAtlasPlugin extends Plugin {
       health,
       // The page offers only the agents enabled here (Settings → Agents).
       agents: { claude: this.agentEnabled("claude"), codex: this.agentEnabled("codex") },
+      groups: true,                    // tabs can be put into session groups from the page
     }, this.atlasOrigin());
   }
 
@@ -290,6 +300,8 @@ class SessionAtlasPlugin extends Plugin {
    */
   tabInfo({ leaf, pid, title }) {
     const info = { ptyPid: pid, title };
+    const group = this.tabGroupInfo(leaf);
+    if (group) info.group = group;
     if (this.tabAgent(leaf) === "codex") {
       info.agent = "codex";
       info.screen = codexScreenState(this.screenLines(leaf));
@@ -322,7 +334,7 @@ class SessionAtlasPlugin extends Plugin {
 // Methods from the other files are mixed into the plugin class and run with the plugin as `this`.
 for (const methods of [TerminalMethods, InputMethods, CodexInputMethods, NotifyMethods, RestoreMethods, HeldMethods,
                        AgentMethods, GuardMethods, ExplorerMethods, RuntimeMethods, StatusLineMethods, ReloadMethods,
-                       StartupMethods, OpenPathMethods]) {
+                       StartupMethods, OpenPathMethods, GroupMethods, GroupStripMethods]) {
   for (const name of Object.getOwnPropertyNames(methods.prototype)) {
     if (name === "constructor") continue;
     Object.defineProperty(SessionAtlasPlugin.prototype, name,

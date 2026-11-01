@@ -46,6 +46,9 @@ server on `127.0.0.1`, and nothing is sent anywhere unless you turn on the optio
   asks for confirmation. Paths the agents print (`~/…`, `/…`, `src/main.rs:12`) are links: a click opens
   the file in its default app (a note of this vault in Obsidian, a folder in Finder), ⌘-click shows it
   in Finder, and the right-click menu can copy the path.
+- **Session groups.** Agent tabs (other tabs too, from the menu of the tab in front) go into named, coloured groups, as Chrome's tab
+  groups: a chip before the group's tabs, a line of its colour under them, one click folds the group
+  to its chip. Active shows each card's group and filters by it. See below.
 - **Notifications.** A notice when a session finishes its turn or waits for a decision, and a macOS
   notification when Obsidian is in the background. Notices stack, one per session; they hide after
   10 s, 30 s or 1 min, or stay until you click or close them, and go by themselves once the session
@@ -120,6 +123,22 @@ terminal tab with that agent's ordinary resume. Checked with Claude Code 2.1.289
   once, in the source session.
 - An agent turned off in **Settings → AI Session Atlas → Agents** is shown disabled in the menu.
   Outside Obsidian (in a browser) the menu creates the session and shows the command to run.
+
+### Session groups
+
+- **Make a group:** right-click a tab → **Add to new group**. The group editor opens: type a name, pick
+  one of nine colours. **Add to group** puts another tab into an existing group; the tab moves next to
+  the group's tabs. **Remove from group** takes it out. The same menu opens from the group label on an
+  Active card (**+ Group** on a card without one).
+- **The chip:** a click folds the group to its chip (with the number of tabs) or unfolds it; a
+  right-click or Shift+F10 opens the editor: name, colour, a new Claude Code or Codex tab in the group,
+  fold, **Ungroup**, **Close group** (asks once, then closes the group's tabs and ends their agents).
+  A folded group never hides the tab in front: the nearest tab outside the group comes forward first.
+- **Dragging:** a tab dropped onto a group's tab or its chip joins the group, even a group of one tab;
+  a tab dropped onto a tab outside the group, or dragged away from it, leaves.
+- Groups are kept in the plugin's data and come back after Obsidian restarts. A group whose last tab
+  closes is gone. Commands: **Add tab to a new group**, **Remove tab from its group**, **Collapse or
+  expand the tab's group** (bindable to hotkeys).
 
 ## Requirements
 

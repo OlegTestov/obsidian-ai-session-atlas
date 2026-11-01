@@ -197,7 +197,8 @@ class AgentMethods {
 
   /**
    * An agent tab. Without opts it is the ribbon button: "Claude Code"/"Codex" title, vault folder.
-   * opts: {cwd, seed, label} is a session from the catalog, labeled with its title.
+   * opts: {cwd, seed, label} is a session from the catalog, labeled with its title; {group} puts the tab
+   * into that session group.
    */
   async openAgent(kind, opts = {}) {
     try {
@@ -214,6 +215,7 @@ class AgentMethods {
         state: { kind, instance, cwd: opts.cwd || this.getVaultPath(), title: opts.label || AGENTS[kind],
                  command: agentArgs(script, kind, instance, opts.seed || null)[3] },
       });
+      if (opts.group) this.joinGroup(leaf, opts.group);
       this.app.workspace.revealLeaf(leaf);
       if (opts.label) new Notice(this.t("terminal.opened", { label: opts.label }));
       return true;

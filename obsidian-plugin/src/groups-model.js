@@ -32,7 +32,17 @@ function cleanGroups(raw) {
 }
 
 function cleanName(name) {
-  return String(name || "").replace(/[\r\n\t]+/g, " ").trim().slice(0, MAX_NAME);
+  return (typeof name === "string" ? name : "").replace(/[\r\n\t]+/g, " ").trim().slice(0, MAX_NAME);
+}
+
+/**
+ * Where the editor opens: below the tab strip, or above it when the window has no room below (a pane
+ * at the bottom), never above the window's top.
+ */
+function editorTop(stripTop, stripBottom, height, viewHeight) {
+  const below = stripBottom + 6;
+  if (below + height <= viewHeight - 8) return below;
+  return Math.max(8, stripTop - height - 6);
 }
 
 /** The first colour no group has; when all are taken, the least used one. */
@@ -183,4 +193,4 @@ function tabOutside(strip, members, group, current) {
 }
 
 export { COLORS, MAX_NAME, GONE_KEEP_MS, liveGroups, dropIfEmpty, emptyGroups, cleanGroups, cleanName, nextColor, newGroupId, createGroup, membersOf,
-         runs, joinIndex, changedLeaves, dropChanges, prune, tabOutside };
+         runs, joinIndex, changedLeaves, dropChanges, prune, tabOutside, editorTop };

@@ -2,7 +2,7 @@
 // Obsidian's Menu cannot hold a text field, so this is a small popover of its own. Changes apply as
 // you type or click; Escape, Enter or a click outside closes it.
 import { setIcon } from "obsidian";
-import { COLORS, MAX_NAME, cleanName } from "./groups-model";
+import { COLORS, MAX_NAME, cleanName, editorTop } from "./groups-model";
 
 const EDITOR = "sa-group-editor";
 // Open editors' close functions: the plugin closes them on unload (registered once per plugin).
@@ -97,11 +97,11 @@ function openGroupEditor(plugin, id, anchor, { focusName = false } = {}) {
     const r = anchor.getBoundingClientRect();
     // Under a chip: below the whole tab strip, so the group's line under it stays in sight.
     const strip = typeof anchor.closest === "function" ? anchor.closest(".workspace-tab-header-container") : null;
-    const below = strip ? Math.max(r.bottom, strip.getBoundingClientRect().bottom) : r.bottom;
+    const s = strip ? strip.getBoundingClientRect() : r;
     const width = box.offsetWidth;
     const view = doc.defaultView || window;
     box.setCssProps({ "--sa-editor-left": `${Math.max(8, Math.min(view.innerWidth - width - 8, r.left))}px`,
-                      "--sa-editor-top": `${below + 6}px` });
+                      "--sa-editor-top": `${editorTop(Math.min(r.top, s.top), Math.max(r.bottom, s.bottom), box.offsetHeight, view.innerHeight)}px` });
   };
   place();
 

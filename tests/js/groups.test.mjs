@@ -16,9 +16,21 @@ const model = loadSrc("groups-model");
 const { GroupMethods } = loadSrc("groups");
 Module._load = realLoad;
 const { COLORS, GONE_KEEP_MS, cleanGroups, nextColor, createGroup, runs, joinIndex, changedLeaves, dropChanges, prune, liveGroups,
-        tabOutside } = model;
+        tabOutside, editorTop } = model;
 
 describe("group model", () => {
+  it("a saved name that is not a string does not stop the plugin", () => {
+    const state = cleanGroups({ groups: { g: { name: { toString: null }, color: "red" }, h: { name: 42 } } });
+    assert.equal(state.groups.g.name, "");
+    assert.equal(state.groups.h.name, "");
+  });
+
+  it("the editor opens below the tab strip, or above it when the window has no room below", () => {
+    assert.equal(editorTop(30, 40, 200, 900), 46);
+    assert.equal(editorTop(700, 740, 200, 900), 494);       // a bottom pane: above its strip
+    assert.equal(editorTop(100, 140, 2000, 900), 8);         // taller than the window: from the top
+  });
+
   it("drops malformed saved data and unknown colours", () => {
     const g = cleanGroups({ groups: { a: { name: " Back\nend ", color: "teal", collapsed: "yes" }, b: null },
                             members: { x: "a", y: "missing", z: 5 } });
@@ -191,6 +203,58 @@ describe("group moves in the strip", () => {
     drop("a", "");                                           // the first tab onto the loose tab beside it
     assert.equal(plugin.groups.members.a, undefined);
     assert.equal(plugin.groups.members.b, g.id);
+  });
+
+  it("a cancelled drag leaves nothing behind: a later layout change does not group that tab", () => {
+    const { plugin, parent, leaf } = world(["a", "x"]);
+    const g = createGroup(plugin.groups);
+    plugin.joinGroup(leaf("a"), g.id);
+    plugin.snapshot();
+    Object.assign(plugin, { draggedTab: "x", dragging: true, dragOver: g.id, droppedTab: null });
+    plugin.endTabDrag();                                     // Escape over a's header: no drop
+    parent.insertChild(2, { id: "y", tabHeaderEl: {}, parent, detach() {} });   // a new tab after x
+    plugin.onGroupLayout();
+    assert.equal(plugin.groups.members.x, undefined);
+    assert.equal(plugin.draggedTab, null);
+  });
+
+  it("a group change waiting to be saved is written when the plugin unloads", async () => {
+    const { plugin } = world(["a"]);
+    createGroup(plugin.groups, { name: "Renamed" });
+    plugin.saveGroups();                                     // the debounced write has not run yet
+    assert.equal(plugin.saved, 0);
+    plugin.flushGroups();
+    assert.equal(plugin.saved, 1);
+    plugin.flushGroups();                                    // nothing pending: no second write
+    assert.equal(plugin.saved, 1);
+  });
+
+  it("unloading the plugin writes the pending change and lets go of every document", () => {
+    const { plugin } = world(["a"]);
+    const onUnload = [];
+    const doc = { on: new Map(), addEventListener(t, f) { this.on.set(t, f); }, removeEventListener(t, f) { if (this.on.get(t) === f) this.on.delete(t); } };
+    setGlobal("document", doc);
+    Object.assign(plugin.app.workspace, { on: () => ({}), onLayoutReady() {} });
+    Object.assign(plugin, { register: (fn) => onUnload.push(fn), registerEvent() {}, addCommand() {}, markHeader() {} });
+    plugin.initGroups();
+    assert.equal(doc.on.size, 4);
+    createGroup(plugin.groups, { name: "Renamed" });
+    plugin.saveGroups();
+    for (const fn of onUnload) fn();
+    assert.equal(plugin.saved, 1);
+    assert.equal(doc.on.size, 0);
+  });
+
+  it("a closed popout's document is let go: its drag listeners are removed", () => {
+    const { plugin } = world(["a"]);
+    const doc = { on: new Map(), addEventListener(t, f) { this.on.set(t, f); }, removeEventListener(t, f) { if (this.on.get(t) === f) this.on.delete(t); } };
+    plugin.watchTabDrags(doc);
+    plugin.watchTabDrags(doc);                               // once per document
+    assert.deepEqual([...doc.on.keys()].sort(), ["dragend", "dragover", "dragstart", "drop"]);
+    plugin.unwatchTabDrags(doc);
+    assert.equal(doc.on.size, 0);
+    plugin.watchTabDrags(doc);                               // the same window opened again
+    assert.equal(doc.on.size, 4);
   });
 
   it("a closed tab's group is no longer offered; moving to another group keeps the old one whole", () => {

@@ -23,6 +23,8 @@ class ReloadMethods {
     this.reloading = true;
     // Not from inside our own handler: unloading would cut it off midway.
     window.setTimeout(async () => {
+      // A group change waiting for its debounced save is on disk before the new instance reads it.
+      if (typeof this.flushGroups === "function") await this.flushGroups();
       await plugins.disablePlugin(id);
       await plugins.enablePlugin(id);
     }, 50);

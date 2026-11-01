@@ -23,6 +23,8 @@ class GroupMethods {
     // Popout windows have their own documents.
     this.watchTabDrags(document);
     this.registerEvent(ws.on("window-open", (win) => this.watchTabDrags(win && win.doc)));
+    this.registerEvent(ws.on("window-close", (win) => this.unwatchTabDrags(win && win.doc)));
+    this.register(() => { for (const doc of [...(this.dragDocs ? this.dragDocs.keys() : [])]) this.unwatchTabDrags(doc); });
     ws.onLayoutReady(() => {
       this.groupsReady = true;
       if (typeof ws.iterateAllLeaves === "function") {
@@ -31,6 +33,8 @@ class GroupMethods {
       this.onGroupLayout();
     });
     this.register(() => this.clearGroupMarks());
+    // A change still waiting for the debounced write is written now: a reload reads the saved data.
+    this.register(() => this.flushGroups());
     for (const [id, run] of [["group-new", (leaf) => this.newGroupFor(leaf)],
                              ["group-remove", (leaf) => this.leaveGroup(leaf)],
                              ["group-fold", (leaf) => this.toggleGroupFolded(this.groups.members[leaf.id])]]) {
@@ -47,9 +51,16 @@ class GroupMethods {
   saveGroups() {
     this.settings.tabGroups = this.groups;
     window.clearTimeout(this.groupSaveTimer);
-    this.groupSaveTimer = window.setTimeout(() => {
-      this.saveData(this.settings).catch((error) => console.error("AI Session Atlas: could not save groups", error));
-    }, SAVE_DELAY_MS);
+    this.groupSavePending = true;
+    this.groupSaveTimer = window.setTimeout(() => this.flushGroups(), SAVE_DELAY_MS);
+  }
+
+  /** Writes a pending change now; the promise lets the plugin's own reload wait for the disk. */
+  flushGroups() {
+    window.clearTimeout(this.groupSaveTimer);
+    if (!this.groupSavePending) return Promise.resolve();
+    this.groupSavePending = false;
+    return this.saveData(this.settings).catch((error) => console.error("AI Session Atlas: could not save groups", error));
   }
 
   /** The plugin unloads: the strip looks as Obsidian draws it. */
@@ -90,20 +101,33 @@ class GroupMethods {
     this.scheduleGroupRender();
   }
 
+  /** Listeners per document, removed when its popout window closes (else they keep it in memory). */
   watchTabDrags(doc) {
-    if (!this.dragDocs) this.dragDocs = new WeakSet();
+    if (!this.dragDocs) this.dragDocs = new Map();
     if (!doc || this.dragDocs.has(doc)) return;
-    this.dragDocs.add(doc);
-    this.registerDomEvent(doc, "dragstart", (event) => this.noteTabDrag(event), { capture: true });
-    this.registerDomEvent(doc, "dragover", (event) => this.noteDragOver(event), { capture: true });
-    this.registerDomEvent(doc, "drop", () => { if (this.dragging) this.droppedTab = this.draggedTab; }, { capture: true });
-    this.registerDomEvent(doc, "dragend", () => this.endTabDrag(), { capture: true });
+    const on = [["dragstart", (event) => this.noteTabDrag(event)],
+                ["dragover", (event) => this.noteDragOver(event)],
+                ["drop", () => { if (this.dragging) this.droppedTab = this.draggedTab; }],
+                ["dragend", () => this.endTabDrag()]];
+    for (const [type, fn] of on) doc.addEventListener(type, fn, true);
+    this.dragDocs.set(doc, on);
   }
 
-  /** A drop that leaves the order as it was changes no layout: the drop rule runs here instead. */
+  unwatchTabDrags(doc) {
+    const on = doc && this.dragDocs && this.dragDocs.get(doc);
+    if (!on) return;
+    for (const [type, fn] of on) doc.removeEventListener(type, fn, true);
+    this.dragDocs.delete(doc);
+  }
+
+  /**
+   * A drop that leaves the order as it was changes no layout: the drop rule runs here instead. A
+   * cancelled drag (no drop) is forgotten at once, or a later layout change would apply it.
+   */
   endTabDrag() {
     this.dragging = false;
     if (this.droppedTab) window.setTimeout(() => { if (this._loaded !== false) this.onGroupLayout(); }, 0);
+    else this.draggedTab = this.dragOver = null;
   }
 
   /** The tab under the pointer while a tab is dragged: its group decides a drop at a group's edge. */

@@ -40,7 +40,7 @@ jobs:
           path: test-results/
           retention-days: 7
   test:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -59,9 +59,10 @@ jobs:
         run: npm test
       - name: Build
         run: npm run build
-  # The oldest supported: python3 from Command Line Tools 13 on macOS 12 is 3.8.
+  # The oldest supported: python3 from Command Line Tools 13 on macOS 12 is 3.8. macOS 14 runners are
+  # retired on 02.11.2026, so the jobs run on macOS 15.
   python38:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

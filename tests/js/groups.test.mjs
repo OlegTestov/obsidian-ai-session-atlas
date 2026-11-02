@@ -140,6 +140,25 @@ function world(ids) {
 }
 
 describe("group moves in the strip", () => {
+  it("ordinary tabs at a group's boundary keep their position and do not join the next group", () => {
+    const { plugin, leaf, order } = world(["a", "b", "new", "c", "d"]);
+    plugin.groups.members = { a: "G", b: "G", c: "H", d: "H" };
+    plugin.placeOutsideGroup(leaf("new"));
+    assert.deepEqual(order(), ["a", "b", "new", "c", "d"]);
+    assert.equal(plugin.groups.members.new, undefined);
+  });
+  for (const assigned of [false, true]) it(`ordinary agent tabs stay outside groups (layout already ran: ${assigned})`, () => {
+    const { plugin, leaf, order } = world(["a", "new", "b", "note"]);
+    const g = createGroup(plugin.groups);
+    plugin.groups.members = { a: g.id, b: g.id, ...(assigned ? { new: g.id } : {}) };
+    plugin.stripOrder.set(leaf("a").parent, ["a", "b", "note"]);
+    plugin.placeOutsideGroup(leaf("new"));
+    plugin.onGroupLayout();
+    assert.deepEqual(order(), ["a", "b", "new", "note"]);
+    assert.deepEqual(plugin.groups.members, { a: g.id, b: g.id });
+    plugin.placeOutsideGroup(leaf("note"));
+    assert.deepEqual(order(), ["a", "b", "new", "note"]);
+  });
   it("a tab joining a group moves next to it; the tab in front stays in front", () => {
     const { plugin, parent, leaf, order } = world(["atlas", "a", "n", "b"]);
     parent.currentTab = 2;                                  // n in front

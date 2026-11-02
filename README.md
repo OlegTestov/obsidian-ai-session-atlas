@@ -40,6 +40,7 @@ server on `127.0.0.1`, and nothing is sent anywhere unless you turn on the optio
   down by agent (Claude Code, Codex), model, domain, topic, session, tool, skill and subagent, plus a
   weekly rhythm heatmap. Claude Code replies are priced at Anthropic API prices, Codex replies at
   OpenAI API prices.
+- **Updates at a glance.** A short, visual “What’s new” summary once after an update. Reopen it from the command palette; automatic summaries can be turned off in settings.
 - **Agent terminals.** Ribbon buttons and commands open Claude Code or Codex in a terminal tab inside
   Obsidian. Each tab remembers the session it holds; after Obsidian restarts every agent tab brings its
   session back by itself, one at a time, without opening each tab. Closing a tab with a running agent

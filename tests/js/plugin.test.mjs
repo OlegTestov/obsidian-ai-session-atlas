@@ -1387,6 +1387,23 @@ describe("agent tabs", () => {
     assert.equal(w[2], "codex");
     assert.equal(w.length, 4);
   });
+  it("ordinary agent launches leave groups before loading; explicit group launches join after loading", async () => {
+    const outside = agentPlugin.placeOutsideGroup, join = agentPlugin.joinGroup;
+    const calls = [];
+    agentPlugin.placeOutsideGroup = () => calls.push(["outside", viewStates.length]);
+    agentPlugin.joinGroup = (_leaf, id) => calls.push([id, viewStates.length]);
+    try {
+      for (const kind of ["claude", "codex"]) {
+        const before = viewStates.length;
+        await agentPlugin.openAgent(kind);
+        await agentPlugin.openAgent(kind, { group: "G" });
+        assert.deepEqual(calls.splice(0), [["outside", before], ["G", before + 2]]);
+      }
+    } finally {
+      agentPlugin.placeOutsideGroup = outside;
+      agentPlugin.joinGroup = join;
+    }
+  });
   it("no script: nothing opens, and the notice says how to fix it", async () => {
     fs.rmSync(scriptPath);
     notices.length = 0;

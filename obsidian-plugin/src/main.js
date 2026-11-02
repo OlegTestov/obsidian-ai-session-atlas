@@ -28,6 +28,7 @@ import { NotifyMethods } from "./notify";
 import { RestoreMethods } from "./restore";
 import { StartupMethods } from "./startup";
 import { OpenPathMethods } from "./open-path";
+import { WhatsNewMethods } from "./whats-new";
 import { GroupMethods } from "./groups";
 import { GroupStripMethods } from "./groups-strip";
 import { AtlasSettingTab, DEFAULT_SETTINGS } from "./settings";
@@ -82,6 +83,7 @@ class SessionAtlasPlugin extends Plugin {
     this.installExplorerClicks();
     this.patchCloseTabCommand();
     this.initGroups();
+    this.initWhatsNew(saved);
 
     // Messages come from the catalog iframe. The origin is checked strictly: the page shows text
     // from other sessions, and only the catalog itself may trigger commands.
@@ -334,7 +336,7 @@ class SessionAtlasPlugin extends Plugin {
 // Methods from the other files are mixed into the plugin class and run with the plugin as `this`.
 for (const methods of [TerminalMethods, InputMethods, CodexInputMethods, NotifyMethods, RestoreMethods, HeldMethods,
                        AgentMethods, GuardMethods, ExplorerMethods, RuntimeMethods, StatusLineMethods, ReloadMethods,
-                       StartupMethods, OpenPathMethods, GroupMethods, GroupStripMethods]) {
+                       StartupMethods, OpenPathMethods, GroupMethods, GroupStripMethods, WhatsNewMethods]) {
   for (const name of Object.getOwnPropertyNames(methods.prototype)) {
     if (name === "constructor") continue;
     Object.defineProperty(SessionAtlasPlugin.prototype, name,

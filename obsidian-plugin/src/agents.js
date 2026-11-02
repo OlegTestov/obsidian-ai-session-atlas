@@ -209,6 +209,7 @@ class AgentMethods {
       }
       const instance = newInstanceId(kind);
       const leaf = this.app.workspace.getLeaf("tab");
+      if (!opts.group) this.placeOutsideGroup(leaf);
       await leaf.setViewState({
         type: AGENT_VIEW_TYPE,
         active: true,

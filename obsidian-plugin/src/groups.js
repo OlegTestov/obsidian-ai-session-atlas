@@ -181,6 +181,23 @@ class GroupMethods {
     if (at >= 0 && typeof parent.selectTabIndex === "function") parent.selectTabIndex(at);
   }
 
+  /** Ordinary agent launches must not inherit the active tab's group by insertion position. */
+  placeOutsideGroup(leaf) {
+    if (!this.groups || !leaf) return;
+    const leaves = leaf.parent && leaf.parent.children;
+    if (!Array.isArray(leaves)) return;
+    const at = leaves.indexOf(leaf);
+    if (at < 0) return;
+    const members = this.groups.members;
+    const left = leaves[at - 1], right = leaves[at + 1];
+    const group = members[leaf.id] || (left && right && members[left.id] === members[right.id] && members[left.id]);
+    if (!group) return;
+    // Layout events may already have assigned membership, or may still be pending.
+    const index = joinIndex(leaves.map((l) => l.id), members, leaf.id, group);
+    if (index !== null) this.moveLeafTo(leaf, index);
+    this.leaveGroup(leaf);
+  }
+
   joinGroup(leaf, id) {
     const group = this.groups.groups[id];
     if (!leaf || !group || this.groups.members[leaf.id] === id) return;

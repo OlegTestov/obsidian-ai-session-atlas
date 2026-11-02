@@ -7,6 +7,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.6.0] - 2026-11-02
+
+### Added
+
+- A quick **What’s new** summary after updates: two short highlights with a visual guide, in the
+  plugin’s language (English or Russian). Shown once per version to existing users; first installs
+  stay quiet. Reopen it from the command palette, or turn off automatic summaries in settings.
+
+### Fixed
+
+- Claude Code and Codex opened from the ribbon or command palette stay outside session groups,
+  immediately after the current group. Opening from a group's editor still adds the tab to that group.
+
 ## [2.5.0] - 2026-11-01
 
 ### Added

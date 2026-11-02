@@ -963,6 +963,20 @@ JS_MUT = [
   ' && !(pointed && over === ""))) continue;', ")) continue;"),
  ("groups: any tab, not only the dragged one, follows the pointer", "obsidian-plugin/src/groups-model.js",
   "    const pointed = leaf === dragged;", "    const pointed = true;"),
+ ("updates: stale layout callback writes settings", "obsidian-plugin/src/whats-new.js",
+  "    if (this._loaded === false) return;", ""),
+ ("updates: first install shows old news", "obsidian-plugin/src/whats-new.js",
+  "!Object.keys(saved).length || ", " "),
+ ("updates: opt-out is ignored", "obsidian-plugin/src/whats-new.js",
+  "saved.showWhatsNew === false", "false"),
+ ("updates: repeat update shown again", "obsidian-plugin/src/whats-new.js",
+  "different < 0 || current[different] < previous[different]", "different >= 0 && current[different] < previous[different]"),
+ ("updates: marker not advanced", "obsidian-plugin/src/whats-new.js",
+  "this.settings.lastSeenVersion = this.manifest.version;", "this.settings.lastSeenVersion = \"0.0.0\";"),
+ ("updates: checkpoint not saved", "obsidian-plugin/src/whats-new.js",
+  "await this.saveData(this.settings);", ""),
+ ("updates: unload still opens modal", "obsidian-plugin/src/whats-new.js",
+  "decision === \"show\" && this._loaded !== false", "decision === \"show\""),
  ("groups: a cancelled drag is kept for the next layout change", "obsidian-plugin/src/groups.js",
   "    else this.draggedTab = this.dragOver = null;", ""),
  ("groups: unload does not write a pending change", "obsidian-plugin/src/groups.js",
@@ -1537,6 +1551,7 @@ JS_MUT = [
 
 # Node test files that cover each plugin/page source; the first matching prefix wins.
 JS_TESTS = [
+    ("obsidian-plugin/src/whats-new.js", ["tests/js/whats-new.test.mjs"]),
     ("obsidian-plugin/src/pty.js", ["tests/js/pty.test.mjs"]),
     ("obsidian-plugin/src/startup.js", ["tests/js/startup.test.mjs"]),
     ("obsidian-plugin/src/term-links.js", ["tests/js/term-links.test.mjs"]),

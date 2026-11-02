@@ -322,3 +322,25 @@ body.theme-dark {
   color: var(--icon-color);
   --icon-size: var(--icon-s);
 }
+
+/* A short, readable release summary. All colours follow the user's theme. */
+.modal.sa-updates { width: min(520px, calc(100vw - 32px)); }
+.sa-updates .modal-content { margin-top: 0; }
+.sa-updates-version { color: var(--text-muted); font-size: var(--font-ui-small); margin: 0 0 20px; }
+.sa-update-card { padding: 18px; border: 1px solid var(--background-modifier-border); border-radius: 12px;
+  background: var(--background-secondary); }
+.sa-update-icon { display: inline-flex; color: var(--interactive-accent); margin-bottom: 8px; }
+.sa-updates h3 { margin: 0 0 8px; font-size: var(--font-ui-medium); }
+.sa-updates p { line-height: 1.5; }
+.sa-update-card p, .sa-update-news p { color: var(--text-muted); margin: 0; font-size: var(--font-ui-small); }
+.sa-update-diagram { display: grid; gap: 10px; margin-top: 18px; }
+.sa-update-example { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center;
+  gap: 10px; font-size: var(--font-ui-small); }
+.sa-update-arrow { color: var(--text-faint); }
+.sa-update-tab { padding: 7px 10px; border: 1px solid var(--background-modifier-border); border-radius: 6px;
+  background: var(--background-primary); text-align: center; }
+.sa-update-group { border-color: var(--interactive-accent); color: var(--text-accent); }
+.sa-update-news { margin: 20px 0; }
+.sa-update-news .sa-update-icon { float: left; margin: 0 10px 0 0; }
+.sa-update-actions { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-top: 24px; }
+.sa-update-actions a { font-size: var(--font-ui-small); }

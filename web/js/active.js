@@ -107,7 +107,7 @@ function renderActive(skipKey, force) {
   refreshFilterButtons(skipKey);
   document.querySelectorAll(".mode button").forEach(b =>
     b.setAttribute("aria-pressed", String(b.dataset.mode === activeMode)));
-  const closed = () => [closedSection()].filter(Boolean);
+  const closed = () => [backgroundSection(), closedSection()].filter(Boolean);
   // An empty grid is not the cards of the last signature: clearing a filter must draw them again.
   if (!activeSessions.length || !shown.length) lastSignature = "";
   if (!activeSessions.length) {
@@ -130,7 +130,7 @@ function renderActive(skipKey, force) {
     [...justSent].map(([sid, sent]) => [sid, AtlasLogic.deliveryState(
       activeSessions.find(x => x.session_id === sid) || {}, sent, Date.now())]), [...dialogs], [...dialogNotes], [...dialogAnswers.values()], [...stopNotes], [...commandOutputs], feedSid, pinnedCards, hiddenCards,
     [...fullReplies.keys()], [...attachments].map(([k, v]) => [k, v.length]),
-    recentClosed, agentPick.active, closedOpen, [...closedNotes], [...planForms], [...freeModes],
+    recentClosed, backgroundJobs, [...backgroundNotes], agentPick.active, closedOpen, [...closedNotes], [...planForms], [...freeModes],
     [...planTexts].map(([k, v]) => [k, v.name, (v.text || "").length])]);
   if (!force && signature === lastSignature && Date.now() - lastRenderAt < RERENDER_EVERY_MS) return;
   lastSignature = signature;

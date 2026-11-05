@@ -309,14 +309,18 @@ def test_api_follows_the_job(atlas_env, write_session, sessions, live_server, mo
     _parked(sessions)
     monkeypatch.setattr(active, "SESSIONS_DIR", sessions.folder)
     monkeypatch.setattr(server, "_active_cached", {"at": 0.0, "sessions": None})
+    monkeypatch.setattr(server, "_background_cached", {"at": 0.0, "jobs": None})
     base, _ = live_server
-    # The tab closed, the job runs on: it is offered once, as `claude attach` (`--resume` refuses
-    # a session running in the background), and so is its parent's resume.
+    # The tab closed, the job runs on: it is listed once, under "In the background" (not as
+    # recently closed), and opening it is `claude attach` (`--resume` refuses a running job).
     monkeypatch.setattr(active, "process_table",
                         lambda: {k: v for k, v in TABLE.items() if k != 100})
     with urllib.request.urlopen(f"{base}/api/active", timeout=10) as r:
         data = json.loads(r.read())
-    assert data["sessions"] == [] and [c["session_id"] for c in data["recent_closed"]] == [JOB]
+    assert data["sessions"] == [] and data["recent_closed"] == []
+    assert [(j["job_id"], j["session_id"]) for j in data["background_jobs"]] == [(JOB[:8], JOB)]
+    with urllib.request.urlopen(f"{base}/api/active?agent=codex", timeout=10) as r:
+        assert json.loads(r.read())["background_jobs"] == []
     for sid in (JOB, PARENT):
         with urllib.request.urlopen(f"{base}/api/session/{sid}", timeout=10) as r:
             assert json.loads(r.read())["actions"]["resume_command"] == f"cd {tmp_path} && claude attach {JOB[:8]}"

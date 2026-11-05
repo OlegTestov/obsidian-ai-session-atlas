@@ -143,6 +143,21 @@
       "closed.title": "Recently closed",
       "closed.title.hint": "Sessions with work in the last 8 hours whose process has already exited",
 
+      // --- In the background, no tab (active-closed.js) ---
+      "background.title": "In the background, no tab",
+      "background.title.hint": "Claude Code sessions running in Claude Code's background service with no tab showing them. They use memory until stopped",
+      "background.row.hint": "Background job {job}, folder {cwd}",
+      "background.busy": "working",
+      "background.waiting": "waiting for you",
+      "background.idle": "idle",
+      "background.lastAgo": "last message {ago}",
+      "background.bringBack": "Bring back",
+      "background.bringBack.hint": "Continue the conversation in an ordinary tab: the background copy stops, the conversation is kept",
+      "background.stop": "Stop",
+      "background.stop.hint": "End the background session; the conversation is kept and can be continued later",
+      "background.bringingBack": "bringing back…",
+      "background.stopping": "stopping…",
+
       // --- Keys (active-keys.js) ---
       "keys.help.arrows": "↑ ↓ ← →  or  j k",
       "keys.help.select": "select a card",
@@ -351,6 +366,21 @@
       "closed.inSearch.hint": "Карточка сессии: что сделано, хендофф, форк",
       "closed.title": "Недавно закрытые",
       "closed.title.hint": "Сессии с работой за последние 8 часов, чей процесс уже завершён",
+
+      // --- В фоне без вкладки (active-closed.js) ---
+      "background.title": "В фоне без вкладки",
+      "background.title.hint": "Сессии Claude Code, которые работают в фоне Claude Code и не открыты ни в одной вкладке. Они занимают память, пока их не остановить",
+      "background.row.hint": "Фоновое задание {job}, папка {cwd}",
+      "background.busy": "работает",
+      "background.waiting": "ждёт вас",
+      "background.idle": "свободна",
+      "background.lastAgo": "последнее сообщение {ago}",
+      "background.bringBack": "Вернуть во вкладку",
+      "background.bringBack.hint": "Продолжить разговор в обычной вкладке: фоновая копия остановится, разговор сохранится",
+      "background.stop": "Остановить",
+      "background.stop.hint": "Завершить фоновую сессию; разговор сохранится, его можно продолжить позже",
+      "background.bringingBack": "возвращаю…",
+      "background.stopping": "останавливаю…",
 
       // --- Keys (active-keys.js) ---
       "keys.help.arrows": "↑ ↓ ← →  или  j k",

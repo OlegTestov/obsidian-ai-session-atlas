@@ -7,6 +7,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.7.0] - 2026-11-05
+
+### Added
+
+- A tab whose Claude Code session runs in a background job of Claude Code (sent there with ← on an
+  empty prompt or `/background`, or opened with `claude attach`) shows a server icon in the accent
+  colour with a hint. Closing it asks **Keep open**, **Close, keep running** or **Close and stop**:
+  the last one runs `claude stop`, and the conversation is kept. Closing a group says how many such
+  sessions will keep running.
+
+- Active lists Claude Code background sessions without a tab, with **Bring back to tab** and **Stop**.
+- Bring back to an ordinary tab also appears in a background tab's menu. The background process stops first; the same conversation resumes in its group and position. A running reply asks before interruption.
+- A bilingual update summary explains the new controls after upgrading.
+
 ## [2.6.0] - 2026-11-02
 
 ### Added

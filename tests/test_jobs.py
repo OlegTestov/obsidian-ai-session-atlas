@@ -144,3 +144,49 @@ def test_attach_command_takes_only_a_job_id():
     for bad in (JOB, "eeeeeee", "EEEEEEEE", "eeeeeeee; id", ""):
         assert jobs.attach_command("/x", bad) is None
     assert jobs.attach_command(None, JOB_ID) is None
+
+
+# Active's "In the background" section: a job no tab shows. Shown by its own row with Bring back
+# and Stop, and no longer under Recently closed (its Continue would only attach to it).
+def test_background_job_without_a_tab_is_listed_with_its_state(atlas_env, write_session, files):
+    write_session("p", _parent_lines(), session_id=PARENT)
+    write_session("p", _job_lines(), session_id=JOB)
+    conn = _index(atlas_env)
+    _job(files, status="waiting", waitingFor="permission", name="Сессия в фоне")
+    table = {k: v for k, v in TABLE.items() if k not in (100, 500, 601)}
+    found = active.background_jobs(conn, sessions_dir=files.folder, projects_root=str(atlas_env["projects"]),
+                                   table=table)
+    assert [(j["job_id"], j["session_id"], j["status"], j["waiting_for"]) for j in found] == \
+        [(JOB_ID, JOB, "waiting", "permission")]
+    assert found[0]["title"] == "Разговор" and found[0]["cwd"]
+    assert found[0]["last_message_at"] == "2026-09-01T10:11:00.000Z"
+
+
+def test_background_job_shown_in_a_tab_is_not_listed(atlas_env, write_session, files):
+    write_session("p", _job_lines(), session_id=JOB)
+    conn = db.connect()
+    _job(files)
+    kw = {"sessions_dir": files.folder, "projects_root": str(atlas_env["projects"])}
+    # An attach client in Obsidian or in iTerm: the job has a tab.
+    for client in (500, 601):
+        table = {k: v for k, v in TABLE.items() if k not in (100, 500, 601) or k == client}
+        assert active.background_jobs(conn, table=table, **kw) == []
+    # A live tab whose own work was parked in it: that tab shows it.
+    files(100, PARENT, parkedJobId=JOB_ID)
+    assert active.background_jobs(conn, table={k: v for k, v in TABLE.items() if k not in (500, 601)}, **kw) == []
+    # That tab's process gone (closed with "Close, keep running"): the job has no tab any more.
+    table = {k: v for k, v in TABLE.items() if k not in (100, 500, 601)}
+    assert [j["job_id"] for j in active.background_jobs(conn, table=table, **kw)] == [JOB_ID]
+
+
+def test_background_list_skips_stopped_jobs_spares_and_reused_pids(atlas_env, write_session, files):
+    write_session("p", _job_lines(), session_id=JOB)
+    conn = db.connect()
+    kw = {"sessions_dir": files.folder, "projects_root": str(atlas_env["projects"])}
+    table = {k: v for k, v in TABLE.items() if k not in (100, 500, 601)}
+    _job(files, spare=True)
+    assert active.background_jobs(conn, table=table, **kw) == []
+    _job(files, procStart="Fri Sep 25 10:00:00 2026")          # pid 300 now runs something else
+    assert active.background_jobs(conn, table=table, **kw) == []
+    _job(files)
+    assert active.background_jobs(conn, table={k: v for k, v in table.items() if k != 300}, **kw) == []

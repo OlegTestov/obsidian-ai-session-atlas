@@ -344,3 +344,9 @@ body.theme-dark {
 .sa-update-news .sa-update-icon { float: left; margin: 0 10px 0 0; }
 .sa-update-actions { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-top: 24px; }
 .sa-update-actions a { font-size: var(--font-ui-small); }
+
+/* A tab whose Claude Code session runs in a background job (bg-session.js): the icon in the accent
+   colour, so it stands out among the agent tabs. */
+.workspace-tab-header.sa-background-session .workspace-tab-header-inner-icon {
+  color: var(--color-accent);
+}

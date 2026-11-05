@@ -445,6 +445,35 @@ def list_active(conn: sqlite3.Connection, sessions_dir: str | None = None,
     return out
 
 
+def background_jobs(conn: sqlite3.Connection, sessions_dir: str | None = None,
+                    projects_root: str | None = None, table: dict | None = None) -> list[dict]:
+    """Claude Code background jobs no tab shows: neither an attach client nor a live tab whose work
+    was parked there. They run on unseen (memory, MCP servers) until stopped or brought back."""
+    from . import jobs as bg_jobs
+    from .index import PROJECTS_ROOT
+    projects_root = projects_root or PROJECTS_ROOT
+    table = process_table() if table is None else table
+    files = _read_files(sessions_dir or SESSIONS_DIR)
+    parked = {str(d.get("parkedJobId")) for d in files if d.get("parkedJobId")
+              and is_interactive(d) and _alive(d["pid"], d.get("procStart"), table)}
+    clients = bg_jobs.attach_clients(table)
+    out = []
+    for job_id, data in sorted(bg_jobs.running_jobs(files, table).items()):
+        if job_id in clients or job_id in parked:
+            continue
+        sid = str(data["sessionId"])
+        meta = search._load_session(conn, sid) or {}
+        found = last_messages(_transcript(conn, sid, projects_root))
+        status = data.get("status")
+        out.append({"job_id": job_id, "session_id": sid, "agent": "claude",
+                    "title": meta.get("title") or data.get("name") or sid[:8],
+                    "status": status, "waiting_for": data.get("waitingFor") if status == "waiting" else None,
+                    "cwd": data.get("cwd"), "last_message_at": found["last_at"],
+                    "cost_usd": meta.get("cost_usd")})
+    out.sort(key=lambda j: _as_datetime(j["last_message_at"]), reverse=True)
+    return out
+
+
 def _claude_card(conn: sqlite3.Connection, data: dict, jobs: dict, table: dict, projects_root: str,
                  tab_pid: int | None = None) -> dict:
     """A Claude Code card. tab_pid: the process in the tab when it is not the session's own (attach)."""

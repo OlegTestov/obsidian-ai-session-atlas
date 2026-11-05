@@ -1,17 +1,20 @@
 // Close confirmation: a terminal tab holds a live agent session, and the catalog tab is annoying to
 // close by accident. The close button, a middle click on the header and ⌘W go through a dialog
 // where "Keep open" is the default. Mixed into the plugin class.
-import { Modal, View } from "obsidian";
+import { Modal, Notice, View } from "obsidian";
 import { VIEW_TYPE, AGENT_VIEW_TYPE, TERMINAL_VIEW_TYPE, TERMINAL_STATE_KEY, TAB_CLOSE_SELECTOR } from "./constants";
 
 const TAB_HEADER_SELECTOR = ".workspace-tab-header";
 const CLOSE_TAB_COMMAND_ID = "workspace:close";
 
 class ConfirmCloseModal extends Modal {
-  constructor(app, { title, text, keep, close, onConfirm, onDismiss }) {
+  /** stop/onStop: a third button, for a tab whose session runs in a background job. */
+  constructor(app, { title, text, keep, close, stop, onConfirm, onStop, onDismiss }) {
     super(app);
-    Object.assign(this, { title, text, keepLabel: keep, closeLabel: close, onConfirm, onDismiss });
+    Object.assign(this, { title, text, keepLabel: keep, closeLabel: close, stopLabel: stop, onConfirm, onStop,
+                          onDismiss });
     this.confirmed = false;
+    this.stopping = false;
   }
 
   onOpen() {
@@ -21,14 +24,19 @@ class ConfirmCloseModal extends Modal {
     // Focus on "keep": a stray Enter must not close the tab.
     const keep = buttons.createEl("button", { text: this.keepLabel });
     keep.addEventListener("click", () => this.close());
-    const close = buttons.createEl("button", { text: this.closeLabel, cls: "mod-warning" });
+    const close = buttons.createEl("button", { text: this.closeLabel, cls: this.stopLabel ? "" : "mod-warning" });
     close.addEventListener("click", () => { this.confirmed = true; this.close(); });
+    if (this.stopLabel) {
+      const stop = buttons.createEl("button", { text: this.stopLabel, cls: "mod-warning" });
+      stop.addEventListener("click", () => { this.stopping = true; this.close(); });
+    }
     window.setTimeout(() => keep.focus(), 0);
   }
 
   onClose() {
     this.contentEl.empty();
     if (this.confirmed && typeof this.onConfirm === "function") this.onConfirm();
+    if (this.stopping && typeof this.onStop === "function") this.onStop();
     if (typeof this.onDismiss === "function") this.onDismiss();
   }
 }
@@ -160,9 +168,23 @@ class GuardMethods {
   }
 
   confirmClose(leaf, label) {
-    if (this.pendingCloseConfirms.has(leaf)) return;
+    if (this.pendingCloseConfirms.has(leaf) || (this.stoppingLeaves && this.stoppingLeaves.has(leaf))) return;
     this.pendingCloseConfirms.add(leaf);
     const atlas = this.guardKind(leaf) === "atlas";
+    const job = atlas ? null : this.backgroundJobOf(leaf);
+    if (job) {
+      new ConfirmCloseModal(this.app, {
+        title: this.t("close.background.title"),
+        text: this.t("close.background.text", { label: label || this.terminalLabel(leaf) }),
+        keep: this.t("close.keep"),
+        close: this.t("close.background.close"),
+        stop: this.t("close.background.stop"),
+        onConfirm: () => leaf.detach(),
+        onStop: () => this.stopAndClose(leaf, job),
+        onDismiss: () => this.pendingCloseConfirms.delete(leaf),
+      }).open();
+      return;
+    }
     new ConfirmCloseModal(this.app, {
       title: this.t(atlas ? "close.atlas.title" : "close.terminal.title"),
       text: atlas ? this.t("close.atlas.text")
@@ -172,6 +194,34 @@ class GuardMethods {
       onConfirm: () => leaf.detach(),
       onDismiss: () => this.pendingCloseConfirms.delete(leaf),
     }).open();
+  }
+
+  /**
+   * The job is stopped first: if that fails, the tab stays, the only way left to reach the session.
+   * Until the stop ends the tab asks nothing again (a second × would start a second stop).
+   */
+  async stopAndClose(leaf, job) {
+    if (!this.stoppingLeaves) this.stoppingLeaves = new WeakSet();
+    this.stoppingLeaves.add(leaf);
+    const notice = new Notice(this.t("close.background.stopping", { job }), 0);
+    const view = leaf.view;
+    const pty = view && view.pty;
+    try {
+      if (await this.stopJob(job)) {
+        if (this.leafIsOpen(leaf) && leaf.view === view && (!view || view.pty === pty)) leaf.detach();
+      }
+    } catch (error) {
+      new Notice(String(error.message || error));
+    } finally {
+      this.stoppingLeaves.delete(leaf);
+      if (notice && typeof notice.hide === "function") notice.hide();
+    }
+  }
+
+  leafIsOpen(leaf) {
+    let found = false;
+    this.app.workspace.iterateAllLeaves((l) => { if (l === leaf) found = true; });
+    return found;
   }
 }
 

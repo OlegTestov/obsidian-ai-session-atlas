@@ -18,7 +18,10 @@ class GroupMethods {
     const ws = this.app.workspace;
     this.registerEvent(ws.on("layout-change", () => this.onGroupLayout()));
     this.registerEvent(ws.on("active-leaf-change", (leaf) => this.unfoldForLeaf(leaf)));
-    this.registerEvent(ws.on("leaf-menu", (menu, leaf) => this.addGroupItems(menu, leaf)));
+    this.registerEvent(ws.on("leaf-menu", (menu, leaf) => {
+      this.addGroupItems(menu, leaf);
+      this.addBackgroundItems(menu, leaf);
+    }));
     // Which tab a drag carries: the drop rule applies to it alone (Obsidian's own drag of a header).
     // Popout windows have their own documents.
     this.watchTabDrags(document);
@@ -266,9 +269,14 @@ class GroupMethods {
     const leaves = this.groupLeaves(id);
     if (!group || !leaves.length) return;
     const agents = leaves.filter((l) => this.guardKind(l) === "terminal").length;
+    // Sessions in Claude Code background jobs outlive their tabs: said, so none is left behind unseen.
+    const background = agents ? this.backgroundJobsOf(leaves).filter(Boolean).length : 0;
+    const vars = { n: leaves.length, agents, ended: agents - background, background };
+    const key = !background ? (agents ? "group.close.textAgents" : "group.close.text")
+      : vars.ended ? "group.close.textBackground" : "group.close.textOnlyBackground";
     new ConfirmCloseModal(this.app, {
       title: this.t("group.close.title", { name: group.name || this.t(`group.color.${group.color}`) }),
-      text: this.t(agents ? "group.close.textAgents" : "group.close.text", { n: leaves.length, agents }),
+      text: this.t(key, vars),
       keep: this.t("close.keep"),
       close: this.t("group.close.confirm"),
       onConfirm: () => {

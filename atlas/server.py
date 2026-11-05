@@ -224,6 +224,20 @@ def active_sessions(conn) -> list[dict]:
         return sessions
 
 
+_background_cached = {"at": 0.0, "jobs": None}
+
+
+def background_sessions(conn) -> list[dict]:
+    """Background jobs no tab shows, reused like the cards: each poll would list processes again."""
+    with _active_lock:
+        if _background_cached["jobs"] is not None and \
+                time.monotonic() - _background_cached["at"] < ACTIVE_REUSE_SECONDS:
+            return _background_cached["jobs"]
+        found = active.background_jobs(conn)
+        _background_cached.update(at=time.monotonic(), jobs=found)
+        return found
+
+
 def _run_job(job_id: str, session_id: str, artifact_kind: str, backend: str, model: str,
              lang: str = messages.DEFAULT) -> None:
     conn = db.connect()
@@ -369,9 +383,13 @@ class Handler(BaseHTTPRequestHandler):
                         sessions = [dict(s, history=feed.messages_tail(active._transcript(
                             conn, s.get("transcript_session_id") or s["session_id"],
                             index.PROJECTS_ROOT), msgs)) for s in sessions]
+                    background = (background_sessions(conn)
+                                  if not picked or agents.CLAUDE in picked else [])
                     return self._json(200, {"count": len(sessions), "sessions": sessions,
+                                            "background_jobs": background,
                                             "recent_closed": active.recently_closed(
-                                                conn, {s["session_id"] for s in sessions},
+                                                conn, {s["session_id"] for s in sessions}
+                                                | {j["session_id"] for j in background},
                                                 agents=picked),
                                             "limits": limits.read_limits(),
                                             "codex_limits": codex_live.limits(
@@ -701,6 +719,7 @@ class Handler(BaseHTTPRequestHandler):
         stopped.pop("cwd", None)
         agent = stopped.get("agent") or agents.session_agent(conn, sid)
         _active_cached["sessions"] = None          # the active list has changed
+        _background_cached["jobs"] = None
         # A parked session goes on in its background job: the tab attaches to it.
         command, cwd = actions.session_resume_command(conn, cwd, sid, agent)
         self._json(200, dict(stopped, cwd=cwd, command=command))

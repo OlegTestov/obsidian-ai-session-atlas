@@ -82,6 +82,10 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) back
 window.addEventListener("message", e => {
   if (e.source !== window.parent) return;
   const d = e.data;
+  if (d && d.source === HOST_SOURCE && d.type === "bg-result") {
+    backgroundResult(d.job);
+    return;
+  }
   if (d && d.source === HOST_SOURCE && d.type === "shown") { backOnScreen(); return; }
   if (d && d.source === HOST_SOURCE && d.type === "sent" && pendingSends.has(d.nonce)) {
     const sid = pendingSends.get(d.nonce);
@@ -168,6 +172,8 @@ async function loadActive() {
     activeLimits = data.limits || null;
     activeCodexLimits = data.codex_limits || null;
     recentClosed = data.recent_closed || [];
+    backgroundJobs = (data.background_jobs || []).filter(j => j && /^[0-9a-f]{8}$/.test(j.job_id || ""));
+    pruneBackgroundNotes();
     AtlasLogic.pruneClosedNotes(closedNotes, recentClosed.map(c => c.session_id), Date.now());
     activeUpdated = new Date();
   } catch (e) {

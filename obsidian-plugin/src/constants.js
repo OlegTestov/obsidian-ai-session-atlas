@@ -18,7 +18,7 @@ const TERMINAL_STATE_KEY = "terminal:terminal";
 const TAB_CLOSE_SELECTOR = ".workspace-tab-header-inner-close-button";
 const HOST_SOURCE = "session-atlas-host";
 const PTY_WAIT_MS = 1000;
-const SESSIONS_DIR = path.join(os.homedir(), ".claude", "sessions");
+const SESSIONS_DIR = path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude"), "sessions");
 // The agent tab script's registry of tab → session (scripts/agent-registry-lib.zsh, same default path).
 const REGISTRY_FILE = path.join(process.env.XDG_STATE_HOME || path.join(os.homedir(), ".local", "state"),
                                 "obsidian-agent-terminals", "resume.tsv");

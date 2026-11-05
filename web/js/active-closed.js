@@ -1,6 +1,6 @@
 // Active: recently closed sessions, the process ended but there was work in the last hours.
 // Classic script: shares one global scope with the other page files.
-/* exported closedSection -- used by other page scripts */
+/* exported closedSection, backgroundSection, pruneBackgroundNotes, backgroundResult -- used by other page scripts */
 // The card disappears with the process; from here one button continues the session.
 const CLOSED_OPEN_KEY = "atlas.closedOpen";
 let recentClosed = [];
@@ -50,6 +50,76 @@ function closedRow(c) {
   find.addEventListener("click", () => { setView("search"); openCard(c.session_id); });
   row.append(title, info, go, find);
   return row;
+}
+
+// Claude Code background jobs no tab shows (a tab closed with "Close, keep running", ← on an empty
+// prompt): they run on unseen. Bring back = the same conversation in an ordinary tab; Stop ends it.
+let backgroundJobs = [];
+const backgroundNotes = new Map();      // job id → {text, at}: "bringing back…" until the list changes
+const BACKGROUND_NOTE_MS = 20000;
+
+function pruneBackgroundNotes() {
+  const live = new Set(backgroundJobs.map(j => j.job_id));
+  for (const [job, note] of backgroundNotes) {
+    if (!live.has(job) || Date.now() - note.at > BACKGROUND_NOTE_MS) backgroundNotes.delete(job);
+  }
+}
+
+function backgroundResult(job) {
+  backgroundNotes.delete(job);
+  renderActive(null, true);
+  loadActive();
+}
+
+function backgroundAct(j, type, noteKey) {
+  if (backgroundNotes.has(j.job_id)) return;
+  backgroundNotes.set(j.job_id, { text: i18n(noteKey), at: Date.now() });
+  tellHost(type, { job: j.job_id });
+  renderActive(null, true);
+  window.setTimeout(loadActive, 3000);
+}
+
+function backgroundRow(j) {
+  const row = el("div", "crow");
+  const title = el("span", "ct", j.title || j.session_id.slice(0, 8));
+  title.title = i18n("background.row.hint", { job: j.job_id, cwd: j.cwd || "?" });
+  const state = i18n(j.status === "busy" ? "background.busy" : j.status === "waiting" ? "background.waiting"
+    : "background.idle");
+  const meta = [state, j.last_message_at ? i18n("background.lastAgo", { ago: ago(j.last_message_at) }) : null]
+    .filter(Boolean).join(" · ");
+  const note = backgroundNotes.get(j.job_id);
+  // Outside Obsidian the page cannot open tabs: the commands for a terminal instead.
+  const info = el("span", "cm", (note && note.text) || (EMBEDDED ? meta
+    : `${meta} · claude attach ${j.job_id} · claude stop ${j.job_id}`));
+  info.title = info.textContent || (EMBEDDED ? meta : `claude attach ${j.job_id} · claude stop ${j.job_id}`);
+  row.append(title, info);
+  if (!EMBEDDED) { row.classList.add("background-commands"); return row; }
+  const back = el("button", "primary", i18n("background.bringBack"));
+  back.type = "button";
+  back.title = i18n("background.bringBack.hint");
+  back.addEventListener("click", () => backgroundAct(j, "bg-bring-back", "background.bringingBack"));
+  const stop = el("button", null, i18n("background.stop"));
+  stop.type = "button";
+  back.disabled = stop.disabled = !!note;
+  stop.title = i18n("background.stop.hint");
+  stop.addEventListener("click", () => backgroundAct(j, "bg-stop", "background.stopping"));
+  row.append(back, stop);
+  return row;
+}
+
+/** Under the cards, above Recently closed; null when no background job runs without a tab. */
+function backgroundSection() {
+  const list = backgroundJobs.filter(j => agentPassesView("active", j));
+  if (!list.length) return null;
+  const sec = el("section", "asec background");
+  const h = el("h3", null, i18n("background.title"));
+  h.title = i18n("background.title.hint");
+  h.appendChild(el("span", "n", String(list.length)));
+  sec.appendChild(h);
+  const box = el("div", "clist");
+  list.forEach(j => box.appendChild(backgroundRow(j)));
+  sec.appendChild(box);
+  return sec;
 }
 
 /** Section at the bottom of Active; null when nothing closed in the last hours. */

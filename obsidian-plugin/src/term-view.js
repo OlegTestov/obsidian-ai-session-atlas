@@ -23,6 +23,7 @@ import { saveClipboardImage } from "./term-image";
 const DEFAULT_SHELL = "/bin/zsh";
 const CLOSE_OSC = 7770;                 // scripts/agent-resume-terminal.zsh: "close;<tab id>"
 const CLOSE_WINDOW_MS = 60000;
+const BACKGROUND_ICON = "server";      // a Claude Code background job: it runs apart from the tab
 
 /** Fit only a visible tab. Obsidian shrinks a hidden one to zero: fitting it would report a tiny
  *  screen to the program, and on return Claude Code would redraw everything. */
@@ -71,12 +72,31 @@ class AgentTerminalView extends ItemView {
     const workspace = this.app && this.app.workspace;
     if (workspace && workspace.requestSaveLayout) workspace.requestSaveLayout();
   }
-  getIcon() { return this.state.kind === "codex" ? "codex-bot" : "bot"; }
+  getIcon() {
+    if (this.backgroundJob) return BACKGROUND_ICON;
+    return this.state.kind === "codex" ? "codex-bot" : "bot";
+  }
+
+  /** The background job this tab shows (bg-session.js), or null: the tab's icon and hint follow it. */
+  setBackgroundJob(job) {
+    const next = job || null;
+    if (next === (this.backgroundJob || null)) return;
+    this.backgroundJob = next;
+    if (this.leaf.updateHeader) this.leaf.updateHeader();
+    const header = this.leaf.tabHeaderEl;
+    if (header && header.classList) header.classList.toggle("sa-background-session", !!next);
+    const icon = this.leaf.tabHeaderInnerIconEl;
+    if (icon && icon.setAttribute) {
+      if (next) icon.setAttribute("aria-label", this.plugin.t("terminal.backgroundSession", { job: next }));
+      else icon.removeAttribute("aria-label");
+    }
+  }
 
   /** The tab's own menu (Obsidian builds it for background tabs too): the session group items. */
   onTabMenu(menu) {
     if (super.onTabMenu) super.onTabMenu(menu);
     this.plugin.addGroupItems(menu, this.leaf);
+    this.plugin.addBackgroundItems(menu, this.leaf);
   }
   getState() { return Object.assign({}, this.state); }
 
@@ -268,6 +288,8 @@ class AgentTerminalView extends ItemView {
    * cleared its _loaded), the process is held for the next plugin copy (held.js).
    */
   async onClose() {
+    // The header outlives the view (a plugin reload keeps the tab): the mark must not stay on it.
+    this.setBackgroundJob(null);
     if (this.resizeObserver) this.resizeObserver.disconnect();
     if (this.themeObserver) this.themeObserver.disconnect();
     const key = this.state.instance;

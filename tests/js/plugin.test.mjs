@@ -1496,6 +1496,161 @@ describe("close guard", () => {
     assert.equal(shown.title, "Close the AI Session Atlas tab?");
     assert.equal(shown.keepLabel, "Keep open");
   });
+
+  // A session in a Claude Code background job outlives its tab: the dialog offers to stop it too.
+  describe("a tab of a background session", () => {
+    const JOB = "ab12cd34";
+    const bLeaf = { tabHeaderEl: {}, view: { getViewType: () => "session-atlas-terminal", getDisplayText: () => "Clipwright" },
+                    getViewState: () => ({ state: {} }), detach() { this.detached = true; } };
+    const stops = [];
+    let stopResult = { ok: true };
+    const asked = [];
+    // A button row that keeps what onOpen creates, so a click can be replayed.
+    const recordingEl = () => {
+      const buttons = [];
+      const el = { buttons, empty() {}, createEl: (tag, opts) => {
+        const b = { tag, text: opts && opts.text, cls: opts && opts.cls, listeners: [], focused: 0,
+                    focus() { this.focused++; }, addEventListener(type, fn) { this.listeners.push(fn); } };
+        buttons.push(b);
+        return b;
+      }, createDiv: () => el };
+      return el;
+    };
+    const open = (leaf) => {
+      guard.confirmClose(leaf);
+      const shown = lastModal();
+      shown.contentEl = recordingEl();
+      shown.onOpen();
+      return shown;
+    };
+    const click = (shown, text) => shown.contentEl.buttons.find((b) => b.text === text).listeners.forEach((fn) => fn());
+    let stopGate = null;                        // a promise the stop waits on, when set
+    let realLeaves = null;
+    before(() => {
+      guard.settings.language = "ru";
+      guard.backgroundJobOf = (leaf) => { asked.push(leaf); return leaf === bLeaf ? JOB : null; };
+      guard.stopJob = async (job) => {
+        stops.push(job); if (stopGate) await stopGate;
+        if (stopResult.ok || !guard.backgroundJobOf(bLeaf)) return true;
+        notices.push(job + " " + stopResult.error); return false;
+      };
+      realLeaves = guard.app.workspace.iterateAllLeaves;
+      guard.app.workspace.iterateAllLeaves = (fn) => [tLeaf, aLeaf, nLeaf, bLeaf].forEach(fn);
+    });
+    after(() => {
+      delete guard.backgroundJobOf;
+      delete guard.stopJob;
+      guard.app.workspace.iterateAllLeaves = realLeaves;
+    });
+
+    it("three buttons: keep (focused first), close only, close and stop", async () => {
+      const shown = open(bLeaf);
+      assert.equal(shown.title, "Закрыть вкладку с фоновой сессией?");
+      assert.match(shown.text, /«Clipwright» работает в фоне Claude Code/);
+      assert.deepEqual(shown.contentEl.buttons.filter((b) => b.tag === "button").map((b) => [b.text, b.cls || ""]),
+                       [["Оставить", ""], ["Закрыть, сессия работает", ""], ["Закрыть и остановить", "mod-warning"]]);
+      await settle(10);                        // focus moves on the next tick
+      assert.deepEqual(shown.contentEl.buttons.filter((b) => b.tag === "button").map((b) => b.focused), [1, 0, 0]);
+      click(shown, "Оставить");
+      assert.ok(!bLeaf.detached);
+      assert.deepEqual(stops, []);
+    });
+    it("Esc (the dialog closed without a button): nothing closes, nothing stops", () => {
+      open(bLeaf).close();
+      assert.ok(!bLeaf.detached);
+      assert.deepEqual(stops, []);
+    });
+    it("close only: the tab closes, the job is not stopped", () => {
+      const shown = open(bLeaf);
+      click(shown, "Закрыть, сессия работает");
+      assert.ok(bLeaf.detached);
+      assert.deepEqual(stops, []);
+      bLeaf.detached = false;
+    });
+    it("close and stop: the job is stopped first, then the tab closes", async () => {
+      const shown = open(bLeaf);
+      click(shown, "Закрыть и остановить");
+      assert.deepEqual(stops.splice(0), [JOB]);
+      await settle();
+      assert.ok(bLeaf.detached);
+      bLeaf.detached = false;
+    });
+    it("while the stop runs: a notice says so, a second × asks nothing", async () => {
+      let release;
+      stopGate = new Promise((r) => { release = r; });
+      notices.length = 0;
+      const before = modals.length;
+      click(open(bLeaf), "Закрыть и остановить");
+      await settle(10);
+      assert.ok(notices.some((n) => n.includes("Останавливаю") && n.includes(JOB)), JSON.stringify(notices));
+      const stopping = noticeObjects.find((n) => n.msg.includes("Останавливаю"));
+      guard.confirmClose(bLeaf);
+      assert.equal(modals.length, before + 1, "no second dialog during the stop");
+      release();
+      stopGate = null;
+      await settle();
+      assert.ok(stopping.hidden);
+      assert.ok(bLeaf.detached);
+      assert.deepEqual(stops.splice(0), [JOB]);
+      bLeaf.detached = false;
+    });
+    it("the tab was closed meanwhile: not closed a second time", async () => {
+      let release;
+      stopGate = new Promise((r) => { release = r; });
+      click(open(bLeaf), "Закрыть и остановить");
+      guard.app.workspace.iterateAllLeaves = (fn) => [tLeaf, aLeaf, nLeaf].forEach(fn);
+      release();
+      stopGate = null;
+      await settle();
+      guard.app.workspace.iterateAllLeaves = (fn) => [tLeaf, aLeaf, nLeaf, bLeaf].forEach(fn);
+      assert.ok(!bLeaf.detached);
+      stops.length = 0;
+    });
+    it("the stop failed: the tab stays and a notice says why", async () => {
+      stopResult = { ok: false, error: "no such session" };
+      notices.length = 0;
+      click(open(bLeaf), "Закрыть и остановить");
+      await settle();
+      assert.ok(!bLeaf.detached);
+      assert.ok(notices.some((n) => n.includes(JOB) && n.includes("no such session")), JSON.stringify(notices));
+      stopResult = { ok: true };
+    });
+    it("the stop failed because the job had ended by itself: the tab closes, no notice", async () => {
+      stopResult = { ok: false, error: "no such session" };
+      const shown = open(bLeaf);
+      guard.backgroundJobOf = (leaf) => { asked.push(leaf); return null; };
+      notices.length = 0;
+      click(shown, "Закрыть и остановить");
+      await settle();
+      guard.backgroundJobOf = (leaf) => { asked.push(leaf); return leaf === bLeaf ? JOB : null; };
+      stopResult = { ok: true };
+      assert.ok(bLeaf.detached);
+      assert.ok(!notices.some((n) => n.includes("no such session")), JSON.stringify(notices));
+      bLeaf.detached = false;
+      stops.length = 0;
+    });
+    it("an ordinary session tab keeps the two-button dialog", () => {
+      const shown = open(tLeaf);
+      assert.equal(shown.title, "Закрыть вкладку с сессией?");
+      assert.equal(shown.stopLabel, undefined);
+      assert.deepEqual(shown.contentEl.buttons.filter((b) => b.tag === "button").map((b) => [b.text, b.cls]),
+                       [["Оставить", undefined], ["Закрыть", "mod-warning"]]);
+      click(shown, "Оставить");
+    });
+    it("the catalog tab is not checked for a job", () => {
+      asked.length = 0;
+      guard.confirmClose(aLeaf);
+      lastModal().close();
+      assert.deepEqual(asked, []);
+    });
+    it("English", () => {
+      guard.settings.language = "en";
+      const shown = open(bLeaf);
+      assert.equal(shown.title, "Close the tab of a background session?");
+      assert.deepEqual([shown.closeLabel, shown.stopLabel], ["Close, keep running", "Close and stop"]);
+      click(shown, "Keep open");
+    });
+  });
 });
 
 // File explorer: left click opens a new tab, middle the current one, an open file is focused.
@@ -1733,6 +1888,44 @@ describe("agent terminal view", () => {
     assert.equal(headerUpdates, 1);
     assert.equal(layoutSaves, 1);
     assert.equal(headerText, tv.getDisplayText());
+  });
+  it("a background job: another icon and a hint on it; back to the robot when the job ends", () => {
+    let headerUpdates = 0;
+    const classes = new Set();
+    const attrs = {};
+    const leaf = { updateHeader: () => { headerUpdates++; },
+                   tabHeaderEl: { classList: { toggle: (c, on) => (on ? classes.add(c) : classes.delete(c)) } },
+                   tabHeaderInnerIconEl: { setAttribute: (k, v) => { attrs[k] = v; }, removeAttribute: (k) => { delete attrs[k]; } } };
+    const tv = new AgentTerminalView(leaf, alone);
+    tv.state = { kind: "claude" };
+    assert.equal(tv.getIcon(), "bot");
+    tv.setBackgroundJob("ab12cd34");
+    tv.setBackgroundJob("ab12cd34");
+    assert.equal(tv.getIcon(), "server");
+    assert.equal(headerUpdates, 1);
+    assert.ok(classes.has("sa-background-session"));
+    assert.match(attrs["aria-label"], /ab12cd34/);
+    tv.setBackgroundJob(null);
+    tv.setBackgroundJob(undefined);
+    assert.equal(tv.getIcon(), "bot");
+    assert.equal(headerUpdates, 2);
+    assert.ok(!classes.has("sa-background-session"));
+    assert.equal(attrs["aria-label"], undefined);
+    tv.state = { kind: "codex" };
+    assert.equal(tv.getIcon(), "codex-bot");
+  });
+  it("the tab's view closes (a plugin reload keeps the header): the mark goes with it", async () => {
+    const classes = new Set();
+    const attrs = {};
+    const leaf = { updateHeader() {},
+                   tabHeaderEl: { classList: { toggle: (c, on) => (on ? classes.add(c) : classes.delete(c)) } },
+                   tabHeaderInnerIconEl: { setAttribute: (k, v) => { attrs[k] = v; }, removeAttribute: (k) => { delete attrs[k]; } } };
+    const tv = new AgentTerminalView(leaf, alone);
+    tv.state = { kind: "claude" };
+    tv.setBackgroundJob("ab12cd34");
+    await tv.onClose();
+    assert.ok(!classes.has("sa-background-session"));
+    assert.equal(attrs["aria-label"], undefined);
   });
 });
 

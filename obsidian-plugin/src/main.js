@@ -19,6 +19,7 @@ import { AgentTerminalView } from "./term-view";
 import { HeldMethods, keepHeldTabs } from "./held";
 import { AgentMethods } from "./agents";
 import { GuardMethods } from "./guard";
+import { BackgroundTabMethods } from "./bg-session";
 import { RuntimeMethods } from "./runtime";
 import { StatusLineMethods } from "./statusline";
 import { ReloadMethods } from "./reload";
@@ -99,6 +100,7 @@ class SessionAtlasPlugin extends Plugin {
     );
     // Polling starts after layout: at Obsidian start-up the terminal tabs are not restored yet.
     this.app.workspace.onLayoutReady(() => this.startWatch());
+    this.app.workspace.onLayoutReady(() => this.startBackgroundMarks());
   }
 
   onunload() {
@@ -223,6 +225,14 @@ class SessionAtlasPlugin extends Plugin {
       this.replyTabs(event.source);
       return;
     }
+    if (data.type === "bg-bring-back" || data.type === "bg-stop") {
+      if (typeof data.job !== "string") return;
+      const source = event.source;
+      (data.type === "bg-stop" ? this.stopJobFromPage(data.job) : this.bringBackJob(data.job))
+        .then(ok => source.postMessage({ source: "session-atlas-host", type: "bg-result", job: data.job, ok }, this.atlasOrigin()))
+        .catch(() => source.postMessage({ source: "session-atlas-host", type: "bg-result", job: data.job, ok: false }, this.atlasOrigin()));
+      return;
+    }
     if (data.type === "send-text") {
       this.sendText(event.source, data);
       return;
@@ -335,8 +345,9 @@ class SessionAtlasPlugin extends Plugin {
 
 // Methods from the other files are mixed into the plugin class and run with the plugin as `this`.
 for (const methods of [TerminalMethods, InputMethods, CodexInputMethods, NotifyMethods, RestoreMethods, HeldMethods,
-                       AgentMethods, GuardMethods, ExplorerMethods, RuntimeMethods, StatusLineMethods, ReloadMethods,
-                       StartupMethods, OpenPathMethods, GroupMethods, GroupStripMethods, WhatsNewMethods]) {
+                       AgentMethods, GuardMethods, BackgroundTabMethods, ExplorerMethods, RuntimeMethods,
+                       StatusLineMethods, ReloadMethods, StartupMethods, OpenPathMethods, GroupMethods,
+                       GroupStripMethods, WhatsNewMethods]) {
   for (const name of Object.getOwnPropertyNames(methods.prototype)) {
     if (name === "constructor") continue;
     Object.defineProperty(SessionAtlasPlugin.prototype, name,

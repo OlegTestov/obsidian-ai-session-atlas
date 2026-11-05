@@ -14,6 +14,8 @@ class Modal { constructor(app) { this.app = app; } open() { this.onOpen && this.
 Module._load = (r, p, i) => (r === "obsidian" ? { Menu, Modal, View: class {}, setIcon() {} } : realLoad(r, p, i));
 const model = loadSrc("groups-model");
 const { GroupMethods } = loadSrc("groups");
+const { ConfirmCloseModal } = loadSrc("guard");
+const { translate } = loadSrc("i18n");
 Module._load = realLoad;
 const { COLORS, GONE_KEEP_MS, cleanGroups, nextColor, createGroup, runs, joinIndex, changedLeaves, dropChanges, prune, liveGroups,
         tabOutside, editorTop } = model;
@@ -314,5 +316,50 @@ describe("group moves in the strip", () => {
     plugin.addGroupItems(menu, leaf("a"));
     assert.deepEqual(titles, ["group.menu.new", "group.menu.move", "group.menu.remove"]);
     assert.deepEqual(sub, ["Docs"]);
+  });
+});
+
+// Closing a group closes the tabs only: sessions in Claude Code background jobs run on, and the
+// question says how many.
+describe("closing a group with background sessions", () => {
+  const shown = [];
+  const realOpen = ConfirmCloseModal.prototype.open;
+  const plugin = Object.create(GroupMethods.prototype);
+  const leaf = (kind, job) => ({ kind, job, detach() { this.detached = true; } });
+  let leaves = [];
+  plugin.app = {};
+  plugin.groups = { groups: { g1: { name: "News", color: "blue" } } };
+  plugin.groupLeaves = () => leaves;
+  plugin.guardKind = (l) => l.kind;
+  plugin.backgroundJobsOf = (ls) => ls.map((l) => l.job || null);
+  plugin.t = (key, vars) => translate("ru", key, vars);
+  const close = () => {
+    ConfirmCloseModal.prototype.open = function () { shown.push(this); };
+    try { plugin.closeGroup("g1"); } finally { ConfirmCloseModal.prototype.open = realOpen; }
+    return shown[shown.length - 1];
+  };
+
+  it("counts the background sessions among the group's agents", () => {
+    leaves = [leaf("terminal", "ab12cd34"), leaf("terminal", null), leaf("terminal", "ffee0011"), leaf(null, null)];
+    const m = close();
+    assert.equal(m.text, "Закроются все вкладки группы: 4. Сессий агентов завершится: 1. Фоновые сессии Claude Code (2) "
+      + "продолжат работать: чтобы остановить, закрывайте их вкладки по одной.");
+  });
+  it("every agent in the group is a background session: no line about sessions that end", () => {
+    leaves = [leaf("terminal", "ab12cd34"), leaf("terminal", "ffee0011"), leaf(null, null)];
+    assert.equal(close().text, "Закроются все вкладки группы: 3. Фоновые сессии Claude Code (2) продолжат работать: "
+      + "чтобы остановить, закрывайте их вкладки по одной.");
+  });
+  it("no background session: the usual text", () => {
+    leaves = [leaf("terminal", null), leaf(null, null)];
+    const m = close();
+    assert.equal(m.text, "Закроются все вкладки группы: 2. Сессии агентов в них (1) завершатся.");
+  });
+  it("no agents: the processes are not even checked", () => {
+    let asked = 0;
+    plugin.backgroundJobsOf = (ls) => { asked++; return ls.map(() => "ab12cd34"); };
+    leaves = [leaf(null, null)];
+    assert.equal(close().text, "Закроются все вкладки группы: 1.");
+    assert.equal(asked, 0);
   });
 });

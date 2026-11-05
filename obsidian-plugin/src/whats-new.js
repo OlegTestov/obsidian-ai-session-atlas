@@ -1,7 +1,7 @@
 // A ten-second release summary, bundled locally: no network, transcript, or Markdown renderer.
 import { Modal, setIcon } from "obsidian";
 
-const RELEASE_VERSION = "2.6.0";
+const RELEASE_VERSION = "2.7.0";
 const RELEASE_URL = `https://github.com/OlegTestov/obsidian-ai-session-atlas/releases/tag/${RELEASE_VERSION}`;
 
 function parts(version) {
@@ -32,23 +32,12 @@ class WhatsNewModal extends Modal {
     this.setTitle(t("title"));
     const el = this.contentEl;
     el.createEl("p", { cls: "sa-updates-version", text: `AI Session Atlas · ${RELEASE_VERSION}` });
-    const card = el.createDiv({ cls: "sa-update-card" });
-    setIcon(card.createSpan({ cls: "sa-update-icon" }), "panels-top-left");
-    card.createEl("h3", { text: t("tabs.title") });
-    card.createEl("p", { text: t("tabs.desc") });
-    const diagram = card.createDiv({ cls: "sa-update-diagram" });
-    const outside = diagram.createDiv({ cls: "sa-update-example" });
-    outside.createSpan({ text: t("ribbon") });
-    outside.createSpan({ cls: "sa-update-arrow", text: "→", attr: { "aria-hidden": "true" } });
-    outside.createSpan({ cls: "sa-update-tab", text: t("outside") });
-    const inside = diagram.createDiv({ cls: "sa-update-example" });
-    inside.createSpan({ text: t("groupMenu") });
-    inside.createSpan({ cls: "sa-update-arrow", text: "→", attr: { "aria-hidden": "true" } });
-    inside.createSpan({ cls: "sa-update-tab sa-update-group", text: t("inside") });
-    const news = el.createDiv({ cls: "sa-update-news" });
-    setIcon(news.createSpan({ cls: "sa-update-icon" }), "sparkles");
-    news.createEl("h3", { text: t("news.title") });
-    news.createEl("p", { text: t("news.desc") });
+    for (const [key, icon] of [["tabs", "server"], ["close", "circle-stop"], ["news", "log-in"]]) {
+      const card = el.createDiv({ cls: "sa-update-card" });
+      setIcon(card.createSpan({ cls: "sa-update-icon" }), icon);
+      card.createEl("h3", { text: t(`${key}.title`) });
+      card.createEl("p", { text: t(`${key}.desc`) });
+    }
     const actions = el.createDiv({ cls: "sa-update-actions" });
     actions.createEl("a", { text: t("all"), href: RELEASE_URL,
                            attr: { target: "_blank", rel: "noopener noreferrer" } });

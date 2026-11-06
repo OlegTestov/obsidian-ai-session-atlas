@@ -8,15 +8,24 @@ function parts(version) {
   return typeof version === "string" && /^\d+\.\d+\.\d+$/.test(version) ? version.split(".").map(Number) : null;
 }
 
-function updateDecision(saved, version) {
+/** -1, 0 or 1: a before, equal to or after b. */
+function compare(a, b) {
+  const different = a.findIndex((n, i) => n !== b[i]);
+  return different < 0 ? 0 : Math.sign(a[different] - b[different]);
+}
+
+/**
+ * "show", "baseline" (record the version quietly) or "none". The highlights belong to `release`: a
+ * later patch without its own highlights records itself but does not show them a second time.
+ */
+function updateDecision(saved, version, release = RELEASE_VERSION) {
   const current = parts(version);
   if (!current) return "none";
   const previous = parts(saved.lastSeenVersion);
-  if (previous) {
-    const different = current.findIndex((n, i) => n !== previous[i]);
-    if (different < 0 || current[different] < previous[different]) return "none";
-  }
+  if (previous && compare(current, previous) <= 0) return "none";
   if (!Object.keys(saved).length || saved.showWhatsNew === false) return "baseline";
+  const notes = parts(release);
+  if (previous && notes && compare(previous, notes) >= 0) return "baseline";
   return "show";
 }
 
@@ -32,7 +41,7 @@ class WhatsNewModal extends Modal {
     this.setTitle(t("title"));
     const el = this.contentEl;
     el.createEl("p", { cls: "sa-updates-version", text: `AI Session Atlas · ${RELEASE_VERSION}` });
-    for (const [key, icon] of [["tabs", "server"], ["close", "circle-stop"], ["news", "log-in"]]) {
+    for (const [key, icon] of [["marks", "server"], ["close", "circle-stop"], ["bringBack", "log-in"]]) {
       const card = el.createDiv({ cls: "sa-update-card" });
       setIcon(card.createSpan({ cls: "sa-update-icon" }), icon);
       card.createEl("h3", { text: t(`${key}.title`) });

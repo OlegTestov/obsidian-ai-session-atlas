@@ -7,6 +7,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.7.1] - 2026-11-06
+
+### Fixed
+
+- Bring back and Stop no longer freeze Obsidian while they look for the background job: the process
+  check runs in the background.
+- Bring back never stops a session it cannot then open: without a conversation to resume the job
+  keeps running, and once stopped the conversation found before is opened.
+- One failed process check while a job ends no longer aborts Bring back with the job already stopped.
+- The “What’s new” cards no longer touch each other and take less height. A patch release records
+  itself quietly instead of showing the same highlights again.
+
+### Changed
+
+- Rows under **In the background, no tab** name a state in the same words as the cards.
+
 ## [2.7.0] - 2026-11-05
 
 ### Added

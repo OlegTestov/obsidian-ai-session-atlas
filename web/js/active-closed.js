@@ -83,8 +83,8 @@ function backgroundRow(j) {
   const row = el("div", "crow");
   const title = el("span", "ct", j.title || j.session_id.slice(0, 8));
   title.title = i18n("background.row.hint", { job: j.job_id, cwd: j.cwd || "?" });
-  const state = i18n(j.status === "busy" ? "background.busy" : j.status === "waiting" ? "background.waiting"
-    : "background.idle");
+  const state = i18n(j.status === "busy" ? "active.status.busy" : j.status === "waiting" ? "active.status.waiting"
+    : "active.status.idle");
   const meta = [state, j.last_message_at ? i18n("background.lastAgo", { ago: ago(j.last_message_at) }) : null]
     .filter(Boolean).join(" · ");
   const note = backgroundNotes.get(j.job_id);

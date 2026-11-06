@@ -47,7 +47,10 @@ server on `127.0.0.1`, and nothing is sent anywhere unless you turn on the optio
   asks for confirmation. A Claude Code session that runs in a background job of Claude Code (sent there
   with ← on an empty prompt or `/background`, or opened with `claude attach`) outlives its tab: the
   tab shows a server icon in the accent colour, and its close offers **Close, keep running** or
-  **Close and stop** (`claude stop`, the conversation is kept). Paths the agents print (`~/…`, `/…`, `src/main.rs:12`) are links: a click opens
+  **Close and stop** (`claude stop`, the conversation is kept). Such sessions without a tab are listed
+  under **Active → In the background, no tab**: **Bring back** stops the background copy and continues
+  the same conversation in an ordinary tab (the marked tab's menu offers it too), **Stop** ends it and
+  keeps its history. A session that is replying asks first. Paths the agents print (`~/…`, `/…`, `src/main.rs:12`) are links: a click opens
   the file in its default app (a note of this vault in Obsidian, a folder in Finder), ⌘-click shows it
   in Finder, and the right-click menu can copy the path.
 - **Session groups.** Agent tabs (other tabs too, from the menu of the tab in front) go into named, coloured groups, as Chrome's tab
@@ -447,8 +450,3 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). Report security issues as described in
 
 [MIT](LICENSE). The release `main.js` and `styles.css` include xterm.js and its addons (MIT); see
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
-
-Claude Code sessions running in the background without a tab appear under **Active → In the background**.
-Choose **Bring back** to stop the background process and continue the same conversation in an ordinary
-tab, or **Stop** to free its resources while keeping its history. A running reply asks before interruption.
-The tab's context menu also offers **Bring back from the background**.

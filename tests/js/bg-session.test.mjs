@@ -254,7 +254,8 @@ describe("return a background conversation to an ordinary tab", () => {
     const parent = { children: [old] }; old.parent = parent;
     const next = { parent };
     const p = Object.assign(Object.create(BackgroundTabMethods.prototype), {
-      t: k => k, backgroundResumeIdentity: d => d.sessionId, runningJob: () => data, claudeTabLeaves: () => [old], backgroundJobsOf: () => [JOB],
+      t: k => k, resumeIdentityOf: d => (/^[0-9a-f-]{36}$/.test(d.sessionId) ? d.sessionId : null),
+      runningJob: async () => data, claudeTabLeaves: () => [old], tabsShowingJob: async () => [old],
       groups: { members: { old: "group1" } },
       app: { workspace: { setActiveLeaf: () => calls.push("focus"), getMostRecentLeaf: () => next } },
       stopJob: async () => { calls.push("stop"); return true; },
@@ -277,10 +278,31 @@ describe("return a background conversation to an ordinary tab", () => {
     const parent = "aaaaaaaa-1111-2222-3333-444444444444";
     const { p, calls, data } = setup({
       stopJob: async () => { stopped = true; return true; },
-      backgroundResumeIdentity: d => stopped ? d.sessionId : parent,
+      resumeIdentityOf: d => stopped ? d.sessionId : parent,
     });
     assert.equal(await p.bringBackJob(JOB), true);
     assert.equal(calls.find(c => Array.isArray(c) && c[0] === "claude")[1].seed.sessionId, data.sessionId);
+  });
+  it("no history to resume: the job keeps running, nothing opens", async () => {
+    const { p, calls } = setup({ resumeIdentityOf: () => null });
+    assert.equal(await p.bringBackJob(JOB), false);
+    assert.deepEqual(calls, []);
+  });
+  it("history unreadable after the stop: the conversation found before is opened, not lost", async () => {
+    let stopped = false;
+    const parent = "aaaaaaaa-1111-2222-3333-444444444444";
+    const { p, calls } = setup({
+      stopJob: async () => { stopped = true; return true; },
+      resumeIdentityOf: () => (stopped ? null : parent),
+    });
+    assert.equal(await p.bringBackJob(JOB), true);
+    assert.equal(calls.find(c => Array.isArray(c) && c[0] === "claude")[1].seed.sessionId, parent);
+  });
+  it("a job no tab shows opens in a new tab and closes nothing", async () => {
+    const { p, calls } = setup({ tabsShowingJob: async () => [] });
+    assert.equal(await p.bringBackJob(JOB), true);
+    assert.ok(!calls.includes("detach") && !calls.includes("focus"));
+    assert.equal(calls.find(c => Array.isArray(c) && c[0] === "claude")[1].group, undefined);
   });
   it("a viewer repurposed during shutdown is never detached", async () => {
     const { p, calls, old } = setup();
@@ -317,21 +339,28 @@ describe("return a background conversation to an ordinary tab", () => {
     assert.deepEqual(calls, []);
   });
   it("a process check failure is not interpreted as a stopped job", async () => {
-    const { p, calls } = setup({ runningJob: () => { throw new Error("ps failed"); } });
+    const { p, calls } = setup({ runningJob: async () => { throw new Error("ps failed"); } });
     assert.equal(await p.bringBackJob(JOB), false);
+    assert.equal(await p.stopJobFromPage(JOB), false);
     assert.deepEqual(calls, []);
-    await assert.rejects(p.waitJobGone(JOB), /ps failed/);
+    assert.equal(p.busyJobs.size, 0);
   });
   it("Stop waits for termination and never resumes a conversation", async () => {
     const { p, calls } = setup();
     assert.equal(await p.stopJobFromPage(JOB), true);
     assert.deepEqual(calls, ["stop"]);
   });
-  it("a failed process probe throws instead of declaring a job absent", () => {
-    const real = childProcess.execFileSync;
-    childProcess.execFileSync = () => { throw new Error("ps unavailable"); };
-    try { assert.throws(() => BackgroundTabMethods.prototype.runningJob.call({ t: k => k }, JOB), /checkFailed/); }
-    finally { childProcess.execFileSync = real; }
+  it("a failed process probe throws instead of declaring a job absent, and never blocks", async () => {
+    const realSync = childProcess.execFileSync;
+    const real = childProcess.execFile;
+    const p = Object.assign(Object.create(BackgroundTabMethods.prototype), { t: k => k });
+    childProcess.execFileSync = () => { throw new Error("a synchronous ps blocks Obsidian"); };
+    try {
+      childProcess.execFile = (file, args, opts, cb) => cb(new Error("ps unavailable"), "", "");
+      await assert.rejects(p.runningJob(JOB), /checkFailed/);
+      childProcess.execFile = (file, args, opts, cb) => cb(null, ps("claude"));
+      assert.equal(await p.runningJob(OTHER), null);
+    } finally { childProcess.execFileSync = realSync; childProcess.execFile = real; }
   });
 });
 
@@ -341,10 +370,17 @@ it("termination waits on the captured process identity even without its session 
   try {
     childProcess.execFile = (file, args, opts, cb) => cb(null, ps("claude"));
     const identity = jobFile();
-    assert.equal(await p.waitJobGone(JOB, 0, identity), false);
-    assert.equal(await p.waitJobGone(JOB, 0, { ...identity, procStart: T }), true);
+    assert.equal(await p.waitJobGone(identity, 0), false);
+    assert.equal(await p.waitJobGone({ ...identity, procStart: T }, 0), true);
+    assert.equal(await p.waitJobGone(null, 0), true);
     childProcess.execFile = (file, args, opts, cb) => cb(new Error("failed"), "");
-    await assert.rejects(p.waitJobGone(JOB, 0, identity), /checkFailed/);
+    await assert.rejects(p.waitJobGone(identity, 0), /checkFailed/);
+    // One failed listing while the job ends is not the end of the wait.
+    let calls = 0;
+    childProcess.execFile = (file, args, opts, cb) => (++calls === 1 ? cb(new Error("busy"), "")
+      : cb(null, ps("claude").replace(/^\s*900 .*$/m, "")));
+    assert.equal(await p.waitJobGone(identity, 2000), true);
+    assert.equal(calls, 2);
   } finally { childProcess.execFile = real; }
 });
 
@@ -360,6 +396,10 @@ it("a newly parked job without a transcript resumes its parent's history, never 
   fs.writeFileSync(path.join(dir, parent + ".jsonl"), JSON.stringify({ type: "continued-in",
     continuedInSessionId: data.sessionId }) + "\n");
   assert.equal(resumeIdentity(data, root), parent);
+  // Another transcript of the folder, newer and unrelated, does not hide the parent.
+  fs.writeFileSync(path.join(dir, "cccccccc-1111-2222-3333-444444444444.jsonl"), '{"type":"user"}\n');
+  assert.equal(resumeIdentity(data, root), parent);
+  assert.equal(resumeIdentity({ ...data, cwd: "/tmp/elsewhere" }, root), null);
   fs.writeFileSync(path.join(dir, data.sessionId + ".jsonl"), '{"type":"user"}\n');
   assert.equal(resumeIdentity(data, root), data.sessionId);
   assert.equal(resumeIdentity({ ...data, sessionId: "../../bad" }, root), null);
@@ -377,4 +417,32 @@ it("refresh ignores a leaf whose view was replaced while ps ran", async () => {
     await p.refreshBackgroundMarks();
     assert.deepEqual(marks, []);
   } finally { childProcess.execFile = real; }
+});
+
+it("tabs showing a job: found from one listing that does not block, other tabs left alone", async () => {
+  const real = childProcess.execFile;
+  const realSync = childProcess.execFileSync;
+  for (const f of fs.readdirSync(SESSIONS)) fs.rmSync(path.join(SESSIONS, f));
+  fs.writeFileSync(path.join(SESSIONS, "9.json"), JSON.stringify(jobFile()));
+  const tab = (pid) => ({ view: { state: { kind: "claude" }, pty: { pid } } });
+  const shown = tab(100);
+  const other = tab(300);
+  const p = Object.assign(Object.create(BackgroundTabMethods.prototype), { t: k => k,
+    app: { workspace: { getLeavesOfType: () => [shown, other] } } });
+  try {
+    childProcess.execFileSync = () => { throw new Error("a synchronous ps blocks Obsidian"); };
+    childProcess.execFile = (file, args, opts, cb) => cb(null, ps(`claude attach ${JOB}`, `  300     1 ${T} /bin/sh -c atlas-pty`));
+    assert.deepEqual(await p.tabsShowingJob(JOB), [shown]);
+    assert.deepEqual(await p.tabsShowingJob(OTHER), []);
+    // A tab closed or reused while the listing ran is skipped, not read.
+    childProcess.execFile = (file, args, opts, cb) => { shown.view = { pty: undefined }; cb(null, ps(`claude attach ${JOB}`)); };
+    assert.deepEqual(await p.tabsShowingJob(JOB), []);
+    shown.view = { state: { kind: "claude" }, pty: { pid: 100 } };
+    childProcess.execFile = (file, args, opts, cb) => cb(new Error("ps failed"), "", "");
+    await assert.rejects(p.tabsShowingJob(JOB), /checkFailed/);
+  } finally {
+    childProcess.execFile = real;
+    childProcess.execFileSync = realSync;
+    fs.rmSync(path.join(SESSIONS, "9.json"));
+  }
 });

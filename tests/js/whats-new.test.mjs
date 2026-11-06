@@ -10,7 +10,11 @@ Module._load = realLoad;
 
 describe("update highlights", () => {
   it("first install establishes a baseline without showing old news", () => {
-    assert.equal(RELEASE_VERSION, JSON.parse(fs.readFileSync(new URL("../../manifest.json", import.meta.url))).version);
+    // The highlights belong to this minor version: a patch may keep them, a new minor needs its own.
+    const shipped = JSON.parse(fs.readFileSync(new URL("../../manifest.json", import.meta.url))).version.split(".").map(Number);
+    const notes = RELEASE_VERSION.split(".").map(Number);
+    assert.deepEqual(notes.slice(0, 2), shipped.slice(0, 2));
+    assert.ok(notes[2] <= shipped[2]);
     assert.equal(updateDecision({}, RELEASE_VERSION), "baseline");
   });
   it("existing users upgrading from before version tracking get the highlights once", () => {
@@ -18,11 +22,17 @@ describe("update highlights", () => {
     assert.equal(updateDecision({ lastSeenVersion: RELEASE_VERSION }, RELEASE_VERSION), "none");
   });
   it("compares versions numerically, and does not show notes on downgrade or invalid builds", () => {
-    assert.equal(updateDecision({ lastSeenVersion: "2.5.0" }, "2.6.0"), "show");
-    assert.equal(updateDecision({ lastSeenVersion: "2.9.0" }, "2.10.0"), "show");
-    assert.equal(updateDecision({ lastSeenVersion: "2.10.0" }, "2.6.0"), "none");
+    assert.equal(updateDecision({ lastSeenVersion: "2.5.0" }, "2.6.0", "2.6.0"), "show");
+    assert.equal(updateDecision({ lastSeenVersion: "2.9.0" }, "2.10.0", "2.10.0"), "show");
+    assert.equal(updateDecision({ lastSeenVersion: "2.10.0" }, "2.6.0", "2.6.0"), "none");
     assert.equal(updateDecision({ lastSeenVersion: "2.6.0" }, "dev"), "none");
     assert.equal(updateDecision({ lastSeenVersion: {} }, RELEASE_VERSION), "show");
+  });
+  it("a patch without its own highlights records itself and does not show the same notes again", () => {
+    assert.equal(updateDecision({ lastSeenVersion: "2.7.0" }, "2.7.1", "2.7.0"), "baseline");
+    assert.equal(updateDecision({ lastSeenVersion: "2.6.0" }, "2.7.1", "2.7.0"), "show");
+    assert.equal(updateDecision({ lastSeenVersion: "2.7.1" }, "2.7.1", "2.7.0"), "none");
+    assert.equal(updateDecision({ lastSeenVersion: "2.7.0" }, "2.8.0", "2.8.0"), "show");
   });
   it("opt-out records an upgrade without opening a modal", () => {
     assert.equal(updateDecision({ lastSeenVersion: "2.5.0", showWhatsNew: false }, RELEASE_VERSION), "baseline");

@@ -228,9 +228,13 @@ class SessionAtlasPlugin extends Plugin {
     if (data.type === "bg-bring-back" || data.type === "bg-stop") {
       if (typeof data.job !== "string") return;
       const source = event.source;
+      const reply = (ok) => {
+        try {
+          source.postMessage({ source: HOST_SOURCE, type: "bg-result", job: data.job, ok }, this.atlasOrigin());
+        } catch { /* the page went away meanwhile */ }
+      };
       (data.type === "bg-stop" ? this.stopJobFromPage(data.job) : this.bringBackJob(data.job))
-        .then(ok => source.postMessage({ source: "session-atlas-host", type: "bg-result", job: data.job, ok }, this.atlasOrigin()))
-        .catch(() => source.postMessage({ source: "session-atlas-host", type: "bg-result", job: data.job, ok: false }, this.atlasOrigin()));
+        .then(reply, () => reply(false));
       return;
     }
     if (data.type === "send-text") {

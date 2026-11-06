@@ -20,7 +20,7 @@ it("background row names the state and sends only the job id; pending actions ca
   const { ctx, calls } = page();
   const row = ctx.backgroundRow(job);
   assert.equal(row.children[0].text, "Recorder");
-  assert.match(row.children[1].text, /background.busy/);
+  assert.match(row.children[1].text, /active.status.busy/);
   row.children[2].events.click();
   row.children[3].events.click();
   assert.equal(JSON.stringify(calls), JSON.stringify([["bg-bring-back", { job: "ab12cd34" }]]));

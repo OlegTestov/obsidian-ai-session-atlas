@@ -5,11 +5,10 @@
 import { Notice, addIcon } from "obsidian";
 import * as path from "path";
 import * as fsSync from "fs";
-import { AGENT_VIEW_TYPE } from "./constants";
+import { AGENT_VIEW_TYPE, SESSION_ID } from "./constants";
 
 const SCRIPT_NAME = "agent-resume-terminal.zsh";
 const AGENTS = { claude: "Claude Code", codex: "Codex" };
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 // A Claude Code background job, as `claude attach` takes it (the first 8 hex digits of its session).
 const JOB_ID = /^[0-9a-f]{8}$/;
 const AND = Symbol("&&");
@@ -93,11 +92,11 @@ function parseLaunch(command) {
   if (w[3] === "codex") {
     if (args.length === 0) return start("new", "");
     if (args.length === 1 && plainPrompt(args[0])) return start("new", "", args[0]);
-    return args.length === 2 && args[0] === "resume" && UUID.test(args[1]) ? start("resume", args[1]) : null;
+    return args.length === 2 && args[0] === "resume" && SESSION_ID.test(args[1]) ? start("resume", args[1]) : null;
   }
   const [flag, id, ...rest] = args;
   if (flag === "attach") return rest.length === 0 && JOB_ID.test(id || "") ? start("attach", id) : null;
-  if (!UUID.test(id || "")) return null;
+  if (!SESSION_ID.test(id || "")) return null;
   if (flag === "--resume" && rest.length === 0) return start("resume", id);
   if (flag === "--resume" && rest.length === 1 && rest[0] === "--fork-session") return start("resume-fork", id);
   if (flag === "--session-id" && rest.length === 0) return start("new", id);

@@ -6,12 +6,11 @@ import * as childProcess from "child_process";
 import * as fsSync from "fs";
 import * as path from "path";
 import { Notice } from "obsidian";
-import { AGENT_VIEW_TYPE, SESSIONS_DIR } from "./constants";
+import { AGENT_VIEW_TYPE, SESSIONS_DIR, SESSION_ID } from "./constants";
 import { ConfirmCloseModal } from "./guard";
 import { resumeIdentity } from "./bg-transcript";
 
 const JOB_ID = /^[0-9a-f]{8}$/;
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const GONE_WAIT_MS = 15000;             // `claude stop` returns before the job's process has gone
 const GONE_POLL_MS = 300;
 const ATTACH = /(?:^|\/)claude attach ([0-9a-f]{8})$/;
@@ -166,29 +165,50 @@ class BackgroundTabMethods {
     });
   }
 
-  /** A running job's process file, read afresh, or null (ended, or not a job). */
-  runningJob(job) {
+  /** A process listing, or an error: acting on a missing one would treat every job as ended. */
+  async processListing() {
+    const text = await listTree();
+    if (!text) throw new Error(this.t("background.checkFailed"));
+    return text;
+  }
+
+  /** A running job's process file with its process's start time, read afresh; null when it ended. */
+  async runningJob(job) {
     if (!JOB_ID.test(job || "")) return null;
-    let text = "";
-    try {
-      text = childProcess.execFileSync("/bin/ps", PS_ARGS, { env: PS_ENV, encoding: "utf8", timeout: 3000,
-                                                             maxBuffer: 64 << 20 });
-    } catch {
-      throw new Error(this.t("background.checkFailed"));
-    }
-    const tree = processTree(text);
+    const tree = processTree(await this.processListing());
     const data = liveJobs(readSessionFiles(), tree).get(job);
     return data ? Object.assign({}, data, { procStart: tree.starts.get(data.pid) }) : null;
   }
 
-  async waitJobGone(job, limitMs = GONE_WAIT_MS, identity = this.runningJob(job)) {
+  /** The open tabs that show the job: an attach client of it, or the process whose work it took. */
+  async tabsShowingJob(job) {
+    const tabs = this.claudeTabLeaves().filter((leaf) => !leaf.view.pty.exited)
+      .map((leaf) => ({ leaf, view: leaf.view, pty: leaf.view.pty }));
+    if (!tabs.length) return [];
+    const text = await this.processListing();
+    const files = readSessionFiles();
+    return tabs.filter(({ leaf, view, pty }) => leaf.view === view && view.pty === pty && !pty.exited
+      && tabJob(text, files, pty.pid) === job).map(({ leaf }) => leaf);
+  }
+
+  /**
+   * Waits for that very process (pid and start time) to go: its file can vanish before it does. A
+   * failed listing is tried again until the deadline; only a deadline with no listing at all throws.
+   */
+  async waitJobGone(identity, limitMs = GONE_WAIT_MS) {
     if (!identity) return true;
     const end = Date.now() + limitMs;
+    let listed = false;
     while (true) {
       const text = await listTree();
-      if (!text) throw new Error(this.t("background.checkFailed"));
-      if (!fileAlive(identity, processTree(text))) return true;
-      if (Date.now() >= end) return false;
+      if (text) {
+        listed = true;
+        if (!fileAlive(identity, processTree(text))) return true;
+      }
+      if (Date.now() >= end) {
+        if (!listed) throw new Error(this.t("background.checkFailed"));
+        return false;
+      }
       await new Promise((resolve) => window.setTimeout(resolve, GONE_POLL_MS));
     }
   }
@@ -209,45 +229,44 @@ class BackgroundTabMethods {
     });
   }
 
-  /**
-   * The job's conversation in an ordinary tab: the job stops (Claude Code has no way back to the
-   * foreground), then `claude --resume` of its session opens where its tab stood, in its group.
-   */
-  backgroundResumeIdentity(data) {
+  /** The session id `claude --resume` takes for the job: its own, or its parent's (bg-transcript.js). */
+  resumeIdentityOf(data) {
     const id = resumeIdentity(data);
-    if (!id) new Notice(this.t("background.historyMissing"));
-    return id;
+    return SESSION_ID.test(id || "") ? id : null;
   }
 
+  /**
+   * The job's conversation in an ordinary tab. Claude Code has no way back to the foreground, so the
+   * job stops, then `claude --resume` opens where its tab stood, in its group. Nothing stops unless
+   * there is a conversation to open.
+   */
   async bringBackJob(job) {
     return this.withBackgroundJob(job, async (data) => {
-      let sessionId = this.backgroundResumeIdentity(data);
-      if (!UUID.test(sessionId || "") || typeof data.cwd !== "string" || !data.cwd.startsWith("/")) return false;
+      const before = this.resumeIdentityOf(data);
+      if (!before || typeof data.cwd !== "string" || !data.cwd.startsWith("/")) {
+        new Notice(this.t("background.historyMissing"));
+        return false;
+      }
       if (!(await this.confirmInterrupt(data, "bringBack"))) return false;
-      const leaves = this.claudeTabLeaves().filter((leaf) => !leaf.view.pty.exited);
-      const shown = this.backgroundJobsOf(leaves);
-      const tabs = leaves.filter((leaf, i) => shown[i] === job);
-      const identities = tabs.map(leaf => ({ leaf, view: leaf.view, pty: leaf.view.pty }));
-      const stillSame = item => this.claudeTabLeaves().includes(item.leaf)
-        && item.leaf.view === item.view && item.view.pty === item.pty;
-      let old = tabs[0];
+      const tabs = (await this.tabsShowingJob(job)).map((leaf) => ({ leaf, view: leaf.view, pty: leaf.view.pty }));
+      const unchanged = (tab) => this.claudeTabLeaves().includes(tab.leaf)
+        && tab.leaf.view === tab.view && tab.view.pty === tab.pty;
+      const old = tabs.length ? tabs[0].leaf : null;
       const parent = old && old.parent;
       const index = parent && parent.children ? parent.children.indexOf(old) : -1;
       const group = old && this.groups ? this.groups.members[old.id] : null;
       if (!(await this.stopJob(job))) return false;
-      sessionId = this.backgroundResumeIdentity(data);
-      if (!UUID.test(sessionId || "")) return false;
-      if (old && !stillSame(identities[0])) old = null;
-      if (old) this.app.workspace.setActiveLeaf(old, { focus: false });
-      const label = data.name || this.t("background.session");
+      // The job may have written its own history while it stopped: then that is the newest.
+      const sessionId = this.resumeIdentityOf(data) || before;
+      if (tabs.length && unchanged(tabs[0])) this.app.workspace.setActiveLeaf(old, { focus: false });
       const seed = { agent: "claude", cwd: data.cwd, mode: "resume", sessionId, prompt: "" };
+      const label = data.name || this.t("background.session");
       const opened = await this.openAgent("claude", Object.assign({ cwd: data.cwd, seed, label }, group ? { group } : {}));
-      if (opened) {
-        const next = this.app.workspace.getMostRecentLeaf();
-        if (next && next.parent === parent && index >= 0) this.moveLeafTo(next, index);
-        for (const item of identities) if (stillSame(item)) item.leaf.detach();
-      }
-      return opened;
+      if (!opened) return false;
+      const next = this.app.workspace.getMostRecentLeaf();
+      if (next && parent && next.parent === parent && index >= 0) this.moveLeafTo(next, index);
+      for (const tab of tabs) if (unchanged(tab)) tab.leaf.detach();
+      return true;
     });
   }
 
@@ -261,18 +280,18 @@ class BackgroundTabMethods {
     });
   }
 
-  /** Lock before the confirmation opens: repeated clicks must not create competing transfers. */
+  /** One action per job at a time, locked before any question: repeated clicks do nothing. */
   async withBackgroundJob(job, action) {
     if (!JOB_ID.test(job || "")) return false;
     if (!this.busyJobs) this.busyJobs = new Set();
     if (this.busyJobs.has(job)) return false;
     this.busyJobs.add(job);
     try {
-      const data = this.runningJob(job);
+      const data = await this.runningJob(job);
       if (!data) { new Notice(this.t("background.gone")); return false; }
       return await action(data);
     } catch (error) {
-      new Notice(String(error.message || error));
+      new Notice(String((error && error.message) || error));
       return false;
     } finally {
       this.busyJobs.delete(job);
@@ -281,14 +300,14 @@ class BackgroundTabMethods {
 
   /** `claude stop` and the wait for the job's process to go; a notice when it does not. */
   async stopJob(job) {
-    const identity = this.runningJob(job);
+    const identity = await this.runningJob(job);
     if (!identity) return true;
     const result = await this.stopBackgroundJob(job);
-    if (!result.ok && !(await this.waitJobGone(job, 0, identity))) {
+    if (!result.ok && !(await this.waitJobGone(identity, 0))) {
       new Notice(this.t("close.background.stopFailed", { job, error: result.error || "?" }));
       return false;
     }
-    if (await this.waitJobGone(job, GONE_WAIT_MS, identity)) return true;
+    if (await this.waitJobGone(identity)) return true;
     new Notice(this.t("close.background.stopFailed", { job, error: this.t("background.stillRunning") }));
     return false;
   }

@@ -1085,7 +1085,18 @@ JS_MUT = [
  ("updates: a patch shows the same highlights again", "obsidian-plugin/src/whats-new.js",
   "if (previous && notes && compare(previous, notes) >= 0) return \"baseline\";", ""),
  ("updates: marker not advanced", "obsidian-plugin/src/whats-new.js",
-  "this.settings.lastSeenVersion = this.manifest.version;", "this.settings.lastSeenVersion = \"0.0.0\";"),
+  "this.settings.lastSeenVersion = version;", "this.settings.lastSeenVersion = \"0.0.0\";"),
+ ("updates: startup manifest decides after an in-place reload", "obsidian-plugin/src/whats-new.js",
+  "const decision = updateDecision(saved, version);", "const decision = updateDecision(saved, this.manifest.version);"),
+ ("updates: build version ignored", "obsidian-plugin/src/whats-new.js",
+  "return BUILT_VERSION || this.manifest.version;", "return this.manifest.version;"),
+ ("updates: build not stamped with its version", "esbuild.config.mjs",
+  "define: { __ATLAS_VERSION__:", "define: { __ATLAS_UNUSED__:"),
+ ("plugin: reload keeps the startup manifest", "obsidian-plugin/src/reload.js",
+  "try { await plugins.loadManifest(dir); }", "try { /* skipped */ }"),
+ ("plugin: an unreadable manifest leaves the plugin disabled", "obsidian-plugin/src/reload.js",
+  "try { await plugins.loadManifest(dir); } catch (error) { console.error(\"AI Session Atlas: could not reread the manifest\", error); }",
+  "await plugins.loadManifest(dir);"),
  ("updates: checkpoint not saved", "obsidian-plugin/src/whats-new.js",
   "await this.saveData(this.settings);", ""),
  ("updates: unload still opens modal", "obsidian-plugin/src/whats-new.js",
@@ -1666,7 +1677,8 @@ JS_MUT = [
 JS_TESTS = [
     ("obsidian-plugin/src/bg-transcript.js", ["tests/js/bg-session.test.mjs"]),
     ("web/js/active-closed.js", ["tests/js/background-page.test.mjs", "tests/js/page.test.mjs"]),
-    ("obsidian-plugin/src/whats-new.js", ["tests/js/whats-new.test.mjs"]),
+    ("obsidian-plugin/src/whats-new.js", ["tests/js/whats-new.test.mjs", "tests/js/bundle.test.mjs"]),
+    ("esbuild.config.mjs", ["tests/js/bundle.test.mjs"]),
     ("obsidian-plugin/src/pty.js", ["tests/js/pty.test.mjs"]),
     ("obsidian-plugin/src/startup.js", ["tests/js/startup.test.mjs"]),
     ("obsidian-plugin/src/term-links.js", ["tests/js/term-links.test.mjs"]),
@@ -1733,6 +1745,8 @@ def run_node(path, name=None):
     # or a bundled server on the host. Its pure selector test catches both mutations directly.
     tests = (["--test-name-pattern=cleanup selects only", "tests/js/indexer-cleanup.test.mjs"]
              if name in SELECTOR_MUTATIONS else js_tests(path))
+    # Force-exit: a mutant may leave a timer running. It can cut the TAP tail on macOS, so only the
+    # exit code is read here (npm test runs without it to keep the counts whole).
     return _run(["node", "--test", "--test-force-exit", "--test-timeout=120000", *tests])
 
 

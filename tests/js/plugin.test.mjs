@@ -15,7 +15,7 @@ import process from "node:process";
 import { setInterval } from "node:timers";
 import { setTimeout as delay } from "node:timers/promises";
 import { getGlobal, setGlobal } from "./helpers/globals.mjs";
-import { FIXTURES, SRC, loadSrc, pluginClass } from "./helpers/load-src.mjs";
+import { FIXTURES, ROOT, SRC, loadSrc, pluginClass } from "./helpers/load-src.mjs";
 
 const require = Module.createRequire(import.meta.url);
 
@@ -1782,6 +1782,7 @@ describe("reload in place", () => {
     const rp = new SessionAtlasPlugin();
     rp.manifest = { id: "session-atlas", dir: "plug" };
     rp.app = { plugins: { plugins: {}, disablePlugin: async (id, user) => { calls.push(["off", id, user]); },
+                          loadManifest: async (dir) => { calls.push(["manifest", dir]); },
                           enablePlugin: async (id) => { calls.push(["on", id]); } } };
     rp.app.plugins.plugins["session-atlas"] = rp;
     const first = rp.reloadInPlace();
@@ -1789,10 +1790,12 @@ describe("reload in place", () => {
     await sleep(150);
     assert.equal(first, true);
     assert.equal(second, false);
-    assert.equal(calls.length, 2, JSON.stringify(calls));
+    assert.equal(calls.length, 3, JSON.stringify(calls));
     assert.equal(calls[0][0], "off");
     assert.notEqual(calls[0][2], true);
-    assert.equal(calls[1][0], "on");
+    // The new instance gets the manifest on disk, not the one Obsidian read at startup.
+    assert.deepEqual(calls[1], ["manifest", "plug"]);
+    assert.equal(calls[2][0], "on");
 
     // Kept inside this test: it needs the same app as the instance above.
     const other = new SessionAtlasPlugin();
@@ -1802,6 +1805,30 @@ describe("reload in place", () => {
   });
   it("not the current instance: no reload", () => {
     assert.equal(reloadOther(), false);
+  });
+  it("a manifest that cannot be read does not leave the plugin disabled", async () => {
+    const calls = [];
+    const fp = new SessionAtlasPlugin();
+    fp.manifest = { id: "session-atlas", dir: "plug" };
+    fp.app = { plugins: { plugins: {}, disablePlugin: async () => { calls.push("off"); },
+                          loadManifest: async () => { throw new Error("half-written manifest.json"); },
+                          enablePlugin: async () => { calls.push("on"); } } };
+    fp.app.plugins.plugins["session-atlas"] = fp;
+    const quiet = console.error;
+    console.error = () => {};
+    try {
+      assert.equal(fp.reloadInPlace(), true);
+      await sleep(150);
+    } finally {
+      console.error = quiet;
+    }
+    assert.deepEqual(calls, ["off", "on"]);
+  });
+  it("the version comes from the build, not from the manifest Obsidian read at startup", () => {
+    const p = new SessionAtlasPlugin();
+    p.manifest = { id: "session-atlas", version: "0.0.1" };
+    const shipped = JSON.parse(fs.readFileSync(path.join(ROOT, "manifest.json"), "utf8")).version;
+    assert.equal(p.runningVersion(), BUNDLE ? shipped : "0.0.1");
   });
 
   // A new build on disk: the plugin reloads itself.

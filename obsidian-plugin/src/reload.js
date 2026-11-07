@@ -18,7 +18,7 @@ class ReloadMethods {
   reloadInPlace() {
     if (this.reloading || !this.canReloadInPlace()) return false;
     const plugins = this.app.plugins;
-    const id = this.manifest.id;
+    const { id, dir } = this.manifest;
     if (plugins.plugins && plugins.plugins[id] !== this) return false;     // a reload is already under way
     this.reloading = true;
     // Not from inside our own handler: unloading would cut it off midway.
@@ -26,6 +26,11 @@ class ReloadMethods {
       // A group change waiting for its debounced save is on disk before the new instance reads it.
       if (typeof this.flushGroups === "function") await this.flushGroups();
       await plugins.disablePlugin(id);
+      // Obsidian reads manifests only at startup; without a reread the new instance (and the plugin
+      // list) keeps the version Obsidian started with.
+      if (typeof plugins.loadManifest === "function" && dir) {
+        try { await plugins.loadManifest(dir); } catch (error) { console.error("AI Session Atlas: could not reread the manifest", error); }
+      }
       await plugins.enablePlugin(id);
     }, 50);
     return true;

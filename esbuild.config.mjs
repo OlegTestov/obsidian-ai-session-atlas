@@ -64,6 +64,7 @@ export async function build(outdir = OUT) {
     external: ["obsidian", "electron", ...builtinModules, ...builtinModules.map((m) => `node:${m}`)],
     banner: { js: "/* AI Session Atlas — https://github.com/OlegTestov/obsidian-ai-session-atlas. Bundles xterm.js (MIT); see THIRD-PARTY-NOTICES.md. */" },
     plugins: [embedPayload],
+    define: { __ATLAS_VERSION__: JSON.stringify(JSON.parse(fs.readFileSync(path.join(ROOT, "manifest.json"), "utf8")).version) },
     legalComments: "inline",
     logLevel: "warning",
   });

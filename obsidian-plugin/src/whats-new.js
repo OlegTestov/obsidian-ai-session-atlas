@@ -1,8 +1,12 @@
 // A ten-second release summary, bundled locally: no network, transcript, or Markdown renderer.
 import { Modal, setIcon } from "obsidian";
+/* global __ATLAS_VERSION__ -- set by esbuild.config.mjs in the release build */
 
 const RELEASE_VERSION = "2.7.0";
 const RELEASE_URL = `https://github.com/OlegTestov/obsidian-ai-session-atlas/releases/tag/${RELEASE_VERSION}`;
+// Obsidian reads plugin manifests only at startup: after an in-place reload this.manifest still names
+// the version Obsidian started with. The release build stamps its own version (esbuild.config.mjs).
+const BUILT_VERSION = typeof __ATLAS_VERSION__ === "string" ? __ATLAS_VERSION__ : null;
 
 function parts(version) {
   return typeof version === "string" && /^\d+\.\d+\.\d+$/.test(version) ? version.split(".").map(Number) : null;
@@ -74,11 +78,16 @@ class WhatsNewMethods {
 
   async checkWhatsNew(saved) {
     if (this._loaded === false) return;
-    const decision = updateDecision(saved, this.manifest.version);
+    const version = this.runningVersion();
+    const decision = updateDecision(saved, version);
     if (decision === "none") return;
-    this.settings.lastSeenVersion = this.manifest.version;
+    this.settings.lastSeenVersion = version;
     await this.saveData(this.settings);
     if (decision === "show" && this._loaded !== false) this.showWhatsNew();
+  }
+
+  runningVersion() {
+    return BUILT_VERSION || this.manifest.version;
   }
 
   showWhatsNew() {

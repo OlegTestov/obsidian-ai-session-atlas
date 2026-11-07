@@ -7,6 +7,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.7.2] - 2026-11-08
+
+### Fixed
+
+- After **Reload the plugin** (or a new build picked up on its own) the plugin knows its real version.
+  Before, Obsidian kept the version it had read at startup until it was restarted, so “What’s new” never
+  opened and the plugin list showed the old number.
+
+### Changed
+
+- `npm test` no longer force-exits: on macOS that cut the end of some test files' output, so the run
+  reported fewer tests than it ran (failures were never hidden).
+
 ## [2.7.1] - 2026-11-06
 
 ### Fixed

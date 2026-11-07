@@ -58,6 +58,16 @@ describe("update highlights", () => {
     await plugin.checkWhatsNew(plugin.settings);
     assert.equal(events.length, 2);
   });
+  it("after an in-place reload the running version decides, not the startup manifest", async () => {
+    const saved = { lastSeenVersion: "2.4.6" }, events = [];
+    const plugin = Object.assign(Object.create(WhatsNewMethods.prototype), {
+      settings: { ...saved }, manifest: { version: "2.4.6" }, runningVersion: () => RELEASE_VERSION,
+      async saveData(value) { events.push(["saved", value.lastSeenVersion]); },
+      showWhatsNew() { events.push(["shown"]); },
+    });
+    await plugin.checkWhatsNew(saved);
+    assert.deepEqual(events, [["saved", RELEASE_VERSION], ["shown"]]);
+  });
   it("first install, disabled popups, and unloading during save never steal focus", async () => {
     for (const saved of [{}, { showWhatsNew: false }, { language: "en" }]) {
       let shown = 0;

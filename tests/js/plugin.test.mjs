@@ -2385,6 +2385,14 @@ describe("Codex new sessions from the catalog", () => {
     assert.equal(states[0].state.cwd, "/Users/u/Code/p");
     assert.deepEqual(agents.shellWords(states[0].state.command).slice(4), ["new", "", "сделай отчёт"]);
   });
+  it("a tab that shows a background job tells the page its job; others do not", () => {
+    const p = new SessionAtlasPlugin();
+    p.tabGroupInfo = () => null;
+    p.tabAgent = () => "claude";
+    assert.deepEqual(p.tabInfo({ leaf: { view: { backgroundJob: "ab12cd34" } }, pid: 5, title: "t" }),
+                     { ptyPid: 5, title: "t", background: "ab12cd34" });
+    assert.deepEqual(p.tabInfo({ leaf: { view: { backgroundJob: null } }, pid: 6, title: "u" }), { ptyPid: 6, title: "u" });
+  });
   it("the tabs reply tells the page which agents are on", async () => {
     const p = new SessionAtlasPlugin();
     p.terminalReport = async () => ({ tabs: [], health: { ok: true } });

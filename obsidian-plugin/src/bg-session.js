@@ -16,6 +16,7 @@ const GONE_POLL_MS = 300;
 const ATTACH = /(?:^|\/)claude attach ([0-9a-f]{8})$/;
 const REFRESH_MS = 10000;               // as the activity poll; a close checks afresh anyway
 const STOP_TIMEOUT_MS = 30000;
+const BACKGROUND_SECTION = "session-atlas-background";
 // Start times in UTC: Claude Code writes `procStart` in UTC, in the form `ps -o lstart=` prints.
 const PS_ARGS = ["-A", "-o", "pid=,ppid=,lstart=,command="];
 const PS_ENV = Object.assign({}, process.env, { TZ: "UTC", LC_ALL: "C" });
@@ -319,7 +320,8 @@ class BackgroundTabMethods {
     if (!this.backgroundMenus) this.backgroundMenus = new WeakSet();
     if (this.backgroundMenus.has(menu)) return;        // the tab's own menu and Obsidian's leaf-menu
     this.backgroundMenus.add(menu);
-    menu.addItem((item) => item.setSection("action").setTitle(this.t("background.menu.bringBack"))
+    // A section of its own: Obsidian puts a separator before it, apart from the group actions.
+    menu.addItem((item) => item.setSection(BACKGROUND_SECTION).setTitle(this.t("background.menu.bringBack"))
       .setIcon("log-in").onClick(() => this.bringBackJob(job)));
   }
 
@@ -342,4 +344,4 @@ class BackgroundTabMethods {
   }
 }
 
-export { BackgroundTabMethods, tabJob, liveJobs, processTree, readSessionFiles, REFRESH_MS, PS_ARGS };
+export { BackgroundTabMethods, BACKGROUND_SECTION, tabJob, liveJobs, processTree, readSessionFiles, REFRESH_MS, PS_ARGS };

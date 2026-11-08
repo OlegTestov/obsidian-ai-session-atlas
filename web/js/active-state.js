@@ -3,7 +3,7 @@
 /* exported hostHealth, activeUpdated, activeLimits, activeCodexLimits, ACTIVE_FILTERS, PERIODS -- used by other page scripts */
 /* exported legacyGroupNames, activeFilter, filterUI, layout, LAYOUT_MAX, LAYOUT_CELLS, layoutUI -- used by other page scripts */
 /* exported fullReplies, SEND_TIMEOUT_MS, MAX_ATTACH, lastSignature, composing -- used by other page scripts */
-/* exported lastRenderAt, fmtShort, tellTabHost, tabFor, heldFor, hostHeld -- used by other page scripts */
+/* exported lastRenderAt, fmtShort, tellTabHost, tabFor, heldFor, hostHeld, hostBackground -- used by other page scripts */
 // --- Active tab --------------------------------------------------------------
 
 const ACTIVE_POLL_MS = 5000;
@@ -13,6 +13,7 @@ let activeRaw = [];             // sessions as the server sent them; activeSessi
 let hostScreens = new Map();    // PTY proxy PID → screen state of a Codex tab (waiting | busy | idle)
 let hostTabs = new Map();       // PTY proxy PID → terminal tab title
 let hostHeld = new Map();       // PTY proxy PID → title: the tab closed with the plugin, the process runs
+let hostBackground = new Map(); // PTY proxy PID → the Claude Code background job the tab shows
 let hostReady = false;          // the plugin answered, so Go to and Close are available
 let hostHealth = null;          // {ok, reason} from the plugin: whether the terminal link works
 let tabsAskedAt = null;         // when the tabs were requested and no answer has come yet
@@ -119,6 +120,8 @@ window.addEventListener("message", e => {
     .map(t => [t.ptyPid, String(t.title || "")]));
   hostScreens = new Map(d.tabs.filter(t => t && Number.isInteger(t.ptyPid) && t.agent === "codex")
     .map(t => [t.ptyPid, typeof t.screen === "string" ? t.screen : null]));
+  hostBackground = new Map(d.tabs.filter(t => t && Number.isInteger(t.ptyPid) && /^[0-9a-f]{8}$/.test(t.background || ""))
+    .map(t => [t.ptyPid, t.background]));
   hostHeld = new Map((Array.isArray(d.held) ? d.held : []).filter(t => t && Number.isInteger(t.ptyPid))
     .map(t => [t.ptyPid, String(t.title || "")]));
   readTabGroups(d);

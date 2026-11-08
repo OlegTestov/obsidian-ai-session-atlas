@@ -19,7 +19,7 @@ Module._load = (request, parent, isMain) =>
   request === "obsidian" ? { Notice: class {}, Modal: class {}, View: class {}, addIcon: () => {} } : realLoad(request, parent, isMain);
 globalThis.window = globalThis.window || { setInterval: () => 0, setTimeout };
 const bg = loadSrc("bg-session");
-const { tabJob, BackgroundTabMethods } = bg;
+const { tabJob, BackgroundTabMethods, BACKGROUND_SECTION } = bg;
 
 const JOB = "ab12cd34";
 const OTHER = "ffee0011";
@@ -243,6 +243,28 @@ describe("the plugin side", () => {
       assert.equal((await plugin.stopBackgroundJob(bad)).ok, false, String(bad));
     }
     assert.equal(probed, false);
+  });
+});
+
+// Obsidian draws a separator where the menu section's first word (before ".") changes; the group
+// actions are in "action". Bring back is about the session, not the group: its own section.
+describe("the tab menu of a background tab", () => {
+  const menuOf = (job) => {
+    const p = Object.assign(Object.create(BackgroundTabMethods.prototype), { t: (k) => k, bringBackJob() {} });
+    const items = [];
+    const menu = { addItem: (fn) => { const it = { setSection: (s) => { it.section = s; return it; },
+      setTitle: (t) => { it.title = t; return it; }, setIcon: () => it, onClick: () => it }; fn(it); items.push(it); } };
+    p.addBackgroundItems(menu, { view: { backgroundJob: job } });
+    p.addBackgroundItems(menu, { view: { backgroundJob: job } });   // the tab's menu and Obsidian's leaf-menu
+    return items;
+  };
+  it("Bring back is once, in a section of its own: a separator parts it from the group actions", () => {
+    const items = menuOf(JOB);
+    assert.deepEqual(items.map((i) => [i.section, i.title]), [[BACKGROUND_SECTION, "background.menu.bringBack"]]);
+    assert.notEqual(BACKGROUND_SECTION.split(".")[0], "action");
+  });
+  it("an ordinary tab has no such item", () => {
+    assert.deepEqual(menuOf(null), []);
   });
 });
 

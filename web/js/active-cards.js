@@ -50,6 +50,12 @@ function activeCard(s) {
   if (group) tags.appendChild(group);
   if (s.tab_group) card.classList.add("grouped", `g-${s.tab_group.color}`);
   tags.appendChild(agentBadge(s));
+  const bgJob = pid ? hostBackground.get(pid) || null : null;
+  if (bgJob) {
+    const bg = el("span", "pill acc bgjob", i18n("active.bgSession"));
+    bg.title = i18n("active.bgSessionHint", { job: bgJob });
+    tags.appendChild(bg);
+  }
   if (tasks && !full) {                  // compact view has no room for a separate line: the label goes into the tags
     const pill = el("span", "pill task" + (tasks.finished ? " done" : ""),
                     (tasks.current ? "▶ " : "") + i18n("active.tasksPill", { count: tasks.count }));
@@ -124,6 +130,7 @@ function activeCard(s) {
     if (stopFull) head.appendChild(stopFull);
     head.appendChild(feedButton(s, true));
     head.appendChild(hideButton(s, true));
+    if (bgJob) head.appendChild(bringBackButton(bgJob, true));
     head.append(canMove(s, pid || heldPid) ? moveButton(s, true) : go, close);
     const parts = AtlasLogic.infoParts(s, ago, shortStart);
     const info = infoLine("info", [...parts.when, ...parts.nums], parts.context);
@@ -151,7 +158,9 @@ function activeCard(s) {
   if (stopCompact) foot.appendChild(stopCompact);
   foot.appendChild(feedButton(s, false));
   foot.appendChild(hideButton(s, false));
+  if (bgJob) foot.classList.add("bgfoot");              // fitBringBack: icon only when the row does not fit
   foot.append(canMove(s, pid || heldPid) ? moveButton(s, false) : go, close);
+  if (bgJob) foot.appendChild(bringBackButton(bgJob, false));
   card.append(when, nums);
   const dialog = dialogBlock(s, pid, false);
   if (dialog) {

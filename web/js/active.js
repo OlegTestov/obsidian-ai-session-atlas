@@ -126,7 +126,7 @@ function renderActive(skipKey, force) {
   // Plan feedback is being typed: the field is not recreated, otherwise focus and caret are lost.
   if (document.activeElement && document.activeElement.matches("#active-grid .planfb textarea")) return;
   // Nothing changed: leave the DOM alone entirely, so the text scroll does not reset.
-  const signature = JSON.stringify([shown, activeMode, layout, hostReady, [...hostTabs.keys()], [...hostHeld.keys()],
+  const signature = JSON.stringify([shown, activeMode, layout, hostReady, [...hostTabs.keys()], [...hostHeld.keys()], [...hostBackground],
     [...justSent].map(([sid, sent]) => [sid, AtlasLogic.deliveryState(
       activeSessions.find(x => x.session_id === sid) || {}, sent, Date.now())]), [...dialogs], [...dialogNotes], [...dialogAnswers.values()], [...stopNotes], [...commandOutputs], feedSid, pinnedCards, hiddenCards,
     [...fullReplies.keys()], [...attachments].map(([k, v]) => [k, v.length]),
@@ -163,6 +163,8 @@ function renderActive(skipKey, force) {
                     section(i18n("active.sectionWaiting"), waitingYou), section(i18n("active.sectionWorking"), working)];
   grid.replaceChildren(...sections.filter(Boolean), ...closed());
   stickChats(grid);
+  fitBringBack(grid);
+  watchBringBack(grid);
   grid.scrollTop = scroll;
   if (caret) {
     const area = grid.querySelector(`.answer textarea[data-id="${CSS.escape(caret.id)}"]`);

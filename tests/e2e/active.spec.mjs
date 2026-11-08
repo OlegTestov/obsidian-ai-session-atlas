@@ -125,11 +125,11 @@ test("the feed of the Codex card: turns, steps with exit codes, files", async ({
 
 // Inside Obsidian the page is a frame and the plugin answers with its terminal tabs. A stand-in host
 // page on the same origin does that here, so the cards get their reply fields as they do in Obsidian.
-function hostPage(lang) {
-  const tabs = [{ ptyPid: run.pids.claude.shell, title: "claude tab" },
+function hostPage(lang, { mode = "full", background = null } = {}) {
+  const tabs = [Object.assign({ ptyPid: run.pids.claude.shell, title: "claude tab" }, background ? { background } : {}),
                 { ptyPid: run.pids.codex.shell, title: "codex tab", agent: "codex", screen: null }];
   return `<!doctype html><html><head><title>host</title></head><body style="margin:0">
-<iframe id="atlas" src="/?lang=${lang}#view=active&am=full" style="width:100vw;height:100vh;border:0"></iframe>
+<iframe id="atlas" src="/?lang=${lang}#view=active&am=${mode}" style="width:100vw;height:100vh;border:0"></iframe>
 <script>
 window.sent = [];
 const tabs = ${JSON.stringify(tabs)};
@@ -195,3 +195,46 @@ test("the detailed chat shows a long \"now\" line in full, over nothing", async 
   const fit = await now.evaluate(el => ({ sh: el.scrollHeight, ch: el.clientHeight }));
   expect(fit.sh).toBeLessThanOrEqual(fit.ch + 1);
 });
+
+// A Claude Code tab that shows a background job (← on an empty prompt, /background): its card says
+// so and offers Bring back, as the tab menu does; the other cards do not.
+for (const mode of ["compact", "full"]) {
+  test(`${mode} card of a background tab: the mark and Bring back with the tab's job`, async ({ page, lang }) => {
+    await page.route(`${run.base}/e2e-host.html`, route => route.fulfill({ contentType: "text/html; charset=utf-8",
+      body: hostPage(lang, { mode, background: "ab12cd34" }) }));
+    await page.goto(`${run.base}/e2e-host.html`);
+    const frame = page.frameLocator("#atlas");
+    const claude = frame.locator(`.acard[data-id="${ids.claudeLive}"]`);
+    const ru = lang === "ru";
+    await expect(claude.locator(".pill.bgjob")).toHaveText(ru ? "фоновая сессия" : "background session");
+    await expect(claude.locator(".pill.bgjob")).toHaveAttribute("title", /ab12cd34/);
+    await expect(frame.locator(`.acard[data-id="${ids.codexLive}"] .bgjob, .acard[data-id="${ids.codexLive}"] .bgback`))
+      .toHaveCount(0);
+    const back = claude.locator(mode === "full" ? ".head button.bgback" : ".foot button.bgback");
+    if (mode === "compact") await expect(back).toHaveAttribute("title", ru ? /обычной вкладке/ : /ordinary tab/);
+    else await expect(back).toHaveAttribute("aria-label", ru ? "Вернуть из фона" : "Bring back");
+    if (mode === "compact") {
+      if (process.env.LIVE_SHOT_DIR) await claude.screenshot({ path: `${process.env.LIVE_SHOT_DIR}/bg-card-${lang}.png` });
+      // Every button stays inside the card, on a second line when the card is narrow.
+      const cut = await claude.evaluate(c => {
+        const box = c.getBoundingClientRect();
+        return [...c.querySelectorAll(".foot button")].filter(b => {
+          const r = b.getBoundingClientRect();
+          return r.right > box.right + 1 || r.bottom > box.bottom + 1 || r.left < box.left - 1;
+        }).map(b => b.textContent);
+      });
+      expect(cut).toEqual([]);
+      // A card as wide as on a large screen: the button has its words; a narrow one, its icon only.
+      if (ru) await expect(claude.locator(".foot")).toHaveClass(/tight/);   // the English row fits as it is
+      await page.setViewportSize({ width: 1900, height: 900 });
+      await expect(claude.locator(".foot")).not.toHaveClass(/tight/);
+      await expect(back.locator(".lbl")).toBeVisible();
+      await expect(back.locator(".lbl")).toHaveText(ru ? "Вернуть из фона" : "Bring back");
+      if (process.env.LIVE_SHOT_DIR) await claude.screenshot({ path: `${process.env.LIVE_SHOT_DIR}/bg-card-wide-${lang}.png` });
+    }
+    await back.click();
+    await expect.poll(() => page.evaluate(() => window.sent.filter(m => m.type === "bg-bring-back")))
+      .toEqual([expect.objectContaining({ job: "ab12cd34" })]);
+    await expect(claude.locator("button.bgback")).toBeDisabled();
+  });
+}

@@ -321,6 +321,8 @@ class SessionAtlasPlugin extends PluginData {
     const info = { ptyPid: pid, title };
     const group = this.tabGroupInfo(leaf);
     if (group) info.group = group;
+    const job = leaf.view && leaf.view.backgroundJob;
+    if (job) info.background = job;               // the card offers Bring back, as the tab menu does
     if (this.tabAgent(leaf) === "codex") {
       info.agent = "codex";
       info.screen = codexScreenState(this.screenLines(leaf));

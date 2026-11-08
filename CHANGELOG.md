@@ -7,6 +7,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.8.1] - 2026-11-08
+
+### Added
+
+- An Active card whose tab shows a Claude Code background session says **background session** (with the
+  same hint as the tab) and has **Bring back**: the conversation continues in an ordinary tab, as from the
+  tab menu. On a narrow card the button shows its icon only, so the row of buttons stays on the card.
+
+### Changed
+
+- In a background tab's menu, **Bring back from the background** stands apart from the group actions,
+  after a separator.
+
 ## [2.8.0] - 2026-11-08
 
 ### Added

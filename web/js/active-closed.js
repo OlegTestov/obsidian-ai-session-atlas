@@ -1,6 +1,6 @@
 // Active: recently closed sessions, the process ended but there was work in the last hours.
 // Classic script: shares one global scope with the other page files.
-/* exported closedSection, backgroundSection, pruneBackgroundNotes, backgroundResult -- used by other page scripts */
+/* exported closedSection, backgroundSection, pruneBackgroundNotes, backgroundResult, bringBackButton, fitBringBack, watchBringBack -- used by other page scripts */
 // The card disappears with the process; from here one button continues the session.
 const CLOSED_OPEN_KEY = "atlas.closedOpen";
 let recentClosed = [];
@@ -59,7 +59,7 @@ const backgroundNotes = new Map();      // job id → {text, at}: "bringing back
 const BACKGROUND_NOTE_MS = 20000;
 
 function pruneBackgroundNotes() {
-  const live = new Set(backgroundJobs.map(j => j.job_id));
+  const live = new Set([...backgroundJobs.map(j => j.job_id), ...hostBackground.values()]);
   for (const [job, note] of backgroundNotes) {
     if (!live.has(job) || Date.now() - note.at > BACKGROUND_NOTE_MS) backgroundNotes.delete(job);
   }
@@ -77,6 +77,40 @@ function backgroundAct(j, type, noteKey) {
   tellHost(type, { job: j.job_id });
   renderActive(null, true);
   window.setTimeout(loadActive, 3000);
+}
+
+const BRING_BACK_SVG = [["path", { d: "M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" }], ["path", { d: "m10 17 5-5-5-5" }],
+                        ["path", { d: "M15 12H3" }]];
+
+/** A card whose tab shows a background job: the same conversation back in an ordinary tab, as the tab menu. */
+function bringBackButton(job, mini) {
+  const note = backgroundNotes.get(job);
+  const label = (note && note.text) || i18n("active.bringBack");
+  const b = el("button", "bgback" + (mini ? " mini" : ""));
+  if (!mini) b.append(svgIcon(BRING_BACK_SVG), el("span", "lbl", label));
+  b.type = "button";
+  b.title = i18n("background.bringBack.hint");
+  b.disabled = !!note;
+  b.addEventListener("click", e => {
+    e.stopPropagation();
+    backgroundAct({ job_id: job }, "bg-bring-back", "background.bringingBack");
+  });
+  return mini ? iconify(b, BRING_BACK_SVG, i18n("active.bringBack")) : b;
+}
+
+/** A narrow compact card: Bring back shows its icon only, so the button row stays on the card. */
+function fitBringBack(root) {
+  root.querySelectorAll(".acard .foot.bgfoot").forEach(foot => {
+    foot.classList.remove("tight");
+    if (foot.scrollWidth > foot.clientWidth + 1) foot.classList.add("tight");
+  });
+}
+
+let bringBackObserver = null;
+function watchBringBack(grid) {
+  if (bringBackObserver || typeof ResizeObserver !== "function") return;
+  bringBackObserver = new ResizeObserver(() => fitBringBack(grid));
+  bringBackObserver.observe(grid);
 }
 
 function backgroundRow(j) {

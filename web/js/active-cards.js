@@ -20,6 +20,14 @@ function activeCard(s) {
   if (act === "waiting") card.appendChild(decisionStrip(s));
   const head = el("div", "head");
   head.appendChild(pinButton(s));
+  // The tab shows a Claude Code background job: the tab's own server icon, and "· background" by the status.
+  const bgJob = hostBackground.get(tabFor(s)) || null;
+  if (bgJob) {
+    const icon = el("span", "bgico");
+    icon.appendChild(svgIcon(SERVER_SVG));
+    icon.title = i18n("active.bgSessionHint", { job: bgJob });
+    head.appendChild(icon);
+  }
   const title = el("div", "t", s.title || s.session_id);
   title.title = s.indexed ? i18n("active.openInSearch") : i18n("active.notIndexed");
   if (s.indexed) title.addEventListener("click", () => {
@@ -33,6 +41,10 @@ function activeCard(s) {
     || (act === "background" && !full ? i18n("active.status.backgroundShort") : status.label)));
   state.title = s.waiting_for ? `${status.hint} (${s.waiting_for})`
     : act === "background" ? `${status.hint}: ${reasons.join(", ")}` : status.hint;
+  if (bgJob) {
+    state.appendChild(el("span", "bgword", " · " + i18n("active.bgShort")));
+    state.title += "\n" + i18n("active.bgSessionHint", { job: bgJob });
+  }
   head.append(title, state);
   card.appendChild(head);
 
@@ -50,12 +62,6 @@ function activeCard(s) {
   if (group) tags.appendChild(group);
   if (s.tab_group) card.classList.add("grouped", `g-${s.tab_group.color}`);
   tags.appendChild(agentBadge(s));
-  const bgJob = pid ? hostBackground.get(pid) || null : null;
-  if (bgJob) {
-    const bg = el("span", "pill acc bgjob", i18n("active.bgSession"));
-    bg.title = i18n("active.bgSessionHint", { job: bgJob });
-    tags.appendChild(bg);
-  }
   if (tasks && !full) {                  // compact view has no room for a separate line: the label goes into the tags
     const pill = el("span", "pill task" + (tasks.finished ? " done" : ""),
                     (tasks.current ? "▶ " : "") + i18n("active.tasksPill", { count: tasks.count }));
@@ -336,6 +342,8 @@ const CLOSE_SVG = [["path", { d: "M6 6l12 12M18 6 6 18" }]];
 const FEED_SVG = [["path", { d: "M4 6h16M4 12h16M4 18h10" }]];
 const HIDE_SVG = [["path", { d: "M5 12h14" }]];
 const STOP_SVG = [["rect", { x: 7, y: 7, width: 10, height: 10, rx: 1 }]];
+const SERVER_SVG = [["rect", { x: 2, y: 2, width: 20, height: 8, rx: 2 }], ["rect", { x: 2, y: 14, width: 20, height: 8, rx: 2 }],
+                    ["path", { d: "M6 6h.01M6 18h.01" }]];
 
 // Icon button in the detailed card header: space is tight, the label goes into the tooltip.
 function iconify(button, parts, label) {

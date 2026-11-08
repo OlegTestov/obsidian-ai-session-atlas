@@ -50,8 +50,8 @@ server on `127.0.0.1`, and nothing is sent anywhere unless you turn on the optio
   **Close and stop** (`claude stop`, the conversation is kept). Such sessions without a tab are listed
   under **Active → In the background, no tab**: **Bring back** stops the background copy and continues
   the same conversation in an ordinary tab (the marked tab's menu offers it too), **Stop** ends it and
-  keeps its history. While such a tab is open, its Active card says **background session** and has
-  **Bring back** too. A session that is replying asks first. Paths the agents print (`~/…`, `/…`, `src/main.rs:12`) are links: a click opens
+  keeps its history. While such a tab is open, its Active card shows the same server icon before the title,
+  "· background" by the status, and **Bring back** too. A session that is replying asks first. Paths the agents print (`~/…`, `/…`, `src/main.rs:12`) are links: a click opens
   the file in its default app (a note of this vault in Obsidian, a folder in Finder), ⌘-click shows it
   in Finder, and the right-click menu can copy the path.
 - **Session groups.** Agent tabs (and notes, including background tabs) go into named, coloured groups, as Chrome's tab

@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.8.2] - 2026-11-08
+
+### Changed
+
+- A background session's Active card is no longer marked by a tag: the tab's server icon stands before
+  the title, and the status reads "waiting · background" (or the current state).
+
 ## [2.8.1] - 2026-11-08
 
 ### Added

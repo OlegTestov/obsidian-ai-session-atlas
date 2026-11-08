@@ -206,10 +206,15 @@ for (const mode of ["compact", "full"]) {
     const frame = page.frameLocator("#atlas");
     const claude = frame.locator(`.acard[data-id="${ids.claudeLive}"]`);
     const ru = lang === "ru";
-    await expect(claude.locator(".pill.bgjob")).toHaveText(ru ? "фоновая сессия" : "background session");
-    await expect(claude.locator(".pill.bgjob")).toHaveAttribute("title", /ab12cd34/);
-    await expect(frame.locator(`.acard[data-id="${ids.codexLive}"] .bgjob, .acard[data-id="${ids.codexLive}"] .bgback`))
-      .toHaveCount(0);
+    // Not a tag: the tab's server icon before the title and a short word by the status.
+    await expect(claude.locator(".head .bgico svg")).toBeVisible();
+    await expect(claude.locator(".head .bgico")).toHaveAttribute("title", /ab12cd34/);
+    await expect(claude.locator(".head .state .bgword")).toHaveText(ru ? " · фон" : " · background");
+    await expect(claude.locator(".tags .bgjob")).toHaveCount(0);
+    const order = await claude.locator(".head").evaluate(h => [...h.children].map(c => c.className.split(" ")[0]));
+    expect(order.indexOf("bgico")).toBe(order.indexOf("t") - 1);       // right before the title
+    await expect(frame.locator(`.acard[data-id="${ids.codexLive}"] .bgico, .acard[data-id="${ids.codexLive}"] .bgword, `
+      + `.acard[data-id="${ids.codexLive}"] .bgback`)).toHaveCount(0);
     const back = claude.locator(mode === "full" ? ".head button.bgback" : ".foot button.bgback");
     if (mode === "compact") await expect(back).toHaveAttribute("title", ru ? /обычной вкладке/ : /ordinary tab/);
     else await expect(back).toHaveAttribute("aria-label", ru ? "Вернуть из фона" : "Bring back");

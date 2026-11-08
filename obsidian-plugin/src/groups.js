@@ -16,6 +16,7 @@ class GroupMethods {
     this.stripOrder = new Map();
     this.groupMenus = new WeakSet();
     const ws = this.app.workspace;
+    this.initGroupNavigation();
     this.registerEvent(ws.on("layout-change", () => this.onGroupLayout()));
     this.registerEvent(ws.on("active-leaf-change", (leaf) => this.unfoldForLeaf(leaf)));
     this.registerEvent(ws.on("leaf-menu", (menu, leaf) => {
@@ -35,7 +36,7 @@ class GroupMethods {
       }
       this.onGroupLayout();
     });
-    this.register(() => this.clearGroupMarks());
+    this.register(() => { this.clearGroupDrag(); this.clearGroupMarks(); });
     // A change still waiting for the debounced write is written now: a reload reads the saved data.
     this.register(() => this.flushGroups());
     for (const [id, run] of [["group-new", (leaf) => this.newGroupFor(leaf)],
@@ -73,7 +74,7 @@ class GroupMethods {
 
   /** A tab dragged in or out of a group, tabs closed, a new tab between grouped ones. */
   onGroupLayout() {
-    if (!this.groupsReady) return;
+    if (!this.groupsReady || this.groupMoving) return;
     let changed = false;
     const present = new Set();
     for (const [parent, leaves] of strips(this.app.workspace)) {
@@ -102,54 +103,6 @@ class GroupMethods {
     if (prune(this.groups, present)) changed = true;
     if (changed) this.saveGroups();
     this.scheduleGroupRender();
-  }
-
-  /** Listeners per document, removed when its popout window closes (else they keep it in memory). */
-  watchTabDrags(doc) {
-    if (!this.dragDocs) this.dragDocs = new Map();
-    if (!doc || this.dragDocs.has(doc)) return;
-    const on = [["dragstart", (event) => this.noteTabDrag(event)],
-                ["dragover", (event) => this.noteDragOver(event)],
-                ["drop", () => { if (this.dragging) this.droppedTab = this.draggedTab; }],
-                ["dragend", () => this.endTabDrag()]];
-    for (const [type, fn] of on) doc.addEventListener(type, fn, true);
-    this.dragDocs.set(doc, on);
-  }
-
-  unwatchTabDrags(doc) {
-    const on = doc && this.dragDocs && this.dragDocs.get(doc);
-    if (!on) return;
-    for (const [type, fn] of on) doc.removeEventListener(type, fn, true);
-    this.dragDocs.delete(doc);
-  }
-
-  /**
-   * A drop that leaves the order as it was changes no layout: the drop rule runs here instead. A
-   * cancelled drag (no drop) is forgotten at once, or a later layout change would apply it.
-   */
-  endTabDrag() {
-    this.dragging = false;
-    if (this.droppedTab) window.setTimeout(() => { if (this._loaded !== false) this.onGroupLayout(); }, 0);
-    else this.draggedTab = this.dragOver = null;
-  }
-
-  /** The tab under the pointer while a tab is dragged: its group decides a drop at a group's edge. */
-  noteDragOver(event) {
-    if (!this.dragging) return;
-    const target = event.target && typeof event.target.closest === "function" ? event.target : null;
-    const header = target ? target.closest(".workspace-tab-header") : null;
-    this.dragOver = header ? header.getAttribute("data-sa-group") || "" : undefined;
-  }
-
-  noteTabDrag(event) {
-    const target = event.target && typeof event.target.closest === "function" ? event.target : null;
-    // The chip cancels its own drag: no tab moves.
-    const header = target && !target.closest(".sa-group-chip") ? target.closest(".workspace-tab-header") : null;
-    const leaf = header ? this.findLeafByTabHeader(header) : null;
-    this.draggedTab = leaf ? leaf.id : null;
-    this.dragging = !!leaf;
-    this.dragOver = undefined;
-    this.droppedTab = null;
   }
 
   snapshotStrip(parent, ids) {

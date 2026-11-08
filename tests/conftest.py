@@ -53,6 +53,15 @@ def _test_profile(tmp_path, monkeypatch):
     config.reset()
 
 
+def assert_same(actual, expected) -> None:
+    """Equality for very large values: pytest's own diff of them can run for hours."""
+    a, b = [x if isinstance(x, str) else json.dumps(x, sort_keys=True, ensure_ascii=False) for x in (actual, expected)]
+    if a != b:
+        at = next((i for i, (x, y) in enumerate(zip(a, b)) if x != y), min(len(a), len(b)))
+        start = max(0, at - 30)
+        pytest.fail(f"differ at {at} of {len(a)}/{len(b)}: {a[start:at + 50]!r} != {b[start:at + 50]!r}", pytrace=False)
+
+
 def rec(**kw) -> str:
     return json.dumps(kw, ensure_ascii=False) + "\n"
 

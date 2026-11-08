@@ -4,6 +4,7 @@ from __future__ import annotations
 import sqlite3
 
 from . import agents as agents_mod, query as q, search_rows
+from .highlight_chunks import LARGE_FIELD, ChunkHighlighter
 from .query import (  # noqa: F401
     FTS_COLUMNS,
     IDENTIFIER_RE,
@@ -246,39 +247,68 @@ def _highlight(conn, parsed: q.Parsed, session_ids: list[str],
     marks = ",".join("?" * len(session_ids))
     rows = _rows_of(conn, session_ids) if mapped else {}
 
+    renderer = ChunkHighlighter(parsed)
+    if renderer.eligible:
+        try:
+            conn.create_function("atlas_dense_field", 1, renderer.dense)
+        except sqlite3.OperationalError:        # a statement is still active: stay on the original path
+            renderer.eligible = False
+
     def marked(column):
         i = FTS_COLUMNS.index(column) + 1
         match = q.column_match(parsed, column)
+        # One value per row, tagged, so the field is measured once: R = raw text, H = highlighted.
+        large = (f"length({column}) >= {LARGE_FIELD} AND instr({column}, char(0)) = 0 "
+                 f"AND atlas_dense_field({column})") if renderer.eligible else "0"
+        field = f"CASE WHEN {large} THEN 'R' || {column} ELSE 'H' || highlight(fts, {i}, ?, ?) END"
+
+        def render(rowid, tagged):
+            if tagged is None or tagged[0] == "H":
+                return tagged and tagged[1:]
+            raw = tagged[1:]
+            try:
+                chunked = renderer.render(raw)
+            except sqlite3.Error:
+                renderer.close()
+                chunked = None                  # scratch FTS is optional; the catalog remains authoritative
+            if chunked is not None:
+                return chunked
+            return conn.execute(f"SELECT highlight(fts, {i}, ?, ?) FROM fts WHERE fts MATCH ? AND rowid=?",
+                                (q.MARK_OPEN, q.MARK_CLOSE, match, rowid)).fetchone()[0]
+
         if not mapped:
-            yield from conn.execute(
-                f"SELECT session_id, highlight(fts, {i}, ?, ?) AS h FROM fts "
-                f"WHERE fts MATCH ? AND session_id IN ({marks})",
-                (q.MARK_OPEN, q.MARK_CLOSE, match, *session_ids))
+            for rowid, sid, tagged in conn.execute(
+                    f"SELECT rowid, session_id, {field} FROM fts "
+                    f"WHERE fts MATCH ? AND session_id IN ({marks})",
+                    (q.MARK_OPEN, q.MARK_CLOSE, match, *session_ids)):
+                yield {"session_id": sid, "h": render(rowid, tagged)}
             return
-        # Only the rows that need it are highlighted: highlight() reads and tokenizes the whole text.
         for start, end in _runs(_all_matching(conn, match), rows):
-            for rowid, h in conn.execute(
-                    f"SELECT rowid, highlight(fts, {i}, ?, ?) FROM fts WHERE fts MATCH ? "
+            for rowid, tagged in conn.execute(
+                    f"SELECT rowid, {field} FROM fts WHERE fts MATCH ? "
                     "AND rowid BETWEEN ? AND ? ORDER BY rowid",
                     (q.MARK_OPEN, q.MARK_CLOSE, match, start, end)):
-                yield {"session_id": rows[rowid], "h": h}
+                yield {"session_id": rows[rowid], "h": render(rowid, tagged)}
 
-    for column in columns:
-        for r in marked(column):
-            segs, hits = q.segments(r["h"] or "")
-            if not hits:
-                continue
-            distinct = len({s["t"].lower() for s in segs if s["hit"]})
-            slot = found[r["session_id"]].get(column)
-            if slot is None:
-                slot = found[r["session_id"]][column] = {
-                    "field": column, "hits": 0, "score": COLUMN_WEIGHTS[column],
-                    "marked": None, "_best": (-1, -1)}
-            slot["hits"] += hits
-            if (distinct, hits) > slot["_best"]:
-                slot["_best"] = (distinct, hits)
-                slot["segments"], slot["fragment"] = segs, q.as_text(segs)
-                slot["marked"] = r["h"] if column == "title" else None
+    try:
+        for column in columns:
+            for r in marked(column):
+                segs, hits = q.segments(r["h"] or "")
+                if not hits:
+                    continue
+                distinct = len({s["t"].lower() for s in segs if s["hit"]})
+                slot = found[r["session_id"]].get(column)
+                if slot is None:
+                    slot = found[r["session_id"]][column] = {
+                        "field": column, "hits": 0, "score": COLUMN_WEIGHTS[column],
+                        "marked": None, "_best": (-1, -1)}
+                slot["hits"] += hits
+                if (distinct, hits) > slot["_best"]:
+                    slot["_best"] = (distinct, hits)
+                    slot["segments"], slot["fragment"] = segs, q.as_text(segs)
+                    slot["marked"] = r["h"] if column == "title" else None
+    finally:
+        renderer.close()
     out: dict[str, list[dict]] = {}
     for sid, slots in found.items():
         items = [{k: v for k, v in m.items() if k != "_best"} for m in slots.values()]

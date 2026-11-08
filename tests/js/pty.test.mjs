@@ -15,9 +15,16 @@ setGlobal("window", { setTimeout, clearTimeout, setInterval, clearInterval });
 const { spawnPty } = loadSrc("pty");
 
 const sleep = (ms) => delay(ms);
+async function outputReady(check, label, timeout = 6000) {
+  const until = Date.now() + timeout;
+  while (!check()) {
+    if (Date.now() >= until) assert.fail(`timed out waiting for ${label}`);
+    await sleep(25);
+  }
+}
 // eslint-disable-next-line no-control-regex -- terminal output is cleaned of escape sequences
 const clean = (s) => s.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, "").replace(/\r/g, "");
-const env = Object.assign({}, process.env, { TERM: "xterm-256color", LANG: "en_US.UTF-8", PS1: "$ " });
+const env = Object.assign({}, process.env, { TERM: "xterm-256color", LANG: "en_US.UTF-8", LC_ALL: "en_US.UTF-8", PS1: "$ " });
 const spawned = [];
 const spawn = (opts) => {
   const pty = spawnPty(opts);
@@ -36,10 +43,11 @@ describe("pseudo-terminal: one shell session", () => {
     pty = spawn({ file: "/bin/sh", args: [], cwd: "/tmp", env, cols: 132, rows: 40 });
     pty.onData((d) => { out += d; });
     pty.onExit((c) => { exitCode = c; });
-    await sleep(500);
-    pty.write("tty; stty size; echo 'Привет, мир'\r");
-    await sleep(600);
+    await outputReady(() => /[$#] /.test(out), "the shell prompt");
     tty = await pty.tty();
+    pty.write("tty; stty size; echo 'Привет, мир'\r");
+    await outputReady(() => clean(out).includes(tty.tty) && clean(out).includes("40 132") && clean(out).includes("Привет, мир"),
+                      "tty, initial size and UTF-8 output");
     assert.ok(tty && /^\/dev\/ttys\d+$/.test(tty.tty), JSON.stringify(tty));
     assert.ok(clean(out).includes(tty.tty));
   });
@@ -55,7 +63,7 @@ describe("pseudo-terminal: one shell session", () => {
   it("joins a UTF-8 character split across chunks without broken characters", async () => {
     // A letter and a box-drawing line arrive in halves in separate output chunks.
     pty.write("printf '\\320'; sleep 0.3; printf '\\277\\342\\224'; sleep 0.3; printf '\\200\\n'\r");
-    await sleep(1200);
+    await outputReady(() => clean(out).includes("п─"), "split UTF-8 output");
     assert.ok(clean(out).includes("п─"), clean(out).slice(-80));
     assert.ok(!out.includes("�"));
   });
@@ -63,7 +71,7 @@ describe("pseudo-terminal: one shell session", () => {
   it("changes size from outside", async () => {
     await pty.resize(100, 30);
     pty.write("stty size\r");
-    await sleep(500);
+    await outputReady(() => clean(out).includes("30 100"), "resized terminal output");
     assert.ok(clean(out).includes("30 100"), clean(out).slice(-100));
   });
 

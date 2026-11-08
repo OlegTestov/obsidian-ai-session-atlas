@@ -68,6 +68,64 @@ describe("markdown", () => {
 });
 
 describe("active logic", () => {
+  test("unchecking an unresolved legacy group prevents later host replies from selecting it again", () => {
+    const ctx=loadPage();ctx.location.hash="#view=active&ag=Backend";
+    const result=new vm.Script(`(() => {
+      readHash();readTabGroups({groups:true,tabs:[]});
+      unselectGroup("legacy:Backend");
+      readTabGroups({groups:true,tabs:[{ptyPid:1,group:{id:"g1",name:"Backend",color:"red"}}]});
+      return {selected:[...activeFilter.group],legacy:legacyGroupNames};
+    })()`).runInContext(ctx);
+    assert.equal(json(result),'{"selected":[],"legacy":[]}');
+  });
+  test("legacy group URLs resolve after an empty startup reply", () => {
+    const ctx=loadPage();ctx.location.hash="#view=active&ag=Backend";
+    const result=new vm.Script(`(() => {
+      readHash();readTabGroups({groups:true,tabs:[]});
+      const pending=[...legacyGroupNames];
+      readTabGroups({groups:true,tabs:[{ptyPid:1,group:{id:"g1",name:"Backend",color:"red"}}]});
+      return {pending,selected:[...activeFilter.group],legacy:legacyGroupNames};
+    })()`).runInContext(ctx);
+    assert.equal(json(result),'{"pending":["Backend"],"selected":["g1"],"legacy":[]}');
+  });
+  test("old name-based group URLs migrate to IDs and same-colour groups have distinct labels", () => {
+    const ctx = loadPage();
+    ctx.I18N.setLang("en");
+    ctx.location.hash = "#view=active&ag=Backend";
+    const result = new vm.Script(`(() => {
+      readHash();
+      readTabGroups({groups:true,tabs:[
+        {ptyPid:2,group:{id:"g-b",name:"Backend",color:"red"}},
+        {ptyPid:1,group:{id:"g-a",name:"Backend",color:"red"}}
+      ]});
+      return {selected:[...activeFilter.group].sort(), legacy:legacyGroupNames,
+              labels:[groupFilterLabel("g-a"), groupFilterLabel("g-b")]};
+    })()`).runInContext(ctx);
+    assert.equal(json(result), '{"selected":["g-a","g-b"],"legacy":[],"labels":["Backend · Red · 1","Backend · Red · 2"]}');
+  });
+  test("a selected unavailable group keeps its name; new URLs restore IDs", () => {
+    const ctx = loadPage();
+    ctx.location.hash = "#view=active&agi=g1";
+    const result = new vm.Script(`(() => {
+      readHash();
+      readTabGroups({groups:true,tabs:[{ptyPid:1,group:{id:"g1",name:"Backend",color:"red"}}]});
+      readTabGroups({groups:true,tabs:[]});
+      return {selected:[...activeFilter.group], label:groupFilterLabel("g1")};
+    })()`).runInContext(ctx);
+    assert.equal(json(result), '{"selected":["g1"],"label":"Backend"}');
+  });
+  test("group filters keep identity when names collide or change", () => {
+    const a = { tab_group: { id: "a" }, tab_group_label: "Backend" };
+    const b = { tab_group: { id: "b" }, tab_group_label: "Backend" };
+    const f = { group: new Set(["a"]) };
+    assert.equal(L.passes(a, f), true);
+    assert.equal(L.passes(b, f), false);
+    assert.equal(json(L.filterOptions([a, b], f, "group").map(o => [o.value, o.label, o.count])),
+      '[["a","Backend",1],["b","Backend",1]]');
+    a.tab_group_label = "Infra";
+    assert.equal(L.passes(a, f), true);
+    assert.equal(L.filterOptions([a, b], f, "group").find(o => o.value === "a").label, "Infra");
+  });
   const now = new Date("2026-09-27T12:00:00");
   test("period: within an hour", () => assert.equal(L.periodOf("2026-09-27T11:30:00", now), "hour"));
   test("period: today", () => assert.equal(L.periodOf("2026-09-27T08:00:00", now), "today"));

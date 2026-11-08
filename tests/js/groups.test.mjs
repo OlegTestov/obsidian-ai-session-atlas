@@ -10,17 +10,41 @@ setGlobal("window", { setTimeout: () => 0, clearTimeout() {} });
 
 const realLoad = Module._load;
 class Menu {}
+class View { onTabMenu(menu) { menu.native = (menu.native || 0) + 1; } }
 class Modal { constructor(app) { this.app = app; } open() { this.onOpen && this.onOpen(); } }
-Module._load = (r, p, i) => (r === "obsidian" ? { Menu, Modal, View: class {}, setIcon() {} } : realLoad(r, p, i));
+Module._load = (r, p, i) => (r === "obsidian" ? { Menu, Modal, View, setIcon() {} } : realLoad(r, p, i));
 const model = loadSrc("groups-model");
 const { GroupMethods } = loadSrc("groups");
 const { ConfirmCloseModal } = loadSrc("guard");
 const { translate } = loadSrc("i18n");
+const { GroupNavigationMethods } = loadSrc("groups-navigation");
+const { GroupDragMethods } = loadSrc("groups-drag");
 Module._load = realLoad;
 const { COLORS, GONE_KEEP_MS, cleanGroups, nextColor, createGroup, runs, joinIndex, changedLeaves, dropChanges, prune, liveGroups,
         tabOutside, editorTop } = model;
 
 describe("group model", () => {
+  it("next/previous tab skips folded groups, wraps, and keeps explicit navigation separate", () => {
+    const members={a:"G",b:"G"}, groups={G:{collapsed:true}};
+    const next=model.visibleNeighbour;
+    assert.equal(next(["x","a","b","y"],members,groups,0,1),3);
+    assert.equal(next(["x","a","b","y"],members,groups,3,-1),0);
+    assert.equal(next(["x","a","b","y"],members,groups,3,1),0);
+    assert.equal(next(["x","a","b"],members,groups,0,1),0);
+    assert.equal(next(["a","b"],members,groups,0,1),-1);
+    groups.G.collapsed=false;
+    assert.equal(next(["x","a","b","y"],members,groups,0,1),1);
+  });
+  it("a group drop snaps to the outside of another group, never splitting it", () => {
+    const drop=model.groupDropIndex, move=model.movedBlock;
+    const strip=["x","a","b","n","c","d","z"], members={a:"G",b:"G",c:"H",d:"H"};
+    assert.equal(drop(strip,members,"d",true),4);
+    assert.equal(drop(strip,members,"c",false),6);
+    assert.deepEqual(move(strip,["a","b"],6),["x","n","c","d","a","b","z"]);
+    assert.deepEqual(move(strip,["c","d"],1),["x","c","d","a","b","n","z"]);
+    assert.deepEqual(move(strip,["a","b"],2),strip);
+    assert.equal(drop(strip,members,"missing",true),null);
+  });
   it("a saved name that is not a string does not stop the plugin", () => {
     const state = cleanGroups({ groups: { g: { name: { toString: null }, color: "red" }, h: { name: 42 } } });
     assert.equal(state.groups.g.name, "");
@@ -131,6 +155,9 @@ function world(ids) {
   for (const id of ids) parent.insertChild(parent.children.length, { id, tabHeaderEl: {}, parent, detach() {} });
   const workspace = { iterateAllLeaves(fn) { parent.children.slice().forEach(fn); } };
   const plugin = Object.create(GroupMethods.prototype);
+  for (const methods of [GroupNavigationMethods, GroupDragMethods]) for (const key of Object.getOwnPropertyNames(methods.prototype)) {
+    if (key !== "constructor") plugin[key] = methods.prototype[key];
+  }
   Object.assign(plugin, { app: { workspace }, settings: {}, groups: cleanGroups(null), stripOrder: new Map(),
                           groupMenus: new WeakSet(), groupsReady: true, saved: 0,
                           saveData: async () => { plugin.saved++; }, renderGroups() {}, scheduleGroupRender() {},
@@ -142,6 +169,128 @@ function world(ids) {
 }
 
 describe("group moves in the strip", () => {
+  it("whole-group moves keep membership, order, collapse and the active tab", () => {
+    const {plugin,parent,leaf,order}=world(["x","a","b","n","c","d","z"]);
+    const g=createGroup(plugin.groups,{id:"G"}),h=createGroup(plugin.groups,{id:"H"});
+    plugin.groups.members={a:g.id,b:g.id,c:h.id,d:h.id};
+    plugin.app.workspace.activeLeaf=leaf("a");parent.currentTab=1;
+    plugin.app.workspace.setActiveLeaf=(l)=>{plugin.app.workspace.activeLeaf=l;};
+    const members={...plugin.groups.members};
+    assert.equal(plugin.moveGroupTo(g.id,parent,parent,6),true);
+    assert.deepEqual(order(),["x","n","c","d","a","b","z"]);
+    assert.equal(parent.children[parent.currentTab],leaf("a"));
+    assert.deepEqual(plugin.groups.members,members);
+    g.collapsed=true;
+    plugin.app.workspace.activeLeaf=leaf("x");parent.currentTab=0;
+    plugin.moveGroupBy(g.id,-1,parent);
+    assert.deepEqual(order(),["x","n","a","b","c","d","z"]);
+    assert.equal(g.collapsed,true);
+    assert.equal(plugin.app.workspace.activeLeaf,leaf("x"));
+  });
+  it("a whole group can move to another pane without changing which tab is active", () => {
+    const source=world(["x","a","b"]),target=world(["n"]);
+    const {plugin,leaf,parent}=source;
+    const g=createGroup(plugin.groups,{id:"G"});plugin.groups.members={a:g.id,b:g.id};
+    const active=leaf("a");plugin.app.workspace.activeLeaf=active;
+    // Removing an active pane's tab lets Obsidian choose a neighbour before the move completes.
+    const remove = parent.removeChild;
+    parent.removeChild = function (l) {
+      remove.call(this, l);
+      if (plugin.app.workspace.activeLeaf === l) plugin.app.workspace.activeLeaf = this.children[this.currentTab];
+    };
+    plugin.app.workspace.setActiveLeaf=l=>{plugin.app.workspace.activeLeaf=l;};
+    plugin.moveGroupTo(g.id,parent,target.parent,1);
+    assert.deepEqual(source.order(),["x"]);
+    assert.deepEqual(target.order(),["n","a","b"]);
+    assert.equal(active.parent,target.parent);
+    assert.equal(plugin.app.workspace.activeLeaf,active);
+    assert.equal(target.parent.children[target.parent.currentTab],active);
+    assert.deepEqual(plugin.groups.members,{a:g.id,b:g.id});
+  });
+  it("navigation commands skip folded tabs and background note menus keep their own leaf", () => {
+    const {plugin,parent,leaf}=world(["x","a","b","y"]);
+    const g=createGroup(plugin.groups,{id:"G"});g.collapsed=true;plugin.groups.members={a:g.id,b:g.id};
+    const original=View.prototype.onTabMenu, unload=[], calls=[];
+    const next={checkCallback(checking){calls.push([this,checking]);return true;}};
+    const previous={callback(){calls.push([this]);}};
+    plugin.app.commands={commands:{"workspace:next-tab":next,"workspace:previous-tab":previous}};
+    plugin.app.workspace.activeLeaf=leaf("x");
+    plugin.activeLeaf=()=>plugin.app.workspace.activeLeaf;
+    plugin.app.workspace.setActiveLeaf=l=>{plugin.app.workspace.activeLeaf=l;};
+    plugin.register=fn=>unload.push(fn);
+    plugin.initGroupNavigation();
+    assert.equal(next.checkCallback(true),true);
+    assert.deepEqual(calls,[[next,true]]);
+    next.checkCallback(false);assert.equal(plugin.activeLeaf(),leaf("y"));
+    previous.callback();assert.equal(plugin.activeLeaf(),leaf("x"));
+    const note=Object.assign(new View(),{app:plugin.app,leaf:leaf("b")});
+    let target=null;plugin.addGroupItems=(_menu,l)=>{target=l;};
+    const menu={};note.onTabMenu(menu);
+    assert.equal(target,leaf("b"));assert.equal(menu.native,1);assert.equal(plugin.activeLeaf(),leaf("x"));
+    unload.forEach(fn=>fn());assert.equal(View.prototype.onTabMenu,original);
+    assert.equal(next.checkCallback(true),true);
+    assert.equal(calls.length,2);
+    assert.equal(parent.currentTab,0);
+  });
+  it("navigation hooks wrapped again by another plugin are not stacked and keep no old instance", () => {
+    const setup = () => {
+      const w = world(["x", "a", "b", "y"]);
+      const g = createGroup(w.plugin.groups, { id: "G" }); g.collapsed = true; w.plugin.groups.members = { a: g.id, b: g.id };
+      w.plugin.activeLeaf = () => w.plugin.app.workspace.activeLeaf;
+      w.plugin.app.workspace.activeLeaf = w.leaf("x");
+      w.plugin.app.workspace.setActiveLeaf = (l) => { w.plugin.app.workspace.activeLeaf = l; };
+      w.unload = []; w.plugin.register = (fn) => w.unload.push(fn);
+      w.items = 0; w.plugin.addGroupItems = () => { w.items++; };
+      return w;
+    };
+    const originalMenu = View.prototype.onTabMenu;
+    let native = 0;
+    const next = { callback() { native++; } };
+    const commands = { commands: { "workspace:next-tab": next } };
+    const first = setup(); first.plugin.app.commands = commands;
+    first.plugin.initGroupNavigation();
+    // Another plugin wraps both after us, so our unload cannot restore them.
+    const ours = next.callback;
+    const foreign = function () { return ours.apply(this, arguments); };
+    next.callback = foreign;
+    const oursMenu = View.prototype.onTabMenu;
+    const foreignMenu = function (menu) { return oursMenu.call(this, menu); };
+    View.prototype.onTabMenu = foreignMenu;
+    first.unload.forEach((fn) => fn());
+    first.plugin._loaded = false;
+    const second = setup(); second.plugin.app.commands = commands;
+    second.plugin.initGroupNavigation();
+    assert.equal(next.callback, foreign);                        // our wrapper is still in the chain: not added again
+    assert.equal(View.prototype.onTabMenu, foreignMenu);
+    let selected = 0; const select = second.leaf("x").parent.selectTabIndex.bind(second.leaf("x").parent);
+    second.leaf("x").parent.selectTabIndex = (i) => { selected++; select(i); };
+    next.callback();
+    assert.equal(selected, 1);                                   // one wrapper of ours, not two
+    assert.equal(second.plugin.activeLeaf(), second.leaf("y"));
+    const note = Object.assign(new View(), { app: second.plugin.app, leaf: second.leaf("b") });
+    note.onTabMenu({});
+    assert.deepEqual([first.items, second.items], [0, 1]);
+    second.unload.forEach((fn) => fn());
+    next.callback(); note.onTabMenu({});                         // still in the chain, but inert
+    assert.equal(native, 1);
+    assert.deepEqual([first.items, second.items], [0, 1]);
+    View.prototype.onTabMenu = originalMenu;
+  });
+  it("an ordinary tab drag after a group drag that never ended moves only that tab", () => {
+    const { plugin, leaf } = world(["a", "b", "c"]);
+    const g = createGroup(plugin.groups, { id: "G" }); plugin.groups.members = { a: g.id, b: g.id };
+    const classes = new Set(["is-dragging"]);
+    const chip = { classList: { remove: (c) => classes.delete(c), add: (c) => classes.add(c) } };
+    plugin.groupDrag = { id: g.id, parent: leaf("a").parent, chip };    // its dragend never came
+    const header = {};
+    const target = { closest: (sel) => (sel === ".workspace-tab-header" ? header : null) };
+    plugin.findLeafByTabHeader = (h) => (h === header ? leaf("c") : null);
+    plugin.noteTabDrag({ target });
+    assert.equal(plugin.groupDrag, null);
+    assert.equal(classes.has("is-dragging"), false);
+    assert.equal(plugin.dragging, true);
+    assert.equal(plugin.draggedTab, "c");
+  });
   it("ordinary tabs at a group's boundary keep their position and do not join the next group", () => {
     const { plugin, leaf, order } = world(["a", "b", "new", "c", "d"]);
     plugin.groups.members = { a: "G", b: "G", c: "H", d: "H" };

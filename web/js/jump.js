@@ -84,6 +84,7 @@ function jumpTo(it) {
     delete hiddenCards[it.id];
     store(HIDDEN_KEY, hiddenCards);
     ACTIVE_FILTERS.forEach(({ key }) => activeFilter[key].clear());
+    legacyGroupNames = [];
     writeHash();
     lastSignature = "";
     renderActive(null, true);

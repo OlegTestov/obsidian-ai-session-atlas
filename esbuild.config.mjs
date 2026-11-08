@@ -55,6 +55,8 @@ const embedPayload = {
 export async function build(outdir = OUT) {
   fs.mkdirSync(outdir, { recursive: true });
   await esbuild.build({
+    absWorkingDir: ROOT,
+    preserveSymlinks: true,
     entryPoints: [path.join(ROOT, "obsidian-plugin", "src", "main.js")],
     outfile: path.join(outdir, "main.js"),
     bundle: true,

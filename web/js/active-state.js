@@ -1,7 +1,7 @@
 // Active: state, server polling and the link to the Obsidian plugin.
 // Classic script: shares one global scope with the other page files.
 /* exported hostHealth, activeUpdated, activeLimits, activeCodexLimits, ACTIVE_FILTERS, PERIODS -- used by other page scripts */
-/* exported activeFilter, filterUI, layout, LAYOUT_MAX, LAYOUT_CELLS, layoutUI -- used by other page scripts */
+/* exported legacyGroupNames, activeFilter, filterUI, layout, LAYOUT_MAX, LAYOUT_CELLS, layoutUI -- used by other page scripts */
 /* exported fullReplies, SEND_TIMEOUT_MS, MAX_ATTACH, lastSignature, composing -- used by other page scripts */
 /* exported lastRenderAt, fmtShort, tellTabHost, tabFor, heldFor, hostHeld -- used by other page scripts */
 // --- Active tab --------------------------------------------------------------
@@ -27,10 +27,11 @@ const ACTIVE_FILTERS = [
   { key:"project", label:i18n("active.filter.project"), hash:"ap" },
   { key:"topic", label:i18n("active.filter.topic"), hash:"at" },
   { key:"period", label:i18n("active.filter.period"), hash:"aw" },
-  { key:"group", label:i18n("active.filter.group"), hash:"ag" },
+  { key:"group", label:i18n("active.filter.group"), hash:"agi" },
 ];
 const PERIODS = AtlasLogic.PERIODS;
 const activeFilter = { domain:new Set(), project:new Set(), topic:new Set(), period:new Set(), group:new Set() };
+let legacyGroupNames = [];           // old URLs selected a name, before groups had distinct filter IDs
 const filterUI = {};
 let activeMode = "compact";           // compact | full
 // Columns × rows layout, per view; null means auto.

@@ -151,6 +151,7 @@ function writeHash() {
   if (layout.compact) p.set("lc", `${layout.compact.c}x${layout.compact.r}`);
   if (layout.full) p.set("lf", `${layout.full.c}x${layout.full.r}`);
   if (state.current) p.set("s", state.current);
+  if (legacyGroupNames.length) p.set("ag", legacyGroupNames.join("|"));
   const next = "#" + p.toString();
   if (location.hash !== next) history.replaceState(null, "", next);
 }
@@ -169,6 +170,7 @@ function readHash() {
   ACTIVE_FILTERS.forEach(({ key, hash }) => {
     activeFilter[key] = new Set((p.get(hash) || "").split("|").filter(Boolean));
   });
+  legacyGroupNames = (p.get("ag") || "").split("|").filter(Boolean);
   activeMode = p.get("am") === "full" ? "full" : "compact";
   layout.compact = parseLayout(p.get("lc"), LAYOUT_MAX.compact);
   layout.full = parseLayout(p.get("lf"), LAYOUT_MAX.full);

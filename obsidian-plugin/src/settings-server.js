@@ -10,8 +10,8 @@ const DEFAULT_MODELS = { classification: ["sonnet", "low"], catalog_summary: ["s
 const MIN_MACOS = 12;
 
 /** Environment checks: what is present, what is missing, and a button where it can be fixed. */
-async function renderStatus(tab) {
-  const { plugin, containerEl } = tab;
+async function renderStatus(tab, containerEl = tab.containerEl) {
+  const { plugin } = tab;
   const t = (k, v) => plugin.t(k, v);
   new Setting(containerEl).setName(t("setup.heading")).setHeading();
   const box = containerEl.createDiv({ cls: "session-atlas-status" });
@@ -20,6 +20,7 @@ async function renderStatus(tab) {
     plugin.macosVersion(), plugin.findPython(), plugin.commandLineToolsInstalled(), plugin.shellProbe(),
     plugin.healthInfo(),
   ]);
+  if (box.isConnected === false) return;
   box.empty();
   const row = (ok, name, detail, button) => {
     const s = new Setting(box).setName(`${ok ? "✓" : "✗"} ${name}`).setDesc(detail || "");
@@ -40,7 +41,7 @@ async function renderStatus(tab) {
       : (plugin.serverProblem || t("setup.serverDown")), { text: t("setup.restart"), onClick: async () => {
         plugin.stopServer();
         await plugin.ensureServer();
-        tab.display();
+        tab.refresh();
       } });
   if (up) await renderIndex(tab, box, row);
   renderLimits(tab, box);
@@ -63,7 +64,7 @@ async function renderIndex(tab, box, row) {
     new Notice(plugin.t("setup.reindexStarted"));
     const res = await plugin.atlasRequest("POST", "/api/reindex", {}, 30 * 60 * 1000);
     new Notice(res.status === 200 ? plugin.t("setup.reindexDone") : plugin.t("setup.reindexFailed"));
-    tab.display();
+    tab.refresh();
   } });
 }
 
@@ -80,90 +81,84 @@ function renderLimits(tab, box) {
       .onChange(async (on) => {
         const res = await plugin.setStatusLine(on);
         if (!res.ok) new Notice(t("setup.limitsFailed", { reason: res.reason }));
-        tab.display();
+        tab.refresh();
       });
   });
 }
 
-function area(tab, name, desc, value, onSave, rows = 4) {
-  const setting = new Setting(tab.containerEl).setName(tab.plugin.t(name)).setDesc(tab.plugin.t(desc));
-  setting.settingEl.addClass("session-atlas-area");      // field below the description, full width
-  setting.addTextArea((ta) => {
+function areaDefinition(tab, name, desc, getValue, onSave, rows = 4) {
+  return { name: tab.plugin.t(name), desc: tab.plugin.t(desc), render: (setting) => {
+    const value = getValue();
+    setting.settingEl.addClass("session-atlas-area");
+    setting.addTextArea((ta) => {
       ta.inputEl.rows = Math.max(rows, String(value || "").split("\n").length + 1);
       ta.inputEl.spellcheck = false;
       ta.setValue(value);
-      // Saved on blur: otherwise every keystroke would make the server re-read the index.
       ta.inputEl.addEventListener("blur", () => onSave(ta.getValue()));
     });
+  } };
 }
 
-/** Catalog: note and project folders, domains, sensitive areas, tickets. */
-function renderCatalog(tab) {
-  const { plugin, containerEl } = tab;
-  const cfg = plugin.readServerConfig() || {};
+function catalogDefinitions(tab) {
+  const { plugin } = tab, cfg = () => plugin.readServerConfig() || {};
   const save = (changes) => plugin.writeServerConfig(changes);
-  new Setting(containerEl).setName(plugin.t("cfg.heading")).setHeading();
-  area(tab, "cfg.vaults", "cfg.vaults.desc", F.vaultsToText(cfg.vaults),
-       (v) => save({ vaults: F.textToVaults(v, cfg.vaults) }), 2);
-  area(tab, "cfg.roots", "cfg.roots.desc", F.listToText(cfg.workspace_roots || ["~/Code", "~/Projects", "~/Developer", "~/src"]),
-       (v) => save({ workspace_roots: F.textToList(v) }), 3);
-  area(tab, "cfg.domains", "cfg.domains.desc", F.domainsToText(cfg.domains || []),
-       (v) => save({ domains: F.textToDomains(v) }), 5);
-  area(tab, "cfg.rules", "cfg.rules.desc", F.rulesToText(cfg.vault_domain_rules || []),
-       (v) => save({ vault_domain_rules: F.textToRules(v) }), 3);
-  area(tab, "cfg.sensitive", "cfg.sensitive.desc",
-       F.listToText(((cfg.sensitive || {}).vault_areas || []).map((a) => "vault:" + a)
-         .concat((cfg.sensitive || {}).projects || [])),
-       (v) => {
-         const items = F.textToList(v);
-         save({ sensitive: { vault_areas: items.filter((x) => x.startsWith("vault:")).map((x) => x.slice(6)),
-                             projects: items.filter((x) => !x.startsWith("vault:")) } });
-       }, 3);
-  new Setting(containerEl).setName(plugin.t("cfg.tickets")).setDesc(plugin.t("cfg.tickets.desc"))
-    .addText((text) => {
-      text.setPlaceholder(plugin.t("cfg.tickets.placeholder")).setValue(F.prefixesToText(cfg.ticket_prefixes));
+  return { type: "group", heading: plugin.t("cfg.heading"), items: [
+    areaDefinition(tab, "cfg.vaults", "cfg.vaults.desc", () => F.vaultsToText(cfg().vaults),
+      v => save({ vaults: F.textToVaults(v, cfg().vaults) }), 2),
+    areaDefinition(tab, "cfg.roots", "cfg.roots.desc", () => F.listToText(cfg().workspace_roots || ["~/Code", "~/Projects", "~/Developer", "~/src"]),
+      v => save({ workspace_roots: F.textToList(v) }), 3),
+    areaDefinition(tab, "cfg.domains", "cfg.domains.desc", () => F.domainsToText(cfg().domains || []),
+      v => save({ domains: F.textToDomains(v) }), 5),
+    areaDefinition(tab, "cfg.rules", "cfg.rules.desc", () => F.rulesToText(cfg().vault_domain_rules || []),
+      v => save({ vault_domain_rules: F.textToRules(v) }), 3),
+    areaDefinition(tab, "cfg.sensitive", "cfg.sensitive.desc",
+      () => F.listToText(((cfg().sensitive || {}).vault_areas || []).map(a => "vault:" + a).concat((cfg().sensitive || {}).projects || [])),
+      v => {
+        const items = F.textToList(v);
+        save({ sensitive: { vault_areas: items.filter(x => x.startsWith("vault:")).map(x => x.slice(6)),
+                             projects: items.filter(x => !x.startsWith("vault:")) } });
+      }, 3),
+    { name: plugin.t("cfg.tickets"), desc: plugin.t("cfg.tickets.desc"), render: setting => setting.addText(text => {
+      text.setPlaceholder(plugin.t("cfg.tickets.placeholder")).setValue(F.prefixesToText(cfg().ticket_prefixes));
       text.inputEl.addEventListener("blur", () => save({ ticket_prefixes: F.textToPrefixes(text.getValue()) }));
-    });
+    }) },
+  ] };
 }
 
-/** AI features: off until the person turns them on; models are aliases or full names. */
-function renderAi(tab) {
-  const { plugin, containerEl } = tab;
-  const cfg = plugin.readServerConfig() || {};
-  const models = Object.assign({}, DEFAULT_MODELS, cfg.models || {});
-  const save = (changes) => plugin.writeServerConfig(changes);
-  new Setting(containerEl).setName(plugin.t("ai.heading")).setHeading();
-  new Setting(containerEl).setName(plugin.t("ai.enabled")).setDesc(plugin.t("ai.enabled.desc"))
-    .addToggle((toggle) => toggle.setValue(!!cfg.llm_enabled).onChange((v) => save({ llm_enabled: v })));
-  new Setting(containerEl).setName(plugin.t("ai.language")).setDesc(plugin.t("ai.language.desc"))
-    .addDropdown((d) => d.addOption("en", "English").addOption("ru", "Русский")
-      .setValue(cfg.language === "ru" ? "ru" : "en").onChange((v) => save({ language: v })));
-  for (const kind of Object.keys(DEFAULT_MODELS)) {
-    new Setting(containerEl).setName(plugin.t(`ai.model.${kind}`)).setDesc(plugin.t("ai.model.desc"))
-      .addText((text) => {
-        text.setPlaceholder(DEFAULT_MODELS[kind].join(" ")).setValue(F.modelToText(models[kind]));
+function aiDefinitions(tab) {
+  const { plugin } = tab, cfg = () => plugin.readServerConfig() || {};
+  const models = () => Object.assign({}, DEFAULT_MODELS, cfg().models || {});
+  const save = changes => plugin.writeServerConfig(changes);
+  return { type: "group", heading: plugin.t("ai.heading"), items: [
+    { name: plugin.t("ai.enabled"), desc: plugin.t("ai.enabled.desc"), render: setting => setting.addToggle(toggle =>
+      toggle.setValue(!!cfg().llm_enabled).onChange(v => save({ llm_enabled: v }))) },
+    { name: plugin.t("ai.language"), desc: plugin.t("ai.language.desc"), render: setting => setting.addDropdown(d =>
+      d.addOption("en", "English").addOption("ru", "Русский").setValue(cfg().language === "ru" ? "ru" : "en")
+        .onChange(v => save({ language: v }))) },
+    ...Object.keys(DEFAULT_MODELS).map(kind => ({ name: plugin.t(`ai.model.${kind}`), desc: plugin.t("ai.model.desc"),
+      render: setting => setting.addText(text => {
+        text.setPlaceholder(DEFAULT_MODELS[kind].join(" ")).setValue(F.modelToText(models()[kind]));
         text.inputEl.addEventListener("blur", () => {
           const next = Object.assign({}, (plugin.readServerConfig() || {}).models);
           next[kind] = F.textToModel(text.getValue(), DEFAULT_MODELS[kind]);
           save({ models: next });
         });
-      });
-  }
-  new Setting(containerEl).setName(plugin.t("ai.force1m")).setDesc(plugin.t("ai.force1m.desc"))
-    .addToggle((toggle) => toggle.setValue(!!cfg.force_1m).onChange((v) => save({ force_1m: v })));
+      }) })),
+    { name: plugin.t("ai.force1m"), desc: plugin.t("ai.force1m.desc"), render: setting => setting.addToggle(toggle =>
+      toggle.setValue(!!cfg().force_1m).onChange(v => save({ force_1m: v }))) },
+  ] };
 }
 
-/** Advanced: a custom python3 and shell for non-standard setups. */
-function renderAdvanced(tab) {
-  const { plugin, containerEl } = tab;
-  new Setting(containerEl).setName(plugin.t("adv.heading")).setHeading();
-  for (const [key, name] of [["pythonPath", "adv.python"], ["shellPath", "adv.shell"]]) {
-    new Setting(containerEl).setName(plugin.t(name)).setDesc(plugin.t(`${name}.desc`))
-      .addText((text) => text.setValue(plugin.settings[key] || "").onChange(async (v) => {
-        plugin.settings[key] = v.trim();
-        await plugin.saveData(plugin.settings);
-      }));
-  }
+function advancedDefinitions(tab) {
+  const { plugin } = tab;
+  return { type: "group", heading: plugin.t("adv.heading"), items:
+    [["pythonPath", "adv.python"], ["shellPath", "adv.shell"]].map(([key, name]) => ({
+      name: plugin.t(name), desc: plugin.t(`${name}.desc`), render: setting => setting.addText(text =>
+        text.setValue(plugin.settings[key] || "").onChange(async value => {
+          plugin.settings[key] = value.trim();
+          await plugin.saveData(plugin.settings);
+        })),
+    })) };
 }
 
-export { renderStatus, renderCatalog, renderAi, renderAdvanced, DEFAULT_MODELS };
+export { renderStatus, catalogDefinitions, aiDefinitions, advancedDefinitions, DEFAULT_MODELS };

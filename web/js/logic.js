@@ -38,7 +38,7 @@
     if (key === "domain") return s.domains || [];
     if (key === "project") return s.projects || [];
     if (key === "topic") return s.topic ? [s.topic] : [];
-    if (key === "group") return s.tab_group_label ? [s.tab_group_label] : [];
+    if (key === "group") return s.tab_group && s.tab_group.id ? [s.tab_group.id] : [];
     return [periodOf(s.last_message_at, now)];
   }
 
@@ -58,6 +58,12 @@
     if (key === "period") {
       return PERIODS.filter(p => counts.has(p.value) || filters[key].has(p.value))
         .map(p => ({ value: p.value, label: p.label, count: counts.get(p.value) || 0 }));
+    }
+    if (key === "group") {
+      const labels = new Map(sessions.filter(s => s.tab_group).map(s => [s.tab_group.id, s.tab_group_label || s.tab_group.name || s.tab_group.id]));
+      return [...new Set([...counts.keys(), ...filters[key]])]
+        .map(value => ({ value, label: labels.get(value) || value, count: counts.get(value) || 0 }))
+        .sort((a, b) => a.label.localeCompare(b.label, "ru") || a.value.localeCompare(b.value));
     }
     return [...new Set([...counts.keys(), ...filters[key]])].sort((a, b) => a.localeCompare(b, "ru"))
       .map(v => ({ value: v, label: v, count: counts.get(v) || 0 }));

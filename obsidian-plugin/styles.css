@@ -342,3 +342,9 @@ body.theme-dark {
 .workspace-tab-header.sa-background-session .workspace-tab-header-inner-icon {
   color: var(--color-accent);
 }
+
+/* The whole-group drop boundary stays outside the target group. */
+.sa-group-chip.is-dragging { opacity: 0.55; }
+.workspace-tab-header.sa-group-drop-before { border-inline-start: 3px solid var(--interactive-accent); }
+.workspace-tab-header.sa-group-drop-after { border-inline-end: 3px solid var(--interactive-accent); }
+.session-atlas-status-section { display: block; border: none; padding: 0; }

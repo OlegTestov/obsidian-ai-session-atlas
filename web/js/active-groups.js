@@ -1,9 +1,10 @@
 // Active: session groups from the Obsidian tabs (the plugin's groups, as Chrome's tab groups).
 // A card shows its tab's group; clicking the label opens the plugin's group menu over the page.
 // Classic script: shares one global scope with the other page files.
-/* exported readTabGroups, withTabGroup, groupPill, GROUP_COLORS -- used by other page scripts */
+/* exported unselectGroup, groupFilterLabel, readTabGroups, withTabGroup, groupPill, GROUP_COLORS -- used by other page scripts */
 const GROUP_COLORS = ["blue", "red", "yellow", "green", "pink", "purple", "cyan", "orange", "grey"];
 let hostGroups = new Map();     // PTY proxy PID → {id, name, color} of the tab's group
+const groupFilterGroups = new Map();    // current groups, plus selected missing groups for readable labels
 let hostGroupsOn = false;       // the plugin knows groups (older plugins send none)
 
 function readTabGroups(d) {
@@ -11,6 +12,43 @@ function readTabGroups(d) {
   hostGroups = new Map(d.tabs.filter(t => hostGroupsOn && t && Number.isInteger(t.ptyPid) && t.group && typeof t.group === "object")
     .map(t => [t.ptyPid, { id: String(t.group.id || ""), name: String(t.group.name || "").slice(0, 40),
                            color: GROUP_COLORS.includes(t.group.color) ? t.group.color : "grey" }]));
+  const ids = new Set();
+  for (const g of hostGroups.values()) { groupFilterGroups.set(g.id, g); ids.add(g.id); }
+  if (hostGroupsOn && legacyGroupNames.length) {
+    const unresolved = [];
+    for (const name of legacyGroupNames) {
+      const matches = [...groupFilterGroups.values()].filter(g => ids.has(g.id) && groupLabel(g) === name);
+      if (matches.length) {
+        activeFilter.group.delete(`legacy:${name}`);
+        matches.forEach(g => activeFilter.group.add(g.id));
+      }
+      else {
+        const id = `legacy:${name}`;
+        groupFilterGroups.set(id, { id, name, color: "grey" });
+        activeFilter.group.add(id);
+        unresolved.push(name);
+      }
+    }
+    legacyGroupNames = unresolved;
+    writeHash();
+  }
+  for (const id of groupFilterGroups.keys()) if (!ids.has(id) && !activeFilter.group.has(id)) groupFilterGroups.delete(id);
+}
+
+function unselectGroup(id) {
+  activeFilter.group.delete(id);
+  legacyGroupNames = legacyGroupNames.filter(name => `legacy:${name}` !== id);
+}
+
+/** Same names stay readable: colour distinguishes groups; an ordinal resolves same-name/same-colour. */
+function groupFilterLabel(id) {
+  const g = groupFilterGroups.get(id);
+  if (!g) return i18n("active.group.missing");
+  const name = groupLabel(g);
+  const peers = [...groupFilterGroups.values()].filter(x => groupLabel(x) === name);
+  if (peers.length < 2) return name;
+  const same = peers.filter(x => x.color === g.color).sort((a, b) => a.id.localeCompare(b.id));
+  return `${name} · ${i18n(`active.group.color.${g.color}`)}` + (same.length > 1 ? ` · ${same.findIndex(x => x.id === id) + 1}` : "");
 }
 
 /** The group's name; an unnamed group is called by its colour, as the plugin does. */

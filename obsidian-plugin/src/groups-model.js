@@ -192,5 +192,36 @@ function tabOutside(strip, members, group, current) {
   return -1;
 }
 
+/** Next/previous visible tab in this strip, wrapping around folded groups. */
+function visibleNeighbour(strip, members, groups, current, direction) {
+  if (current < 0 || !strip.length) return -1;
+  for (let step = 1; step <= strip.length; step++) {
+    const index = (current + direction * step + strip.length) % strip.length;
+    const group = groups[members[strip[index]]];
+    if (!group || !group.collapsed) return index;
+  }
+  return -1;
+}
+
+/** Insert before/after the pointed tab's whole group, never inside another group. */
+function groupDropIndex(strip, members, target, before) {
+  const at = strip.indexOf(target);
+  if (at < 0) return null;
+  const group = members[target];
+  if (!group) return at + (before ? 0 : 1);
+  let boundary = at;
+  const direction = before ? -1 : 1;
+  while (members[strip[boundary + direction]] === group) boundary += direction;
+  return boundary + (before ? 0 : 1);
+}
+
+/** Move a block to an insertion boundary in the original strip; preserve its own order. */
+function movedBlock(strip, block, index) {
+  const moving = new Set(block);
+  const rest = strip.filter(id => !moving.has(id));
+  const at = strip.slice(0, index).filter(id => !moving.has(id)).length;
+  return [...rest.slice(0, at), ...strip.filter(id => moving.has(id)), ...rest.slice(at)];
+}
+
 export { COLORS, MAX_NAME, GONE_KEEP_MS, liveGroups, dropIfEmpty, emptyGroups, cleanGroups, cleanName, nextColor, newGroupId, createGroup, membersOf,
-         runs, joinIndex, changedLeaves, dropChanges, prune, tabOutside, editorTop };
+         runs, joinIndex, changedLeaves, dropChanges, prune, tabOutside, editorTop, visibleNeighbour, groupDropIndex, movedBlock };

@@ -53,7 +53,7 @@ server on `127.0.0.1`, and nothing is sent anywhere unless you turn on the optio
   keeps its history. A session that is replying asks first. Paths the agents print (`~/…`, `/…`, `src/main.rs:12`) are links: a click opens
   the file in its default app (a note of this vault in Obsidian, a folder in Finder), ⌘-click shows it
   in Finder, and the right-click menu can copy the path.
-- **Session groups.** Agent tabs (other tabs too, from the menu of the tab in front) go into named, coloured groups, as Chrome's tab
+- **Session groups.** Agent tabs (and notes, including background tabs) go into named, coloured groups, as Chrome's tab
   groups: a chip before the group's tabs, a line of its colour under them, one click folds the group
   to its chip. Active shows each card's group and filters by it. See below.
 - **Notifications.** A notice when a session finishes its turn or waits for a decision, and a macOS
@@ -142,7 +142,10 @@ terminal tab with that agent's ordinary resume. Checked with Claude Code 2.1.289
   fold, **Ungroup**, **Close group** (asks once, then closes the group's tabs and ends their agents).
   A folded group never hides the tab in front: the nearest tab outside the group comes forward first.
 - **Dragging:** a tab dropped onto a group's tab or its chip joins the group, even a group of one tab;
-  a tab dropped onto a tab outside the group, or dragged away from it, leaves.
+  a tab dropped onto a tab outside the group, or dragged away from it, leaves. Drag the chip to move
+  the whole group, also between panes. Alt+Left/Right on the focused chip moves it by keyboard.
+- Next/previous tab shortcuts skip collapsed groups. Going to a particular tab unfolds its group.
+  Same-named groups remain separate in the Active filter; renaming keeps your selection.
 - Groups are kept in the plugin's data and come back after Obsidian restarts. A group whose last tab
   closes is gone. Commands: **Add tab to a new group**, **Remove tab from its group**, **Collapse or
   expand the tab's group** (bindable to hotkeys).

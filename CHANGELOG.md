@@ -7,6 +7,36 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.8.0] - 2026-11-08
+
+### Added
+
+- Drag a session group's chip to move all of its tabs together, including into another pane.
+  A drop indicator marks the destination; Alt+Left/Right on a focused chip moves it by keyboard.
+- Plugin controls appear in Obsidian's settings search (1.13+), in English or Russian.
+- “What’s new” for 2.8.0: moving whole groups, folded groups in tab navigation, faster search.
+
+### Changed
+
+- Next/previous tab navigation skips collapsed groups. Explicit navigation to a grouped tab still
+  unfolds it. The menu of a note tab that is not in front also has the group actions, and opening
+  it does not switch to that tab.
+- Same-named groups can be selected separately in Active: the filter distinguishes them by colour
+  and, when needed, a number. Renaming a group keeps the selection; older saved filters still load.
+- Searches for common words across all fields run 2–5 times faster on a large catalog (on the
+  system `python3` of macOS: “claude code” 49 → 9 s, “test” 20 → 7 s). Matches, order and snippets stay
+  the same, and the index needs no rebuild. Less common words can take up to 0.7 s longer, because each
+  large field is first checked for how many matches it holds.
+
+### Fixed
+
+- A plugin reload waits for earlier settings writes before reading group data. Late callbacks from
+  the retired instance cannot overwrite newer settings; failed writes can recover on the next load.
+  If storage still refuses the write, the plugin loads with the newest settings instead of failing.
+- PTY tests isolate locale; live path-link checks use xterm cell geometry and wait for resolved links.
+- Release assets are identical with real or symlinked dependencies and different build directories.
+  CI uses pinned current GitHub Actions and Node 24 runtimes.
+
 ## [2.7.2] - 2026-11-08
 
 ### Fixed

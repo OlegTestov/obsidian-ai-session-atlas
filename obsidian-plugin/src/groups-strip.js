@@ -103,7 +103,7 @@ class GroupStripMethods {
     chip.className = CHIP;
     chip.setAttribute("role", "button");
     chip.tabIndex = 0;
-    // Its own drag, cancelled below: otherwise the browser drags the header, the group's first tab.
+    // A chip drags a group block; stopping propagation keeps Obsidian from dragging its first tab.
     chip.draggable = true;
     header.prepend(chip);
     // The header is Obsidian's: a click there selects the tab, a drag moves it. The chip has its own.
@@ -111,7 +111,7 @@ class GroupStripMethods {
     chip.addEventListener("pointerdown", stop);
     chip.addEventListener("mousedown", stop);
     chip.addEventListener("auxclick", (event) => { event.preventDefault(); stop(event); });
-    chip.addEventListener("dragstart", (event) => { event.preventDefault(); stop(event); });
+    chip.addEventListener("dragstart", stop);
     chip.addEventListener("dblclick", stop);
     chip.addEventListener("click", (event) => {
       stop(event);
@@ -127,6 +127,13 @@ class GroupStripMethods {
     chip.addEventListener("keydown", (event) => {
       const id = header.getAttribute("data-sa-group");
       if (!id) return;
+      if (event.altKey && ["ArrowLeft", "ArrowRight"].includes(event.key)) {
+        event.preventDefault(); stop(event);
+        const leaf = this.findLeafByTabHeader(header);
+        this.moveGroupBy(id, event.key === "ArrowLeft" ? -1 : 1, leaf?.parent);
+        chip.focus();
+        return;
+      }
       if (event.key === "Enter" || event.key === " ") { event.preventDefault(); this.toggleGroupFolded(id); }
       if (event.key === "ContextMenu" || (event.key === "F10" && event.shiftKey)) { event.preventDefault(); this.editGroup(id, chip); }
     });
@@ -143,6 +150,8 @@ class GroupStripMethods {
     chip.setAttribute("aria-label", this.t(group.collapsed ? "group.chip.folded" : "group.chip.open",
                                            { name, n: foldedCount || this.groupLeaves(group.id).length }));
     chip.setAttribute("aria-expanded", String(!group.collapsed));
+    chip.title = this.t("group.chip.moveHint");
+    chip.setAttribute("aria-keyshortcuts", "Alt+ArrowLeft Alt+ArrowRight");
   }
 
   /** The chip of a group's first run, for the editor to sit under. */

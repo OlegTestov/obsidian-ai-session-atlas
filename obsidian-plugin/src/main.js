@@ -1,4 +1,5 @@
-import { Notice, Plugin } from "obsidian";
+import { Notice } from "obsidian";
+import { PluginData } from "./plugin-data";
 import * as fsSync from "fs";
 import * as http from "http";
 import * as path from "path";
@@ -30,6 +31,8 @@ import { RestoreMethods } from "./restore";
 import { StartupMethods } from "./startup";
 import { OpenPathMethods } from "./open-path";
 import { WhatsNewMethods } from "./whats-new";
+import { GroupDragMethods } from "./groups-drag";
+import { GroupNavigationMethods } from "./groups-navigation";
 import { GroupMethods } from "./groups";
 import { GroupStripMethods } from "./groups-strip";
 import { AtlasSettingTab, DEFAULT_SETTINGS } from "./settings";
@@ -44,7 +47,7 @@ function markerPort(file) {
   }
 }
 
-class SessionAtlasPlugin extends Plugin {
+class SessionAtlasPlugin extends PluginData {
   async onload() {
     const saved = (await this.loadData()) || {};
     this.settings = Object.assign({}, DEFAULT_SETTINGS, saved);
@@ -351,7 +354,7 @@ class SessionAtlasPlugin extends Plugin {
 for (const methods of [TerminalMethods, InputMethods, CodexInputMethods, NotifyMethods, RestoreMethods, HeldMethods,
                        AgentMethods, GuardMethods, BackgroundTabMethods, ExplorerMethods, RuntimeMethods,
                        StatusLineMethods, ReloadMethods, StartupMethods, OpenPathMethods, GroupMethods,
-                       GroupStripMethods, WhatsNewMethods]) {
+                       GroupStripMethods, WhatsNewMethods, GroupNavigationMethods, GroupDragMethods]) {
   for (const name of Object.getOwnPropertyNames(methods.prototype)) {
     if (name === "constructor") continue;
     Object.defineProperty(SessionAtlasPlugin.prototype, name,

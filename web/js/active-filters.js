@@ -7,7 +7,8 @@ function passes(s, except) {
 
 // The count next to a value: how many sessions it yields with the other selected filters.
 function optionsFor(key) {
-  return AtlasLogic.filterOptions(activeSessions.filter(s => agentPassesView("active", s)), activeFilter, key);
+  const options = AtlasLogic.filterOptions(activeSessions.filter(s => agentPassesView("active", s)), activeFilter, key);
+  return key === "group" ? options.map(o => Object.assign({}, o, { label: groupFilterLabel(o.value) })) : options;
 }
 
 // Short so the bar fits one line: "Domain" or "Domain · 2"; the selection goes into the tooltip.
@@ -30,7 +31,7 @@ function buttonContent(f) {
 
 function buttonHint(f) {
   const picked = [...activeFilter[f.key]].map(v =>
-    f.key === "period" ? (PERIODS.find(p => p.value === v) || { label: v }).label : v);
+    f.key === "period" ? (PERIODS.find(p => p.value === v) || { label: v }).label : f.key === "group" ? groupFilterLabel(v) : v);
   return picked.length ? `${f.label}: ${picked.join(", ")}` : i18n("active.filterAll", { label: f.label });
 }
 
@@ -54,7 +55,9 @@ function fillList(f) {
     box.type = "checkbox";
     box.checked = activeFilter[f.key].has(o.value);
     box.addEventListener("change", () => {
-      box.checked ? activeFilter[f.key].add(o.value) : activeFilter[f.key].delete(o.value);
+      if (box.checked) activeFilter[f.key].add(o.value);
+      else if (f.key === "group") unselectGroup(o.value);
+      else activeFilter[f.key].delete(o.value);
       onFilterChange(f.key);
     });
     label.append(box, document.createTextNode(o.label), el("span", "n", String(o.count)));
@@ -190,7 +193,9 @@ function buildFilters() {
       optionsFor(f.key).forEach(o => activeFilter[f.key].add(o.value)); fillList(f); onFilterChange();
     });
     none.addEventListener("click", () => {
-      activeFilter[f.key].clear(); fillList(f); onFilterChange();
+      activeFilter[f.key].clear();
+      if (f.key === "group") legacyGroupNames = [];
+      fillList(f); onFilterChange();
     });
     actions.append(all, none);
     const list = el("div", "ms-list");
@@ -238,6 +243,7 @@ function buildFilters() {
   reset.id = "active-reset";
   reset.addEventListener("click", () => {
     ACTIVE_FILTERS.forEach(({ key }) => activeFilter[key].clear());
+    legacyGroupNames = [];
     resetAgents("active");
     closeFilters();
     onFilterChange();

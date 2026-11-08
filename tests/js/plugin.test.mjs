@@ -2393,6 +2393,36 @@ describe("Codex new sessions from the catalog", () => {
                      { ptyPid: 5, title: "t", background: "ab12cd34" });
     assert.deepEqual(p.tabInfo({ leaf: { view: { backgroundJob: null } }, pid: 6, title: "u" }), { ptyPid: 6, title: "u" });
   });
+  it("the status bar's cover of the page: only where it overlaps the page's frame", () => {
+    const p = new SessionAtlasPlugin();
+    const target = {};
+    const rect = (left, top, right, bottom) => ({ left, top, right, bottom, width: right - left, height: bottom - top });
+    const saved = globalThis.document;
+    const world = (bar, frame) => {
+      globalThis.document = { querySelector: () => (bar ? { getBoundingClientRect: () => bar } : null),
+        querySelectorAll: () => [{ contentWindow: target, getBoundingClientRect: () => frame }] };
+    };
+    try {
+      world(rect(1200, 876, 1440, 900), rect(300, 40, 1440, 900));
+      assert.equal(p.statusBarCover(target), 24);
+      world(rect(0, 0, 0, 0), rect(300, 40, 1440, 900));                 // hidden
+      assert.equal(p.statusBarCover(target), 0);
+      world(rect(1200, 876, 1440, 900), rect(0, 40, 700, 900));          // the page is in the left pane
+      assert.equal(p.statusBarCover(target), 0);
+      world(null, rect(0, 40, 700, 900));
+      assert.equal(p.statusBarCover(target), 0);
+      assert.equal(p.statusBarCover({}), 0, "another window's frame");
+    } finally { globalThis.document = saved; }
+  });
+  it("the tabs reply carries the status bar's cover", async () => {
+    const p = new SessionAtlasPlugin();
+    p.terminalReport = async () => ({ tabs: [], health: { ok: true } });
+    p.settings = {};
+    p.statusBarCover = () => 26;
+    const sent = [];
+    await p.replyTabs({ postMessage: (m) => sent.push(m) });
+    assert.equal(sent[0].cover, 26);
+  });
   it("the tabs reply tells the page which agents are on", async () => {
     const p = new SessionAtlasPlugin();
     p.terminalReport = async () => ({ tabs: [], health: { ok: true } });

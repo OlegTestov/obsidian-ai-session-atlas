@@ -18,6 +18,7 @@ function section(title, list, cls) {
 const RERENDER_EVERY_MS = 60000;     // "N min ago" ages, so redraw once a minute anyway
 
 function renderActive(skipKey, force) {
+  renderFeedReply(false);
   const summary = $("#active-summary");
   const grid = $("#active-grid");
   arrangeActive(activeSessions);              // bring back hidden cards that have a new message

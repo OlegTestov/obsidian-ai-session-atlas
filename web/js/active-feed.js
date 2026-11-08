@@ -2,7 +2,7 @@
 // on scrolling to the top. The live end refreshes from an anchor turn, so new turns
 // append without gaps, and pages before the anchor load once.
 // Classic script: shares one global scope with the other page files.
-/* exported feedButton -- used by other page scripts */
+/* exported feedButton, renderFeedReply -- used by other page scripts */
 let feedSid = null;
 let feedSignature = "";
 let feedSeq = 0;
@@ -12,6 +12,7 @@ let feedLive = [];                     // from the anchor to the end, refreshed
 let feedAnchor = null;                 // time of the first turn of the live part
 let feedHasMore = false;
 let feedLoadingOlder = false;
+let feedReplyKey = "";                 // what the reply field under the feed was drawn for
 
 function resetFeedPages() {
   feedOlder = [];
@@ -58,6 +59,7 @@ function openFeed(sid) {
   renderFeedViews();
   lastSignature = "";
   renderActive(null, true);            // the card's feed button shows as pressed
+  renderFeedReply(true);
   refreshFeed(true);
 }
 
@@ -195,3 +197,28 @@ function feedTurn(t, last, session = activeSessions.find(x => x.session_id === f
 }
 
 $("#feed-close").addEventListener("click", closeFeed);
+
+/**
+ * The reply field under the feed: the card's own form, so a reply goes the same way. Redrawn when
+ * the session's state or tab changes; focus and caret stay where they were.
+ */
+function renderFeedReply(force) {
+  const box = $("#feed-reply");
+  const s = feedSid ? activeSessions.find(x => x.session_id === feedSid) : null;
+  const pid = s ? tabFor(s) : null;
+  const key = s ? JSON.stringify([s.session_id, pid, hostReady, s.status, s.activity, I18N.lang()]) : "";
+  if (!force && key === feedReplyKey) return;
+  const area = box.querySelector("textarea");
+  const typing = area && document.activeElement === area;
+  // During IME composition or with the command hints open, a redraw would break them: next time.
+  if (!force && (composing || box.querySelector(".suggest:not(.hidden)"))) return;
+  feedReplyKey = key;
+  const caret = typing && { start: area.selectionStart, end: area.selectionEnd };
+  if (!s) { box.replaceChildren(); return; }
+  box.replaceChildren(answerForm(s, pid, true));
+  const next = box.querySelector("textarea");
+  if (caret && next && !next.disabled) {
+    next.focus({ preventScroll: true });
+    next.setSelectionRange(caret.start, caret.end);
+  }
+}

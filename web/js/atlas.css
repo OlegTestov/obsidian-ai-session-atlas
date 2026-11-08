@@ -446,6 +446,10 @@ button.stop{color:var(--warn);border-color:var(--warn)}
 #feed .fhead b{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #feed .fhead button{font-size:18px;line-height:1;padding:2px 8px}
 #feed-body{flex:1 1 auto;overflow:auto;padding:8px 12px 24px}
+#feed-reply{flex:0 0 auto;border-top:1px solid var(--line);padding:8px 12px calc(8px + var(--host-bottom, 0px))}
+#feed-reply:empty{display:none}
+#feed-reply .answer{margin-top:0}
+#feed-reply .answer textarea{max-height:40vh}
 :is(#feed, .catalog-feed-body) .fturn{border-bottom:1px dashed var(--line);padding:8px 0;display:flex;flex-direction:column;gap:4px}
 :is(#feed, .catalog-feed-body) .fwho{font-size:11.5px;color:var(--dim)}
 :is(#feed, .catalog-feed-body) .fwho.bad{color:var(--warn)}
@@ -458,16 +462,16 @@ button.feedbtn[aria-pressed="true"]{background:var(--accent-soft);border-color:v
 /* on a wide screen the feed does not cover the cards: the grid narrows */
 @media (min-width:1400px){#active.with-feed #active-grid{margin-right:min(560px,40vw)}}
 /* slash-command hints above the reply field */
-.acard .answer{position:relative}
-.acard .answer .suggest{position:absolute;left:0;right:0;bottom:100%;margin-bottom:4px;max-height:260px;
+:is(.acard, #feed) .answer{position:relative}
+:is(.acard, #feed) .answer .suggest{position:absolute;left:0;right:0;bottom:100%;margin-bottom:4px;max-height:260px;
   overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:8px;
   box-shadow:0 6px 18px rgba(0,0,0,.12);z-index:5;padding:3px}
-.acard .answer .suggest.hidden{display:none}
-.acard .answer .sug{display:flex;gap:8px;align-items:baseline;padding:4px 8px;border-radius:5px;
+:is(.acard, #feed) .answer .suggest.hidden{display:none}
+:is(.acard, #feed) .answer .sug{display:flex;gap:8px;align-items:baseline;padding:4px 8px;border-radius:5px;
   cursor:pointer;font-size:12.5px;min-width:0}
-.acard .answer .sug b{flex:0 0 auto;font-weight:600}
-.acard .answer .sug span{color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
-.acard .answer .sug.on{background:var(--accent-soft)}
+:is(.acard, #feed) .answer .sug b{flex:0 0 auto;font-weight:600}
+:is(.acard, #feed) .answer .sug span{color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+:is(.acard, #feed) .answer .sug.on{background:var(--accent-soft)}
 /* session context and subscription limits */
 .acard .ctx.mid{color:var(--accent)}
 .acard .ctx.warn{color:var(--warn);font-weight:600}
@@ -503,7 +507,7 @@ button.feedbtn[aria-pressed="true"]{background:var(--accent-soft);border-color:v
   color:var(--bg);font-size:12px;line-height:1.35;white-space:pre-line;pointer-events:none;
   box-shadow:0 4px 14px rgba(0,0,0,.18)}
 .tip.hidden{display:none}
-.acard .answer .suggest{max-height:300px;overscroll-behavior:contain}
+:is(.acard, #feed) .answer .suggest{max-height:300px;overscroll-behavior:contain}
 /* quick command answer and argument choice */
 .acard .cmdout{border-left:3px solid var(--accent);padding:3px 0 3px 8px;margin:2px 0;display:flex;
   flex-direction:column;gap:3px;min-width:0}
@@ -512,10 +516,10 @@ button.feedbtn[aria-pressed="true"]{background:var(--accent-soft);border-color:v
 .acard .cmdout .who button.ghost{margin-left:auto;padding:0 6px}
 .acard .cmdout pre{margin:0;font-size:11.5px;line-height:1.35;background:var(--accent-soft);padding:4px 6px;
   border-radius:4px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:14em;overflow:auto}
-.acard .answer .argpick{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin:0 0 4px}
-.acard .answer .argpick.hidden{display:none}
-.acard .answer .argpick .lbl{font-size:12px;color:var(--dim)}
-.acard .answer .argpick button{padding:2px 9px;font-size:12px;line-height:18px}
+:is(.acard, #feed) .answer .argpick{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin:0 0 4px}
+:is(.acard, #feed) .answer .argpick.hidden{display:none}
+:is(.acard, #feed) .answer .argpick .lbl{font-size:12px;color:var(--dim)}
+:is(.acard, #feed) .answer .argpick button{padding:2px 9px;font-size:12px;line-height:18px}
 #active-summary .link{white-space:nowrap}
 /* Agent tasks on the card: progress bar and the current step. */
 .acard .tasks{display:flex;align-items:center;gap:8px;font-size:12.5px;min-width:0}

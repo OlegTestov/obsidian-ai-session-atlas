@@ -125,7 +125,7 @@ test("the feed of the Codex card: turns, steps with exit codes, files", async ({
 
 // Inside Obsidian the page is a frame and the plugin answers with its terminal tabs. A stand-in host
 // page on the same origin does that here, so the cards get their reply fields as they do in Obsidian.
-function hostPage(lang, { mode = "full", background = null } = {}) {
+function hostPage(lang, { mode = "full", background = null, cover = 0 } = {}) {
   const tabs = [Object.assign({ ptyPid: run.pids.claude.shell, title: "claude tab" }, background ? { background } : {}),
                 { ptyPid: run.pids.codex.shell, title: "codex tab", agent: "codex", screen: null }];
   return `<!doctype html><html><head><title>host</title></head><body style="margin:0">
@@ -138,7 +138,7 @@ window.addEventListener("message", e => {
   if (!d || d.source !== "session-atlas") return;
   window.sent.push(d);
   const reply = m => e.source.postMessage(Object.assign({ source: "session-atlas-host" }, m), "*");
-  if (d.type === "list-tabs") reply({ type: "tabs", tabs, health: { ok: true } });
+  if (d.type === "list-tabs") reply({ type: "tabs", tabs, health: { ok: true }, cover: ${cover} });
   if (d.type === "send-text") reply({ type: "sent", nonce: d.nonce, ok: true });
 });
 </script></body></html>`;
@@ -243,3 +243,82 @@ for (const mode of ["compact", "full"]) {
     await expect(claude.locator("button.bgback")).toBeDisabled();
   });
 }
+
+// The session feed has the card's reply field under it: in the compact view too, where cards have none.
+for (const mode of ["compact", "full"]) {
+  test(`${mode}: a reply typed under the feed goes to the session's tab; the card's field shows the same draft`,
+    async ({ page, lang }) => {
+      await page.route(`${run.base}/e2e-host.html`, route => route.fulfill({ contentType: "text/html; charset=utf-8",
+        body: hostPage(lang, { mode }) }));
+      await page.route(/\/api\/upload$/, route => route.fulfill({ json: { path: "/tmp/atlas-e2e-shot.png" } }));
+      await page.goto(`${run.base}/e2e-host.html`);
+      const frame = page.frameLocator("#atlas");
+      const claude = frame.locator(`.acard[data-id="${ids.claudeLive}"]`);
+      await claude.locator(".feedbtn").click();
+      const area = frame.locator("#feed-reply .answer textarea");
+      await expect(area).toBeEnabled();
+      await expect(frame.locator("#feed-reply .answer .send")).toBeVisible();
+      await expect(frame.locator("#feed-reply .answer .clip")).toBeVisible();
+      await area.fill("check the feed field");
+      if (process.env.LIVE_SHOT_DIR) await page.screenshot({ path: `${process.env.LIVE_SHOT_DIR}/feed-reply-${mode}-${lang}.png` });
+      if (mode === "full") await expect(claude.locator(".answer textarea")).toHaveValue("check the feed field");
+      else await expect(claude.locator(".answer textarea")).toHaveCount(0);
+      // A picture attached under the feed shows on the card's field too, and goes with the reply.
+      await frame.locator('#feed-reply input[type="file"]').setInputFiles({ name: "shot.png", mimeType: "image/png",
+        buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==", "base64") });
+      await expect(frame.locator("#feed-reply .thumbs img")).toHaveCount(1);
+      if (mode === "full") await expect(claude.locator(".thumbs img")).toHaveCount(1);
+      await area.press("Enter");
+      await expect.poll(() => page.evaluate(() => window.sent.filter(m => m.type === "send-text"))).toEqual([
+        expect.objectContaining({ ptyPid: run.pids.claude.shell, sessionId: ids.claudeLive, text: "check the feed field",
+                                  images: [expect.stringMatching(/\.png$/)] })]);
+      await expect(area).toHaveValue("");
+      if (mode === "full") await expect(claude.locator(".answer textarea")).toHaveValue("");
+      // The feed's field stays the feed's: another card's feed gets that session's field.
+      await frame.locator(`.acard[data-id="${ids.codexLive}"] .feedbtn`).click();
+      await expect(frame.locator("#feed-reply .answer textarea")).toHaveAttribute("data-id", ids.codexLive);
+      await frame.locator("#feed-close").click();
+      await expect(frame.locator("#feed-reply .answer")).toHaveCount(0);
+    });
+}
+
+test("the feed's field follows the session: a dialog opens, the field says where to answer", async ({ page, lang }) => {
+  let waiting = false;
+  await page.route(/\/api\/active(\?|$)/, async route => {
+    const res = await route.fetch();
+    const data = await res.json();
+    (data.sessions || []).forEach(s => {
+      if (waiting && s.session_id === ids.claudeLive) {
+        Object.assign(s, { status: "waiting", activity: "waiting", waiting_for: "permission prompt" });
+      }
+    });
+    await route.fulfill({ response: res, json: data });
+  });
+  await page.route(`${run.base}/e2e-host.html`, route => route.fulfill({ contentType: "text/html; charset=utf-8",
+    body: hostPage(lang, { mode: "compact" }) }));
+  await page.goto(`${run.base}/e2e-host.html`);
+  const frame = page.frameLocator("#atlas");
+  await frame.locator(`.acard[data-id="${ids.claudeLive}"] .feedbtn`).click();
+  const area = frame.locator("#feed-reply .answer textarea");
+  await expect(area).toBeEnabled();
+  waiting = true;                                          // the next poll brings the dialog
+  await expect(area).toBeDisabled({ timeout: 15000 });
+  await expect(area).toHaveAttribute("placeholder", lang === "ru" ? /на карточке или во вкладке/ : /on the card or in the tab/);
+});
+
+// Obsidian's status bar floats over the bottom-right corner: the feed's field rises above what it covers.
+test("the feed's reply field rises above Obsidian's status bar", async ({ page, lang }) => {
+  await page.route(`${run.base}/e2e-host.html`, route => route.fulfill({ contentType: "text/html; charset=utf-8",
+    body: hostPage(lang, { mode: "compact", cover: 26 }) }));
+  await page.goto(`${run.base}/e2e-host.html`);
+  const frame = page.frameLocator("#atlas");
+  await frame.locator(`.acard[data-id="${ids.claudeLive}"] .feedbtn`).click();
+  const send = frame.locator("#feed-reply .answer .send");
+  await expect(send).toBeVisible();
+  const gap = await page.evaluate(() => {
+    const f = document.querySelector("#atlas");
+    const b = f.contentDocument.querySelector("#feed-reply .answer .send").getBoundingClientRect();
+    return f.getBoundingClientRect().height - b.bottom;
+  });
+  expect(gap).toBeGreaterThanOrEqual(26);
+});

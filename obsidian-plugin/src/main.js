@@ -310,7 +310,26 @@ class SessionAtlasPlugin extends PluginData {
       // The page offers only the agents enabled here (Settings → Agents).
       agents: { claude: this.agentEnabled("claude"), codex: this.agentEnabled("codex") },
       groups: true,                    // tabs can be put into session groups from the page
+      cover: this.statusBarCover(target),
     }, this.atlasOrigin());
+  }
+
+  /**
+   * How many pixels of the page's bottom Obsidian's status bar covers (it floats over the bottom-right
+   * corner): the reply field under the feed rises by that much. 0 when hidden or elsewhere.
+   */
+  statusBarCover(target) {
+    try {
+      const bar = document.querySelector(".status-bar");
+      const frame = [...document.querySelectorAll("iframe")].find((f) => f.contentWindow === target);
+      if (!bar || !frame) return 0;
+      const b = bar.getBoundingClientRect();
+      const f = frame.getBoundingClientRect();
+      if (!b.width || !b.height || b.left >= f.right || b.right <= f.left || b.top >= f.bottom || b.bottom <= f.top) return 0;
+      return Math.max(0, Math.round(f.bottom - b.top));
+    } catch {
+      return 0;                                          // no document (tests) or a frame gone meanwhile
+    }
   }
 
   /**

@@ -40,7 +40,7 @@ function columnsAt(id) {
 }
 
 function focusAnswer(id) {
-  const find = () => document.querySelector(`.answer textarea[data-id="${CSS.escape(id)}"]`);
+  const find = () => document.querySelector(`#active-grid .answer textarea[data-id="${CSS.escape(id)}"]`);
   if (!find() && activeMode !== "full") {
     // The compact view has no field: replies are written in the detailed one.
     const full = document.querySelector('.mode button[data-mode="full"]');

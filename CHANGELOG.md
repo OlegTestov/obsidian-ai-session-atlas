@@ -7,6 +7,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.8.3] - 2026-11-08
+
+### Added
+
+- The session feed opened on the right has the card's reply field under it: text, images, slash
+  commands and the send state work as on the card, in the compact view too. Both fields show one
+  draft. While a dialog is open, the feed's field says to answer it on the card or in the tab. When
+  Obsidian's status bar covers the page's bottom-right corner, the field rises above it.
+
 ## [2.8.2] - 2026-11-08
 
 ### Changed

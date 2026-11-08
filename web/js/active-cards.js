@@ -405,9 +405,16 @@ async function attachImages(sid, files) {
   renderThumbs(sid);
 }
 
+/** The session's reply fields: on its card and under its feed. */
+function answerAreas(sid) {
+  return [...document.querySelectorAll(`.answer textarea[data-id="${CSS.escape(sid)}"]`)];
+}
+
 function renderThumbs(sid) {
-  const box = document.querySelector(`.thumbs[data-id="${CSS.escape(sid)}"]`);
-  if (!box) return;
+  document.querySelectorAll(`.thumbs[data-id="${CSS.escape(sid)}"]`).forEach(box => thumbsInto(box, sid));
+}
+
+function thumbsInto(box, sid) {
   box.replaceChildren();
   (attachments.get(sid) || []).forEach((a, i) => {
     const th = el("div", "th");
@@ -425,7 +432,8 @@ function renderThumbs(sid) {
   });
 }
 
-function answerForm(s, pid) {
+/** The reply field. inFeed: the one under the session feed, where no dialog buttons are above it. */
+function answerForm(s, pid, inFeed = false) {
   const sid = s.session_id;
   const form = el("div", "answer");
   const thumbs = el("div", "thumbs");
@@ -451,7 +459,7 @@ function answerForm(s, pid) {
   const note = el("div", "note");
   const blocked = !hostReady ? i18n("active.blockedNoHost")
     : !pid ? i18n("active.blockedNoTab")
-    : s.status === "waiting" ? i18n("active.blockedDialog")
+    : s.status === "waiting" ? i18n(inFeed ? "active.blockedDialogFeed" : "active.blockedDialog")
     : null;
   area.disabled = send.disabled = clip.disabled = !!blocked;
   area.placeholder = blocked || (s.activity === "busy" || s.status === "busy"
@@ -461,7 +469,12 @@ function answerForm(s, pid) {
   const st = sendState.get(sid);
   if (st) { note.textContent = st.note; if (st.cls) note.classList.add(st.cls); }
 
-  area.addEventListener("input", () => { drafts.set(sid, area.value); autosize(area); });
+  area.addEventListener("input", () => {
+    drafts.set(sid, area.value);
+    autosize(area);
+    // The card's field and the feed's show one draft.
+    answerAreas(sid).forEach(other => { if (other !== area) { other.value = area.value; autosize(other); } });
+  });
   area.addEventListener("paste", e => {
     const files = [...(e.clipboardData ? e.clipboardData.files : [])]
       .filter(f => f.type.startsWith("image/"));
@@ -514,12 +527,12 @@ function answerForm(s, pid) {
 // While the field has focus the global redraw is skipped, so the send state updates in place.
 function setSendNote(sid, note, cls, clear) {
   sendState.set(sid, { note, cls });
-  const area = document.querySelector(`.answer textarea[data-id="${CSS.escape(sid)}"]`);
-  if (!area) return;
-  if (clear) { area.value = ""; autosize(area); }
-  const box = area.closest(".answer").querySelector(".note");
-  box.className = "note" + (cls ? " " + cls : "");
-  box.textContent = note;
+  answerAreas(sid).forEach(area => {
+    if (clear) { area.value = ""; autosize(area); }
+    const box = area.closest(".answer").querySelector(".note");
+    box.className = "note" + (cls ? " " + cls : "");
+    box.textContent = note;
+  });
 }
 
 // What wakes the session without you, in words, for the label and the tooltip.

@@ -33,7 +33,8 @@ server on `127.0.0.1`, and nothing is sent anywhere unless you turn on the optio
   - type a reply (Claude Code replies can carry images), stop the agent, run slash commands.
 
   Each card shows the agent's task list (for Codex, its plan checklist) and a step-by-step feed of
-  tool calls, commands with exit codes, errors and changed files. A session running in another
+  tool calls, commands with exit codes, errors and changed files. The feed opened on the right has the
+  card's reply field under it, in the compact view too. A session running in another
   terminal app can be moved into an Obsidian tab. The header shows each agent's 5-hour and weekly
   limits when they are known.
 - **Statistics.** Tokens, active time, cost at API prices and cache hit rate over a period, broken

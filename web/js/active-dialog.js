@@ -21,6 +21,7 @@ function requestDialogs() {
   [...dialogs.keys()].forEach(sid => { if (!waiting.has(sid)) dialogs.delete(sid); });
   [...freeModes.keys()].forEach(sid => { if (!waiting.has(sid)) { freeModes.delete(sid); freeDrafts.delete(sid); } });
   [...previewNoteOpen].forEach(sid => { if (!waiting.has(sid)) { previewNoteOpen.delete(sid); previewNoteDrafts.delete(sid); } });
+  [...multiState.keys()].forEach(sid => { if (!waiting.has(sid)) multiState.delete(sid); });
 }
 
 // Plugin messages about dialogs. true means the message is handled here.
@@ -44,6 +45,7 @@ function handleDialogMessage(d) {
       freeDrafts.delete(sid);
       previewNoteOpen.delete(sid);
       previewNoteDrafts.delete(sid);
+      multiState.delete(sid);
       dialogNotes.set(sid, { note: i18n("active.answerSent"), cls: "ok" });
       window.setTimeout(() => { dialogNotes.delete(sid); loadActive(); }, 1500);
     } else {
@@ -98,6 +100,7 @@ function dialogBlock(s, pid, full) {
     box.appendChild(el("div", "q", got.reason || i18n("active.dialogNotRead")));
     return box;
   }
+  if (d.kind === "multi") return multiBlock(s, pid, d, full, busy, note, box);
   if (d.kind === "plan" && agentControls(s).plan) return planBlock(s, pid, d, full, busy, note, box);
   if (d.pick === "enter") return previewBlock(s, pid, d, full, busy, note, box);
   if (d.kind === "panel") {

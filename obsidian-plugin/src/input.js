@@ -106,6 +106,10 @@ class InputMethods {
     if (state.agent === "codex") return this.codexReadDialog(tab, reply);
     const lines = this.screenLines(tab.leaf);
     const dialog = parseDialog(lines);
+    // Several questions at once: read from the transcript, answered from the card (multi-answer.js).
+    // Its Submit tab has no footer, so parseDialog finds nothing there: try it then too.
+    const multi = !dialog || dialog.reason === "dialog.multi" ? this.readMulti(data.sessionId, lines) : null;
+    if (multi) return reply(multi);
     if (dialog) {
       const title = dialog.kind === "plan" ? this.t(dialog.title) : dialog.title;
       return reply({ ...dialog, title, reason: dialog.reason && this.t(dialog.reason) });

@@ -150,8 +150,9 @@ function renderActive(skipKey, force) {
     return [c.dataset.id, txt ? txt.scrollTop : 0];
   }));
   // A long dialog scrolls inside itself: the reader's place in it survives the redraw too.
+  // A dialog that changed its view (another question tab) starts at the top.
   const dialogTops = new Map([...grid.querySelectorAll(".acard > .dialog")].map(d =>
-    [d.parentElement.dataset.id, d.scrollTop]));
+    [d.parentElement.dataset.id, { top: d.scrollTop, view: d.dataset.view || "" }]));
   // Focus and caret in the reply field survive a redraw: otherwise after sending the card
   // does not update until you click outside the field.
   const focused = document.activeElement && document.activeElement.tagName === "TEXTAREA"
@@ -179,7 +180,8 @@ function renderActive(skipKey, force) {
     const txt = c.querySelector(".reply .txt:not(.now)");
     if (txt && inner.get(c.dataset.id)) txt.scrollTop = inner.get(c.dataset.id);
     const dialog = c.querySelector(":scope > .dialog");
-    if (dialog && dialogTops.get(c.dataset.id)) dialog.scrollTop = dialogTops.get(c.dataset.id);
+    const was = dialogTops.get(c.dataset.id);
+    if (dialog && was && was.top && was.view === (dialog.dataset.view || "")) dialog.scrollTop = was.top;
   });
   applySelection();                  // keyboard selection survives a redraw
 }

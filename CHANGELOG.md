@@ -7,6 +7,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.8.4] - 2026-11-09
+
+### Added
+
+- Several Claude Code questions at once are answered on the Active card, as in the terminal: a tab per
+  question, buttons for one answer, checkboxes and **Next** for several, an own typed answer where
+  Claude Code takes one, and a **Submit** tab that lists the answers. **Send the answers** stays off
+  until every question has one. The plugin then answers key by key and checks the tab's screen after
+  each key; nothing reaches Claude Code before the final submit, and on any mismatch it stops so the
+  dialog can be finished in the tab. Questions already half answered in the tab, or with previews,
+  are still answered there. Compact cards keep the whole dialog in view.
+
 ## [2.8.3] - 2026-11-08
 
 ### Added

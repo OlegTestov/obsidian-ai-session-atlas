@@ -14,6 +14,7 @@ import {
 import { TerminalMethods } from "./terminal";
 import { codexScreenState } from "./dialog-codex";
 import { InputMethods } from "./input";
+import { MultiQuestionMethods } from "./multi-answer";
 import { CodexInputMethods } from "./input-codex";
 import { AtlasView } from "./view";
 import { AgentTerminalView } from "./term-view";
@@ -252,6 +253,10 @@ class SessionAtlasPlugin extends PluginData {
       this.answerDialog(event.source, data);
       return;
     }
+    if (data.type === "answer-multi") {
+      this.answerMulti(event.source, data);
+      return;
+    }
     if (data.type === "preview-option") {
       this.previewOption(event.source, data);
       return;
@@ -372,7 +377,7 @@ class SessionAtlasPlugin extends PluginData {
 }
 
 // Methods from the other files are mixed into the plugin class and run with the plugin as `this`.
-for (const methods of [TerminalMethods, InputMethods, CodexInputMethods, NotifyMethods, RestoreMethods, HeldMethods,
+for (const methods of [TerminalMethods, InputMethods, MultiQuestionMethods, CodexInputMethods, NotifyMethods, RestoreMethods, HeldMethods,
                        AgentMethods, GuardMethods, BackgroundTabMethods, ExplorerMethods, RuntimeMethods,
                        StatusLineMethods, ReloadMethods, StartupMethods, OpenPathMethods, GroupMethods,
                        GroupStripMethods, WhatsNewMethods, GroupNavigationMethods, GroupDragMethods]) {

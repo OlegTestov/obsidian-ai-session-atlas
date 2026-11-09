@@ -375,6 +375,42 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
   white-space:pre-wrap;overflow-wrap:anywhere;max-height:9.5em;overflow:auto}
 .acard .dialog .det.short{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-height:none}
 .acard .dialog .opts{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+.acard .dialog .mtabs{display:flex;flex-wrap:wrap;gap:4px}
+.acard .dialog .mtabs button{padding:1px 8px;font-size:12px;line-height:18px;border-radius:999px}
+.acard .dialog .mtabs button.on{border-color:var(--accent);color:var(--accent);font-weight:600}
+.acard .dialog .mtabs button.done:not(.on){color:var(--dim)}
+.acard .dialog .mq{display:flex;flex-direction:column;gap:4px;min-height:0;overflow:auto}
+.acard .dialog .mopts{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+/* A detailed card: one option per row, its description beside it. */
+.agrid.full .acard .dialog .mopts{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 10px;
+  align-items:center;justify-items:start}
+.agrid.full .acard .dialog .mopts .od{margin:0;flex-basis:auto}
+.agrid.full .acard .dialog .mopts>button:not(.mopt),.agrid.full .acard .dialog .mopts>.mopt.typed{grid-column:1}
+.acard .dialog .mopt{padding:2px 8px;font-size:12px;line-height:18px;text-align:left}
+.acard .dialog .mopt.on{border-color:var(--accent);background:var(--accent-soft);color:var(--text)}
+.acard .dialog .mnext,.acard .dialog .msend{align-self:flex-start;padding:2px 10px;font-size:12px;line-height:18px}
+.acard .dialog .msum{display:flex;flex-direction:column;gap:2px;font-size:12px}
+.acard .dialog .msline.missing{color:var(--warn)}
+/* A compact card: one row each for the tabs, the question and the options (Next in the same row);
+   the answers on one line beside Send. Cut text is in the tooltips. */
+.agrid:not(.full) .acard>.dialog.multi{min-height:min(5.4em,45%);gap:2px}
+.agrid:not(.full) .acard .dialog .mtabs{flex-wrap:nowrap;overflow:hidden}
+.agrid:not(.full) .acard .dialog .mtabs button{flex:0 1 auto;min-width:2.2em;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;font-size:11.5px;line-height:16px;padding:0 6px}
+.agrid:not(.full) .acard .dialog .mtabs button.on{flex-shrink:0;max-width:60%}
+.agrid:not(.full) .acard .dialog .mq{gap:2px;overflow:visible}
+.agrid:not(.full) .acard .dialog .mq>.q{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.agrid:not(.full) .acard .dialog .mopts,.agrid:not(.full) .acard .dialog .mopts.multi{flex-direction:row;
+  flex-wrap:nowrap;overflow:hidden;align-items:center}
+.agrid:not(.full) .acard .dialog .mopt,.agrid:not(.full) .acard .dialog .mnext{white-space:nowrap;flex:0 1 auto;
+  min-width:0;overflow:hidden;text-overflow:ellipsis;padding:1px 6px;line-height:16px}
+.agrid:not(.full) .acard .dialog .mnext,.agrid:not(.full) .acard .dialog .msend{flex-shrink:0}
+.agrid:not(.full) .acard .dialog .msubmit{flex-direction:row;align-items:center;gap:6px}
+.agrid:not(.full) .acard .dialog .msum{display:block;flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis}
+.agrid:not(.full) .acard .dialog .msline{display:inline}
+.agrid:not(.full) .acard .dialog .msline+.msline::before{content:"·";padding:0 5px;color:var(--dim)}
+.agrid:not(.full) .acard .dialog .msubmit>.q.dim{display:none}
 .acard .dialog .opts button{padding:2px 8px;font-size:12px;line-height:18px;text-align:left;
   white-space:normal;max-width:100%}
 .acard .dialog .od{font-size:11px;color:var(--dim);flex-basis:100%;margin:-2px 0 2px 4px}

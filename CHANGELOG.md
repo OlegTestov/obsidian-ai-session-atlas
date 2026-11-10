@@ -7,6 +7,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.9.0] - 2026-11-10
+
+### Added
+
+- Unread marks in Active: a session that finished its turn or asked a question while its tab was out of
+  view gets a dot before its title. A turn you watched end in its tab is not marked, popout windows count
+  too. Opening the card, its feed or its tab clears the mark; "N new" in the summary line clears the cards
+  on screen. The marks live in the plugin until Obsidian restarts.
+
+- Statistics shows what cache rewrites cost: Claude Code and Codex replies that sent the context
+  again after a pause over an hour, a pause longer than the cache lives, or a context change. The
+  line sits on the cache tile, which is highlighted at 10% of the period's cost or more; ⓘ breaks it
+  down by cause, and a panel lists the sessions that paid the most.
+
+### Fixed
+
+- Claude Sonnet 5.5, Claude Haiku 5.5 and Claude Fable 5.2 replies are priced. Before, their cost was
+  left out of session and Statistics totals. Haiku 5.5 prompts over 100K tokens use its higher rate.
+  Sessions indexed before are read again once in the background so their replies get the price too.
+
 ## [2.8.4] - 2026-11-09
 
 ### Added

@@ -19,13 +19,18 @@ PRICES = {
     "claude-opus-4-8": (5.0, 25.0, 0.1),
     "claude-opus-4-7": (5.0, 25.0, 0.1),
     "claude-opus-4-6": (5.0, 25.0, 0.1),
+    "claude-sonnet-5-5": (2.0, 10.0, 0.05),
     "claude-sonnet-5": (2.0, 10.0, 0.1),
     "claude-sonnet-4-6": (3.0, 15.0, 0.1),
+    "claude-haiku-5-5": (0.1, 0.5, 0.1),
     "claude-haiku-4-5": (1.0, 5.0, 0.1),
+    "claude-fable-5-2": (8.0, 40.0, 0.025),
     "claude-fable-5-1": (10.0, 50.0, 0.025),
     "claude-fable-5": (10.0, 50.0, 0.025),
 }
 WRITE_5M, WRITE_1H = 1.25, 2.0
+# A prompt above the limit (fresh + cache read + cache write) is billed at the long rate.
+LONG_PROMPT = {"claude-haiku-5-5": (100_000, (0.5, 2.5, 0.1))}
 _SUFFIX = re.compile(r"(\[1m\]|-\d{8})$")
 
 COST_MARK = b'"cost-state"'
@@ -36,16 +41,24 @@ _TS_RE = re.compile(rb'"timestamp"\s*:\s*"([^"]{10,40})"')
 _cache: dict[str, tuple] = {}
 
 
-def price_for(model: str | None):
+def _base(model: str) -> str:
+    base = _SUFFIX.sub("", model)
+    return base if base in PRICES else _SUFFIX.sub("", base)
+
+
+def price_for(model: str | None, usage: dict | None = None):
     if not model:
         return None
-    base = _SUFFIX.sub("", model)
-    return PRICES.get(base) or PRICES.get(_SUFFIX.sub("", base))
+    base = _base(model)
+    long = LONG_PROMPT.get(base)
+    if long and usage is not None and context_tokens(usage) > long[0]:
+        return long[1]
+    return PRICES.get(base)
 
 
 def message_cost(model: str | None, usage: dict) -> float | None:
     """Cost of one model reply, computed the way Claude Code computes it."""
-    price = price_for(model)
+    price = price_for(model, usage)
     if price is None:
         return None
     pin, pout, read = price

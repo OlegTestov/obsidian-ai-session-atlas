@@ -20,6 +20,8 @@ function activeCard(s) {
   if (act === "waiting") card.appendChild(decisionStrip(s));
   const head = el("div", "head");
   head.appendChild(pinButton(s));
+  const unread = unreadMark(s, card);
+  if (unread) head.appendChild(unread);
   // The tab shows a Claude Code background job: the tab's own server icon, and "· background" by the status.
   const bgJob = hostBackground.get(tabFor(s)) || null;
   if (bgJob) {

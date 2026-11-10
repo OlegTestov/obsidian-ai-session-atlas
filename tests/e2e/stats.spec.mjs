@@ -1,6 +1,7 @@
 // Statistics: totals for both agents, the per-agent panel priced by each vendor's table, the Agent
 // filter and background runs (the `codex exec` run).
-import { api, expect, stored, test } from "./fixtures.mjs";
+import { CODEX_COLD_EXTRA, COLD_WRITES } from "./corpus.mjs";
+import { api, expect, ids, stored, test } from "./fixtures.mjs";
 
 // The `codex exec` fixture run: 50,000 input tokens of which 10,000 cached, 4,000 output, gpt-5.5
 // at $5 / $0.50 cached / $30 per 1M (atlas/openai_costs.py) — computed here, not read from the server.
@@ -220,4 +221,153 @@ test("polling ends when the refresh failed, and after 15 tries", async ({ page, 
   await page.clock.runFor(20000);
   expect(stale.calls).toBe(16);
   expect(await sessionsTile(page, lang)).toBe("777");
+});
+
+// --- cache rewrites ---------------------------------------------------------------------------
+// The corpus session "Rework the export pipeline after lunch" (claude-sonnet-5: $2 input, ×1.25 cache write,
+// ×0.1 cache read): its first reply is normal, the next three rewrite the cache after 2 h, 30 min and 3 min.
+const CLAUDE_REWRITE_COST = COLD_WRITES.slice(1).reduce((sum, written) => sum + (1200 * 1.8 + written * 2.3) / 1e6, 0);
+const REWRITE_COST = CLAUDE_REWRITE_COST + CODEX_COLD_EXTRA;       // plus the interactive Codex thread
+const COLD_TITLE = "Rework the export pipeline after lunch";
+const CODEX_COLD_TITLE = "Codex cold: audit the invoice rounding";
+const CACHE_TILE = { en: "Cache hit rate", ru: "Попадание в кэш" };
+const REWRITE_PANEL = { en: "Cache rewrites · extra cost", ru: "Повторная запись кэша · лишний расход" };
+// The line's own text: the ⓘ button and its tooltip live inside the same element.
+const lineText = (page, lang) => cacheTile(page, lang).locator(".ts.rw").evaluate(n => n.firstChild.textContent.trim());
+const cacheTip = (page, lang) => cacheTile(page, lang).locator(".tip");
+const cacheTile = (page, lang) => page.locator("#stats-body .tile", { has: page.locator(".tt", { hasText: CACHE_TILE[lang] }) });
+const rewritePanel = (page, lang) => page.locator("#stats-body .spanel.rewrites", { has: page.locator("h3", { hasText: REWRITE_PANEL[lang] }) });
+const rewriteLine = (rw, lang) => {
+  const cost = money(rw.cost, lang);
+  const pct = Math.round(rw.share * 100);
+  return lang === "ru" ? `Повторная запись кэша: ${cost} · ${pct}% расхода` : `Cache rewrites: ${cost} · ${pct}% of cost`;
+};
+
+// The page with a doctored payload: the shape the server sends, one field changed.
+async function withPayload(page, change) {
+  await page.route("**/api/stats?*", async route => {
+    const real = await (await route.fetch()).json();
+    change(real);
+    await route.fulfill({ json: Object.assign(real, { stale: false, refresh_failed: false }) });
+  });
+}
+
+test("the cache tile shows what rewrites cost, warns, and the panel opens the session", async ({ page, open, lang }) => {
+  await open("stats");
+  await settled(page);
+  const data = await freshApi("/api/stats?period=7d&auto=0");
+  const rw = data.cache_rewrites;
+  expect(rw.count).toBe(4);
+  expect(rw.cost).toBeCloseTo(REWRITE_COST, 2);
+  expect(Object.fromEntries(Object.entries(rw.by_cause).map(([k, v]) => [k, v.count])))
+    .toEqual({ pause_long: 2, pause: 1, changed: 1 });
+  expect(rw.share).toBeGreaterThanOrEqual(0.1);                     // the fixture is mostly small replies
+  const tile = cacheTile(page, lang);
+  await expect(tile.locator(".tv")).toContainText("%");             // the hit rate stays the big value
+  await expect.poll(() => lineText(page, lang)).toBe(rewriteLine(rw, lang));
+  await expect(tile).toHaveClass(/\bwarn\b/);
+  await expect(tile).not.toHaveAttribute("title");                  // one tooltip, behind ⓘ
+  const info = tile.locator("button.info");
+  const tip = cacheTip(page, lang);
+  await expect(tip).toBeHidden();
+  await info.focus();                                               // keyboard focus opens it, no hover needed
+  await page.keyboard.press("Shift+Tab");
+  await page.keyboard.press("Tab");
+  await expect(tip).toBeVisible();
+  const hint = await tip.textContent();
+  expect(hint).toContain(lang === "ru" ? "После паузы дольше часа: ответов 2" : "After a pause over 1 hour: replies 2");
+  expect(hint).toContain(lang === "ru" ? "После паузы дольше 5-минутного кэша" : "After a pause longer than the 5-minute cache");
+  expect(hint).toContain(lang === "ru" ? "Контекст изменился, пока кэш ещё жил" : "Context changed while the cache was still alive");
+  expect(hint).not.toContain("/clear");
+  expect(hint).toContain(lang === "ru" ? "Новая на основе этой" : "New from this one");
+  await expect(info).toHaveAttribute("aria-describedby", "cache-tip");
+
+  const panel = rewritePanel(page, lang);
+  await expect(panel.locator(".brow")).toHaveCount(2);
+  const row = panel.locator(".brow", { has: page.locator(".bn", { hasText: COLD_TITLE }) });
+  await expect(row.locator(".bv")).toHaveText(money(CLAUDE_REWRITE_COST, lang));
+  const rowHint = await row.getAttribute("title");
+  expect(rowHint).toContain(lang === "ru" ? "ответов 3" : "replies 3");
+  expect(rowHint).toContain(lang === "ru" ? "пауза больше часа: 1" : "pause over 1 h: 1");
+  expect(rowHint).toContain(lang === "ru" ? "пауза больше 5 минут: 1" : "pause over 5 min: 1");
+  await expect(panel.locator(".brow", { has: page.locator(".bn", { hasText: CODEX_COLD_TITLE }) }).locator(".bv"))
+    .toHaveText(money(CODEX_COLD_EXTRA, lang));
+  await row.click();
+  await expect(page.locator("#card-body")).toContainText(COLD_TITLE);
+  expect(page.url()).toContain(ids.claudeCold);
+});
+
+for (const [share, pct, warns] of [[0.0949, 9, false], [0.095, 10, true]]) {
+  test(`the warning follows the percent the tile shows: ${share} shows ${pct}%`, async ({ page, open, lang }) => {
+    await withPayload(page, d => { d.cache_rewrites.share = share; });
+    await open("stats");
+    await settled(page);
+    await expect.poll(() => lineText(page, lang)).toContain(lang === "ru" ? `${pct}% расхода` : `${pct}% of cost`);
+    if (warns) await expect(cacheTile(page, lang)).toHaveClass(/\bwarn\b/);
+    else await expect(cacheTile(page, lang)).not.toHaveClass(/\bwarn\b/);
+  });
+}
+
+test("no rewrites: no warning and no panel", async ({ page, open, lang }) => {
+  await withPayload(page, d => { Object.assign(d.cache_rewrites, { count: 0, cost: 0, share: 0, sessions: [] }); });
+  await open("stats");
+  await settled(page);
+  await expect.poll(() => lineText(page, lang)).toBe(lang === "ru" ? "Повторной записи кэша нет" : "No cache rewrites");
+  await expect(cacheTile(page, lang)).not.toHaveClass(/\bwarn\b/);
+  await expect(rewritePanel(page, lang)).toHaveCount(0);
+});
+
+test("an unknown share leaves the share out of the line and does not warn", async ({ page, open, lang }) => {
+  await withPayload(page, d => { d.cache_rewrites.share = null; });
+  await open("stats");
+  await settled(page);
+  await expect.poll(() => lineText(page, lang)).toMatch(
+    lang === "ru" ? /^Повторная запись кэша: \$[\d.,]+$/ : /^Cache rewrites: \$[\d.]+$/);
+  await expect(cacheTile(page, lang)).not.toHaveClass(/\bwarn\b/);
+});
+
+test("nothing priced: the line shows a dash, not $0.00", async ({ page, open, lang }) => {
+  await withPayload(page, d => { Object.assign(d.cache_rewrites, { share: null, cost: 0 }); });
+  await open("stats");
+  await settled(page);
+  await expect.poll(() => lineText(page, lang)).toBe(lang === "ru" ? "Повторная запись кэша: —" : "Cache rewrites: —");
+});
+
+test("an older server without cache_rewrites still renders the plain cache tile", async ({ page, open, lang }) => {
+  await withPayload(page, d => { delete d.cache_rewrites; });
+  await open("stats");
+  await settled(page);
+  const tile = cacheTile(page, lang);
+  await expect(tile.locator(".tv")).toContainText("%");
+  await expect(tile.locator(".rw")).toHaveCount(0);
+  await expect(tile).not.toHaveClass(/\bwarn\b/);
+  await expect(rewritePanel(page, lang)).toHaveCount(0);
+  await expect(page.locator("#stats-body .spanel").first()).toBeVisible();
+});
+
+test("only Codex: the interactive cold thread is counted, the nightly exec run is not", async ({ page, open, lang }) => {
+  await open("stats");
+  await settled(page);
+  await pickAgents(page, ["codex"]);
+  const data = await freshApi("/api/stats?period=7d&auto=0&agent=codex");
+  expect(data.cache_rewrites.count).toBe(1);
+  expect(data.cache_rewrites.by_cause.pause_long.count).toBe(1);
+  expect(data.cache_rewrites.cost).toBeCloseTo(CODEX_COLD_EXTRA, 2);
+  await expect.poll(() => lineText(page, lang)).toContain(money(CODEX_COLD_EXTRA, lang));
+  const panel = rewritePanel(page, lang);
+  await expect(panel.locator(".brow")).toHaveCount(1);
+  await expect(panel.locator(".bn")).toHaveText(CODEX_COLD_TITLE);
+  const exec = await freshApi("/api/stats?period=7d&auto=1&agent=codex");       // with background runs: the cold exec run adds nothing
+  expect(exec.cache_rewrites.count).toBe(1);
+  await pickAgents(page, ["claude", "codex"]);
+});
+
+test("a session with no priced rewrite shows a dash in the panel", async ({ page, open, lang }) => {
+  await withPayload(page, d => { d.cache_rewrites.sessions[d.cache_rewrites.sessions.length - 1].cost = null; });
+  await open("stats");
+  await settled(page);
+  const panel = rewritePanel(page, lang);
+  await expect(panel.locator(".brow")).toHaveCount(2);
+  await expect(panel.locator(".brow").last().locator(".bv")).toHaveText("—");
+  await expect(panel.locator(".brow").first().locator(".bv")).not.toHaveText("—");
 });

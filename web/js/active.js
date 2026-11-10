@@ -35,6 +35,11 @@ function renderActive(skipKey, force) {
     parts.push(count);
   }
   summary.replaceChildren(...parts);
+  const unread = unreadButton(shown.map(s => s.session_id));
+  if (unread) {
+    if (summary.childNodes.length) summary.append(sep());
+    summary.append(unread);
+  }
   if (arranged.hiddenCount) {
     const unhide = el("button", "keys", i18n("active.hidden", { n: arranged.hiddenCount }));
     unhide.type = "button";

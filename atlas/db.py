@@ -123,6 +123,7 @@ CREATE TABLE IF NOT EXISTS activity (
   PRIMARY KEY (session_id, key)
 );
 CREATE INDEX IF NOT EXISTS ix_activity_ts ON activity(ts);
+CREATE INDEX IF NOT EXISTS ix_activity_unpriced ON activity(model) WHERE cost IS NULL;
 
 CREATE INDEX IF NOT EXISTS ix_sessions_activity ON sessions(last_activity_at DESC);
 CREATE INDEX IF NOT EXISTS ix_sessions_agent    ON sessions(agent);

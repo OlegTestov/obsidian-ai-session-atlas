@@ -51,6 +51,7 @@ function feedButton(s, mini) {
 
 function openFeed(sid) {
   feedSid = sid;
+  seeCard(sid);                         // reading the feed is reading the session
   resetFeedPages();
   feedSignature = "";
   $("#feed").classList.remove("hidden");

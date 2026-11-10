@@ -405,3 +405,28 @@ def test_interrupt_is_not_a_prompt_but_is_reported(tmp_path):
     path.write_text(user_text("[Request interrupted by user]", ts="2026-09-27T07:00:00.000Z")
                     + assistant_text("готово", ts="2026-09-27T08:00:00.000Z"), encoding="utf-8")
     assert active.last_messages(str(path))["interrupted_at"] is None
+
+
+def test_card_carries_when_the_status_last_changed(atlas_env, claude_dir):
+    """A dialog opens from a tool call, which moves no message time: unread marks need the status time."""
+    claude_dir(100, "aaaa-live", status="waiting", statusUpdatedAt=1794254792240)
+    claude_dir(200, "bbbb-live")
+    cards = {c["session_id"]: c for c in _list(atlas_env, claude_dir)}
+    assert cards["aaaa-live"]["status_at"] == "2026-11-09T20:06:32.240000+00:00"
+    assert cards["bbbb-live"]["status_at"] is None
+
+
+def test_status_time_of_a_parked_session_is_the_later_of_both_processes(atlas_env, claude_dir):
+    claude_dir(100, "aaaa-live", parkedJobId="j1", statusUpdatedAt=1794254792240)
+    claude_dir(300, "jjjj-job", kind="bg", jobId="j1", status="waiting", statusUpdatedAt=1794254800000)
+    cards = {c["session_id"]: c for c in _list(atlas_env, claude_dir)}
+    assert cards["aaaa-live"]["status_at"] == "2026-11-09T20:06:40+00:00"
+
+
+def test_a_broken_status_time_does_not_take_the_list_down(atlas_env, claude_dir):
+    claude_dir(100, "aaaa-live", status="waiting", statusUpdatedAt=1e20, startedAt=float("inf"))
+    claude_dir(200, "bbbb-live", statusUpdatedAt=True)
+    cards = {c["session_id"]: c for c in _list(atlas_env, claude_dir)}
+    assert cards["aaaa-live"]["status_at"] is None
+    assert cards["aaaa-live"]["process_started_at"] is None
+    assert cards["bbbb-live"]["status_at"] is None

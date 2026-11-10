@@ -7,6 +7,11 @@ import { claude, codex, line } from "./records.mjs";
 
 const HOUR = 3600e3;
 
+/** Cache-write tokens of the "cold" session's four replies (the first is normal, the rest are rewrites). */
+export const COLD_WRITES = [100000, 200000, 150000, 120000];
+/** The cold Codex turn: 80,000 input of which 2,000 cached, gpt-5.5 at $5 / $0.50 cached per 1M. */
+export const CODEX_COLD_EXTRA = 78000 * (5 - 0.5) / 1e6;
+
 /** ISO time `hours` ago plus `minutes`, in UTC with milliseconds, as both agents write it. */
 export function ago(now, hours, minutes = 0) {
   return new Date(now - hours * HOUR + minutes * 60e3).toISOString();
@@ -22,6 +27,7 @@ export const IDS = {
   claudeRenameEn: "11111111-1111-4111-8111-000000000004",
   claudeRenameRu: "11111111-1111-4111-8111-000000000005",
   claudeLive: "11111111-1111-4111-8111-000000000006",
+  claudeCold: "11111111-1111-4111-8111-000000000007",
   codexLedger: "0199a1b2-c3d4-7e5f-8a6b-000000000001",
   codexExec: "0199a1b2-c3d4-7e5f-8a6b-000000000002",
   codexFork: "0199a1b2-c3d4-7e5f-8a6b-000000000003",
@@ -30,6 +36,7 @@ export const IDS = {
   codexDeleteEn: "0199a1b2-c3d4-7e5f-8a6b-000000000006",
   codexDeleteRu: "0199a1b2-c3d4-7e5f-8a6b-000000000007",
   codexLive: "0199a1b2-c3d4-7e5f-8a6b-000000000008",
+  codexCold: "0199a1b2-c3d4-7e5f-8a6b-000000000009",
 };
 
 export const PHRASES = {
@@ -130,6 +137,15 @@ export function writeCorpus(root, python, now = Date.now()) {
       claude.reply(ctx, at(40, 1), "Tidied."),
     ]);
   }
+  // A session whose cache was written again: first reply (normal), after 2 h, after 30 min, after 3 min.
+  ctx = { cwd: cwds.demo, sid: IDS.claudeCold };
+  files.claudeCold = writeClaude(projects, cwds.demo, ctx.sid, [
+    claude.user(ctx, at(60), "Rework the export pipeline after lunch"),
+    claude.reply(ctx, at(60, 1), "Read the whole pipeline.", [1200, 300], COLD_WRITES[0]),
+    claude.reply(ctx, at(58), "Back after a long break.", [1200, 300], COLD_WRITES[1]),
+    claude.reply(ctx, at(58, 30), "Continuing after a short pause.", [1200, 300], COLD_WRITES[2]),
+    claude.reply(ctx, at(58, 33), "Context changed right away.", [1200, 300], COLD_WRITES[3]),
+  ]);
   // The live Claude session: its process is started by the global setup.
   ctx = { cwd: cwds.demo, sid: IDS.claudeLive };
   files.claudeLive = writeClaude(projects, cwds.demo, ctx.sid, [
@@ -199,6 +215,19 @@ export function writeCorpus(root, python, now = Date.now()) {
       codex.complete(at(hours, 2), "Done."),
     ]);
   };
+  // An interactive thread whose second turn came 2 h later and sent the whole context fresh: one rewrite.
+  start = at(66);
+  files.codexCold = writeRollout(codexHome, IDS.codexCold, start, [
+    codex.meta(IDS.codexCold, start, cwds.billing), codex.context(at(66, 0), cwds.billing), codex.started(at(66, 0)),
+    codex.user(at(66, 1), "Codex cold: audit the invoice rounding"),
+    codex.agent(at(66, 2), "Audited."),
+    codex.tokens(at(66, 2), 30000, 20000, 500, [30000, 20000, 500]),
+    codex.complete(at(66, 2), "Audited."),
+    codex.user(at(64, 1), "Codex cold: and the tax lines"),
+    codex.agent(at(64, 2), "Checked."),
+    codex.tokens(at(64, 2), 80000, 2000, 500, [110000, 22000, 1000]),
+    codex.complete(at(64, 2), "Checked."),
+  ]);
   simple("codexRenameEn", IDS.codexRenameEn, 44, "Codex rename target en: bump the SDK");
   simple("codexRenameRu", IDS.codexRenameRu, 45, "Codex rename target ru: bump the SDK");
   simple("codexDeleteEn", IDS.codexDeleteEn, 46, "Codex delete target en: scratch experiment");

@@ -121,6 +121,30 @@ function tokenBar(tk) {
   return box;
 }
 
+// The hit rate stays the value; older servers send no cache_rewrites and get the plain tile.
+// The causes sit behind ⓘ like the cost caption: reachable by keyboard and touch, not only by hover.
+function cacheTile(d) {
+  const rw = d.cache_rewrites;
+  const hit = d.totals.cache_hit == null ? "—" : S.decimal(Math.round(d.totals.cache_hit * 1000) / 10) + "%";
+  if (!rw) return tile(i18n("stats.tile.cache"), hit, i18n("stats.tile.cache.sub"), null, i18n("stats.tile.cache.hint"));
+  const hint = [i18n("stats.tile.cache.hint"), ...S.causeLines(rw.by_cause),
+                ...(rw.count ? [i18n("stats.rewrites.advice")] : [])].join("\n\n");
+  const line = el("div", "ts rw", S.rewriteLine(rw));
+  const info = el("button", "info", "ⓘ");
+  info.type = "button";
+  info.setAttribute("aria-label", i18n("stats.rewrites.info"));
+  info.setAttribute("aria-describedby", "cache-tip");
+  const tip = el("span", "tip", hint);
+  tip.id = "cache-tip";
+  tip.setAttribute("role", "tooltip");
+  line.append(" ", info, tip);
+  const sub = el("div");
+  sub.append(el("div", "ts", i18n("stats.tile.cache.sub")), line);
+  const t = tile(i18n("stats.tile.cache"), hit, sub, null, null);
+  t.classList.toggle("warn", S.rewriteWarn(rw));
+  return t;
+}
+
 function renderTiles(d) {
   const t = d.totals, p = d.previous;
   const diff = key => p ? S.delta(key(t), key(p)) : null;
@@ -147,8 +171,7 @@ function renderTiles(d) {
     tile(i18n("stats.tile.time"), S.hoursText(t.wall_s), i18n("stats.tile.time.sub", { time: S.hoursText(t.active_s) }),
          diff(x => x.wall_s), i18n("stats.tile.time.hint")),
     tile(i18n("stats.tile.cost"), S.money(t.cost), costSub, diff(x => x.cost), null),   // the hint is behind ⓘ
-    tile(i18n("stats.tile.cache"), t.cache_hit == null ? "—" : S.decimal(Math.round(t.cache_hit * 1000) / 10) + "%",
-         i18n("stats.tile.cache.sub"), null, i18n("stats.tile.cache.hint")));
+    cacheTile(d));
   return box;
 }
 
@@ -206,6 +229,24 @@ function breakdown(title, items, opts) {
   return panel;
 }
 
+function rewritesPanel(rw, onPick) {
+  const panel = el("div", "spanel rewrites");
+  panel.appendChild(el("h3", null, i18n("stats.panel.rewrites")));
+  const max = Math.max(...rw.sessions.map(r => r.cost));
+  rw.sessions.slice(0, LIST_ROWS).forEach(r => {
+    const row = el("div", "brow link");
+    const track = el("span", "bt");
+    const fill = el("span", "bf");
+    fill.style.width = S.share(r.cost, max) + "%";
+    track.appendChild(fill);
+    row.append(el("span", "bn", r.name), track, el("span", "bv", S.money(r.cost)));
+    row.title = i18n("stats.rewrites.row", { name: r.name, n: r.count, causes: S.causeShort(r.causes), cost: S.money(r.cost) });
+    row.addEventListener("click", () => onPick(r));
+    panel.appendChild(row);
+  });
+  return panel;
+}
+
 function countPanel(title, tools) {
   const panel = el("div", "spanel");
   panel.appendChild(el("h3", null, title));
@@ -256,6 +297,8 @@ function renderStats() {
     breakdown(i18n("stats.panel.topics"), d.topics),
     ...(d.projects.length > 1 ? [breakdown(i18n("stats.panel.projects"), d.projects)] : []),
     breakdown(i18n("stats.panel.sessions"), d.sessions, { onPick: openSession, label: r => r.name }),
+    ...(d.cache_rewrites && d.cache_rewrites.count && d.cache_rewrites.sessions.length
+      ? [rewritesPanel(d.cache_rewrites, openSession)] : []),
     countPanel(i18n("stats.panel.tools"), d.tools),
     countPanel(i18n("stats.panel.skills"), d.skills),
     countPanel(i18n("stats.panel.agents"), d.agents),

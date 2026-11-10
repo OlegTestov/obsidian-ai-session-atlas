@@ -125,6 +125,7 @@ window.addEventListener("message", e => {
   hostHeld = new Map((Array.isArray(d.held) ? d.held : []).filter(t => t && Number.isInteger(t.ptyPid))
     .map(t => [t.ptyPid, String(t.title || "")]));
   readTabGroups(d);
+  readHostUnread(d);
   // Obsidian's status bar over the page's bottom-right corner: the feed's reply field rises above it.
   const cover = Number.isFinite(d.cover) ? Math.min(Math.max(d.cover, 0), 80) : 0;
   document.documentElement.style.setProperty("--host-bottom", cover + "px");

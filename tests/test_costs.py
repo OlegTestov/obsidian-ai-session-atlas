@@ -35,6 +35,38 @@ def test_message_cost_matches_claude_code_rates():
     assert costs.message_cost("gpt-5", {"input_tokens": 10}) is None
 
 
+
+def test_current_sonnet_and_haiku_have_prices():
+    """Matched to Claude Code's per-model costUSD (1,005 Sonnet 5.5 and 4 Haiku 5.5 single-run sessions)."""
+    # Sonnet 5.5: $2/$10, cache read ×0.05 ($0.10)
+    assert costs.message_cost("claude-sonnet-5-5", {"input_tokens": 1_000_000}) == pytest.approx(2.0)
+    assert costs.message_cost("claude-sonnet-5-5", {"output_tokens": 1_000_000}) == pytest.approx(10.0)
+    assert costs.message_cost("claude-sonnet-5-5[1m]", {"cache_read_input_tokens": 1_000_000}) \
+        == pytest.approx(0.10)
+    # Haiku 5.5 up to a 100K prompt: $0.10/$0.50, cache read ×0.1, writes ×1.25 / ×2
+    short = {"input_tokens": 10_000, "output_tokens": 2_000, "cache_read_input_tokens": 50_000,
+             "cache_creation": {"ephemeral_5m_input_tokens": 20_000, "ephemeral_1h_input_tokens": 10_000}}
+    assert costs.message_cost("claude-haiku-5-5", short) == pytest.approx(
+        (10_000 * 0.1 + 2_000 * 0.5 + 50_000 * 0.01 + 20_000 * 0.125 + 10_000 * 0.2) / 1e6)
+
+
+def test_fable_5_2_has_its_published_price():
+    """platform.claude.com pricing, 10.11.2026: $8 input, $40 output, cache read $0.20, writes $10 / $16."""
+    usage = {"input_tokens": 1_000_000, "output_tokens": 1_000_000, "cache_read_input_tokens": 1_000_000,
+             "cache_creation": {"ephemeral_5m_input_tokens": 1_000_000, "ephemeral_1h_input_tokens": 1_000_000}}
+    assert costs.message_cost("claude-fable-5-2", usage) == pytest.approx(8 + 40 + 0.20 + 10 + 16)
+
+
+def test_haiku_5_5_long_prompt_uses_the_higher_rate():
+    """Above 100K prompt tokens (fresh + cache read + cache write) Haiku 5.5 is $0.50/$2.50."""
+    at_limit = {"input_tokens": 100_000, "output_tokens": 1_000}
+    assert costs.message_cost("claude-haiku-5-5", at_limit) == pytest.approx((100_000 * 0.1 + 1_000 * 0.5) / 1e6)
+    long = {"input_tokens": 1_000, "output_tokens": 1_000, "cache_read_input_tokens": 100_000}
+    assert costs.message_cost("claude-haiku-5-5", long) == pytest.approx(
+        (1_000 * 0.5 + 1_000 * 2.5 + 100_000 * 0.05) / 1e6)
+    # other models keep one rate at any length
+    assert costs.message_cost("claude-sonnet-5-5", {"input_tokens": 500_000}) == pytest.approx(1.0)
+
 def test_estimate_is_the_last_record_plus_answers_after_it(tmp_path):
     path = tmp_path / "s.jsonl"
     path.write_text(
@@ -129,3 +161,84 @@ def test_context_window_sizes():
     assert costs.context_window("claude-sonnet-5", 250_000) == 1_000_000, "over 200k means 1M"
     assert costs.context_window("claude-haiku-4-5", 150_000) == 200_000
     assert costs.context_window(None, None) == 200_000
+
+
+def test_replies_indexed_before_their_model_had_a_price_are_priced_later(atlas_env, write_session, monkeypatch):
+    """A price added in an update reaches sessions indexed before it: they are read again once."""
+    from atlas import db, index
+    from tests.test_stats import answer, prompt
+    write_session("p", [prompt("задача", "2026-09-01T10:00:00.000Z", "u1"),
+                        answer("m1", "2026-09-01T10:01:00.000Z", model="claude-sonnet-5-5")])
+    write_session("q", [prompt("другая", "2026-09-01T11:00:00.000Z", "u2"),
+                        answer("m2", "2026-09-01T11:01:00.000Z", model="claude-opus-5")])
+    conn = db.connect()
+    priced = costs.PRICES
+    monkeypatch.setattr(costs, "PRICES", {k: v for k, v in priced.items() if k != "claude-sonnet-5-5"})
+    index.index_all(conn, root=str(atlas_env["projects"]))
+
+    def cost():
+        return [r[0] for r in conn.execute("SELECT cost FROM activity WHERE kind='a' ORDER BY ts")]
+
+    assert cost()[0] is None and cost()[1] is not None
+    monkeypatch.setattr(costs, "PRICES", priced)              # the update that adds the price
+    first = index.index_all(conn, root=str(atlas_env["projects"]))
+    assert cost()[0] == pytest.approx(costs.message_cost("claude-sonnet-5-5", {
+        "input_tokens": 100, "output_tokens": 10, "cache_read_input_tokens": 1000}))
+    assert first["full"] == 1, "only the session with the newly priced model is read again"
+    again = index.index_all(conn, root=str(atlas_env["projects"]))
+    assert again["full"] == 0 and again["skipped"] == 2
+    assert db.get_meta(conn, "needs_reindex") != "1", "no full rebuild of the catalog"
+
+
+def _sonnet_session(write_session, name, ts):
+    from tests.test_stats import answer, prompt
+    return write_session(name, [prompt("задача", ts.replace("01:00", "00:00"), "u-" + name),
+                                answer("m-" + name, ts, model="claude-sonnet-5-5")])
+
+
+def test_a_session_whose_file_vanished_before_repricing_still_leaves_the_catalog(atlas_env, write_session,
+                                                                                    monkeypatch):
+    from atlas import db, index
+    path = _sonnet_session(write_session, "p", "2026-09-01T10:01:00.000Z")
+    conn = db.connect()
+    priced = costs.PRICES
+    monkeypatch.setattr(costs, "PRICES", {k: v for k, v in priced.items() if k != "claude-sonnet-5-5"})
+    index.index_all(conn, root=str(atlas_env["projects"]))
+    os.remove(path)
+    monkeypatch.setattr(costs, "PRICES", priced)
+    stats = index.index_all(conn, root=str(atlas_env["projects"]))
+    assert stats["removed"] == 1
+    assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 0
+
+
+def test_replies_an_older_process_stores_without_a_price_are_priced_by_the_next_pass(atlas_env, write_session):
+    """An old server keeps running its own code after the update: its rows come in after the reprice."""
+    from atlas import db, index
+    _sonnet_session(write_session, "p", "2026-09-01T10:01:00.000Z")
+    conn = db.connect()
+    index.index_all(conn, root=str(atlas_env["projects"]))
+    conn.execute("UPDATE activity SET cost = NULL")     # as the old process stores a Sonnet 5.5 reply
+    conn.commit()
+    index.index_all(conn, root=str(atlas_env["projects"]))
+    assert conn.execute("SELECT COUNT(*) FROM activity WHERE cost IS NULL AND model IS NOT NULL").fetchone()[0] == 0
+
+
+def test_a_long_backlog_is_priced_a_batch_per_pass_newest_first(atlas_env, write_session, monkeypatch):
+    from atlas import db, index
+    for i, day in enumerate(("01", "02", "03")):
+        _sonnet_session(write_session, f"s{i}", f"2026-09-{day}T10:01:00.000Z")
+    conn = db.connect()
+    priced = costs.PRICES
+    monkeypatch.setattr(costs, "PRICES", {k: v for k, v in priced.items() if k != "claude-sonnet-5-5"})
+    index.index_all(conn, root=str(atlas_env["projects"]))
+    monkeypatch.setattr(costs, "PRICES", priced)
+    monkeypatch.setattr(index, "REPRICE_BATCH", 2)
+
+    def unpriced_days():
+        return sorted(r[0][:10] for r in conn.execute(
+            "SELECT ts FROM activity WHERE cost IS NULL AND model IS NOT NULL"))
+
+    assert index.index_all(conn, root=str(atlas_env["projects"]))["full"] == 2
+    assert unpriced_days() == ["2026-09-01"], "the newest sessions first"
+    index.index_all(conn, root=str(atlas_env["projects"]))
+    assert unpriced_days() == []

@@ -88,7 +88,31 @@
       .sort((a, b) => b[metric] - a[metric]).slice(0, limit || items.length);
   }
 
+  const REWRITE_WARN_PCT = 10;
+  const CAUSES = ["pause_long", "pause", "changed"];
+
+  /** True when the percent shown on the tile is at least REWRITE_WARN_PCT: what is shown is what warns. */
+  const rewriteWarn = rw => !!rw && rw.share != null && Math.round(rw.share * 100) >= REWRITE_WARN_PCT;
+
+  /** "Cache rewrites: $12.40 · 8% of cost"; no share when the cost is unknown, and then no $0.00 either. */
+  function rewriteLine(rw) {
+    if (!rw.count) return tr("stats.rewrites.none");
+    if (rw.share == null) return tr("stats.rewrites.line.noShare", { cost: rw.cost ? money(rw.cost) : "—" });
+    const pct = rw.share > 0 && rw.share < 0.005 ? "<1" : String(Math.round(rw.share * 100));
+    return tr("stats.rewrites.line", { cost: money(rw.cost), share: pct });
+  }
+
+  /** One line per cause that happened, with counts, tokens and cost. */
+  function causeLines(byCause) {
+    return CAUSES.filter(c => byCause[c] && byCause[c].count).map(c => tr("stats.rewrites.cause." + c,
+      { n: byCause[c].count, tokens: bigNum(byCause[c].tokens), cost: money(byCause[c].cost) }));
+  }
+
+  /** "pause over 1 h: 2, context changed: 1" for one session's row. */
+  const causeShort = causes => CAUSES.filter(c => causes && causes[c])
+    .map(c => `${tr("stats.rewrites.short." + c)}: ${causes[c]}`).join(", ");
+
   const api = { PERIODS, METRICS, decimal, bigNum, hoursText, money, metricText, delta, pointLabel,
-                labelStep, share, heatLevel, ranked };
+                labelStep, share, heatLevel, ranked, REWRITE_WARN_PCT, rewriteWarn, rewriteLine, causeLines, causeShort };
   root.StatsLogic = api;
 })(window);

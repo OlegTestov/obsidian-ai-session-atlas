@@ -90,6 +90,10 @@ body{margin:0;font:14px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",syste
 /* The strip already names what is asked: the dialog's own title line would only repeat it. */
 .acard.waiting>.dialog>.t{display:none}
 .acard.sel{outline:2px solid var(--accent);outline-offset:1px}
+/* Finished while you were away: a dot before the title and the title in bold. */
+.acard .head .unread-dot{flex:0 0 auto;width:8px;height:8px;border-radius:50%;background:var(--accent);cursor:help}
+.acard.unread .head .t{font-weight:700}
+#active-summary .unread-all{color:var(--accent);font-weight:600}
 .agrid.full .acard{padding:8px 12px;gap:2px}
 .agrid.full .acard .d{-webkit-line-clamp:1}
 .acard .head .mini{flex:0 0 auto;padding:1px 8px;font-size:12px;line-height:18px}

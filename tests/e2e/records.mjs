@@ -25,11 +25,11 @@ export const claude = {
     { isCompactSummary: true,
       message: { role: "user", content: [{ type: "text",
         text: "This session is being continued from a previous conversation that ran out of context. " + text }] } })),
-  reply: (ctx, ts, text, tokens = [1200, 300]) => line(claudeBase("assistant", ts, ctx,
+  reply: (ctx, ts, text, tokens = [1200, 300], written = 0) => line(claudeBase("assistant", ts, ctx,
     { message: { id: "msg_" + uuid().slice(-12), role: "assistant", model: "claude-sonnet-5",
                  content: [{ type: "text", text }],
                  usage: { input_tokens: tokens[0], output_tokens: tokens[1],
-                          cache_read_input_tokens: 4000, cache_creation_input_tokens: 0 } } })),
+                          cache_read_input_tokens: 4000, cache_creation_input_tokens: written } } })),
   // Claude Code lists the files it backs up before editing them: the catalog's "edited files".
   snapshot: (ctx, ts, paths) => line({ type: "file-history-snapshot", messageId: "msg_" + uuid().slice(-12),
     isSnapshotUpdate: true,

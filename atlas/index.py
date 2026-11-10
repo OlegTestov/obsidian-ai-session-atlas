@@ -11,7 +11,7 @@ import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
-from . import codex_parse, config, db, paths, search_rows, store
+from . import codex_parse, config, costs, db, paths, search_rows, store
 
 PROJECTS_ROOT = os.environ.get("ATLAS_PROJECTS_ROOT", os.path.join(paths.claude_dir(), "projects"))
 
@@ -94,6 +94,27 @@ def _files_signature(paths: list[str]) -> str:
     return "|".join(parts)
 
 
+REPRICE_BATCH = 200          # sessions per pass, newest first: about 30 s of parsing, so a long backlog
+                             # does not hold the writer lock for minutes (the update button waits on it)
+
+
+def _reread_newly_priced(conn: sqlite3.Connection) -> None:
+    """Replies stored without a price whose model has one now (an update added it, or an older process
+    still running stored them) get it by reading their sessions again: the database keeps no 5-minute /
+    1-hour split of a cache write. The sources stay, so a vanished file is still purged."""
+    models = [m for (m,) in conn.execute("SELECT DISTINCT model FROM activity WHERE cost IS NULL AND model IS NOT NULL")
+              if costs.price_for(m) is not None]
+    if not models:
+        return
+    marks = ",".join("?" * len(models))
+    stale = (f"SELECT session_id FROM activity WHERE cost IS NULL AND model IN ({marks}) "
+             f"GROUP BY session_id ORDER BY MAX(ts) DESC LIMIT {int(REPRICE_BATCH)}")
+    with search_rows.writing(conn):      # a write outside the marker would look like an old indexer's
+        conn.execute(f"UPDATE sources SET sig = NULL WHERE sig IS NOT NULL AND session_id IN ({stale})", models)
+        conn.execute(f"DELETE FROM parse_state WHERE session_id IN ({stale})", models)
+    conn.commit()
+
+
 def _changed(row: sqlite3.Row | None, sig: str) -> bool:
     """The file is reread in full on any mismatch: parsing one file takes milliseconds."""
     return row is None or row["sig"] != sig
@@ -163,6 +184,7 @@ def index_all(conn: sqlite3.Connection, root: str = PROJECTS_ROOT,
         # Recheck the flag under the lock: another process may have rebuilt while we waited.
         if only_if_flagged and not recovery and db.get_meta(conn, "needs_reindex") != "1":
             return stats
+        _reread_newly_priced(conn)
         known = {r["path"]: r for r in conn.execute("SELECT * FROM sources")}
         present = set()
         for path in discover(root):

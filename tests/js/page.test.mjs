@@ -533,6 +533,35 @@ describe("statistics", () => {
   });
 });
 
+describe("cache rewrites", () => {
+  const bc = { pause_long: { count: 2, tokens: 400000, cost: 3.5 }, pause: { count: 0, tokens: 0, cost: 0 },
+               changed: { count: 1, tokens: 90000, cost: 0.4 } };
+  test("warning follows the shown percent: 9.5% rounds to 10% and warns, 9.49% shows 9% and does not", () => {
+    assert.ok(SL.rewriteWarn({ share: 0.1 }) && SL.rewriteWarn({ share: 0.5 }) && SL.rewriteWarn({ share: 0.095 }));
+    assert.ok(!SL.rewriteWarn({ share: 0.0949 }) && !SL.rewriteWarn({ share: null }) && !SL.rewriteWarn(undefined));
+  });
+  test("a cause whose cost is unknown shows a dash, not $0.00", () => {
+    const lines = SL.causeLines({ pause_long: { count: 2, tokens: 400000, cost: null } });
+    assert.ok(lines[0].endsWith("— ") === false && lines[0].endsWith("—") && !lines[0].includes("$"), lines[0]);
+    assert.equal(SL.rewriteLine({ count: 2, cost: null, share: null }), "Повторная запись кэша: —");
+  });
+  test("a dash instead of $0.00 when nothing is priced", () => {
+    assert.equal(SL.rewriteLine({ count: 2, cost: 0, share: null }), "Повторная запись кэша: —");
+  });
+  test("ru line: cost and share, share left out when unknown, none when empty", () => {
+    assert.equal(nb(SL.rewriteLine({ count: 3, cost: 12.4, share: 0.084 })), "Повторная запись кэша: $12,40 · 8% расхода");
+    assert.equal(SL.rewriteLine({ count: 3, cost: 12.4, share: null }), "Повторная запись кэша: $12,40");
+    assert.equal(SL.rewriteLine({ count: 0, cost: 0, share: 0 }), "Повторной записи кэша нет");
+    assert.ok(SL.rewriteLine({ count: 1, cost: 0.01, share: 0.001 }).includes("<1%"));
+  });
+  test("causes: only the ones that happened, in a fixed order", () => {
+    const lines = SL.causeLines(bc);
+    assert.equal(lines.length, 2);
+    assert.ok(lines[0].startsWith("После паузы дольше часа: ответов 2") && lines[1].startsWith("Контекст изменился"));
+    assert.equal(SL.causeShort({ pause_long: 2, pause: 0, changed: 1 }), "пауза больше часа: 2, контекст изменился: 1");
+  });
+});
+
 describe("English: the same functions after switching the language", () => {
   test("en: big numbers", () => {
     I18N.setLang("en");

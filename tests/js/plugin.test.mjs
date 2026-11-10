@@ -314,6 +314,37 @@ describe("Active view: terminal tabs", () => {
     assert.equal(replies.length, 1);
   });
 
+  it("sends the unread sessions and forgets the ones the page has seen", async () => {
+    plugin.unread = new Set(["s-a", "s-b"]);
+    plugin.seenAt = new Map();
+    plugin.handleMessage(msg({ type: "list-tabs" }));
+    await settle(1200);
+    assert.deepEqual(lastReply().unread, ["s-a", "s-b"]);
+    plugin.handleMessage(msg({ type: "seen", ids: ["s-a"] }, EVIL));
+    assert.deepEqual(plugin.unreadIds(), ["s-a", "s-b"], "a foreign page cannot clear marks");
+    plugin.handleMessage(msg({ type: "seen", ids: ["s-a"] }));
+    await settle(1200);
+    assert.deepEqual(lastReply().unread, ["s-b"], "the reply carries what is left");
+    const count = replies.length;
+    plugin.handleMessage(msg({ type: "seen", ids: ["s-a"] }));
+    await settle(300);
+    assert.equal(replies.length, count, "nothing changed: no reply");
+  });
+
+  it("tells the page whether the Atlas tab is in front", async () => {
+    plugin.atlasInFront = (target) => !!target;   // the hint is asked for the page that asked
+    try {
+      plugin.handleMessage(msg({ type: "list-tabs" }));
+      await settle(1200);
+      assert.equal(lastReply().front, true);
+    } finally {
+      delete plugin.atlasInFront;
+    }
+    plugin.handleMessage(msg({ type: "list-tabs" }));
+    await settle(1200);
+    assert.equal(lastReply().front, false, "the tab under test is not the Atlas view");
+  });
+
   it("Go to opens the right tab", async () => {
     plugin.handleMessage(msg({ type: "focus-tab", ptyPid: 5002 }));
     await settle();

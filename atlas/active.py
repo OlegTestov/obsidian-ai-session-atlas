@@ -216,7 +216,8 @@ def ancestors(pid: int, table: dict) -> list[int]:
 
 
 def _iso_ms(ms) -> str | None:
-    if not isinstance(ms, (int, float)):
+    # A broken session file (NaN, inf, a huge number) must not take the whole Active list down.
+    if isinstance(ms, bool) or not isinstance(ms, (int, float)) or not 0 < ms < 4e12:
         return None
     return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).isoformat()
 
@@ -540,6 +541,9 @@ def _claude_card(conn: sqlite3.Connection, data: dict, jobs: dict, table: dict, 
         "started_at": meta.get("started_at") or _iso_ms(data.get("startedAt")),
         "process_started_at": _iso_ms(data.get("startedAt")),
         "last_message_at": last,
+        # A dialog opens from a tool call, which moves no message time; unread marks compare with this.
+        "status_at": _iso_ms(max((d.get("statusUpdatedAt") for d in (data, job or {})
+                                  if isinstance(d.get("statusUpdatedAt"), (int, float))), default=None)),
         # Reply tail: a question to you is usually at the end; the start reports work done.
         "reply_tail": markdown_tail(reply),
         "reply_len": len(reply),

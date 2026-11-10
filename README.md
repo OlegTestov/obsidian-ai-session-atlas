@@ -33,6 +33,8 @@ server on `127.0.0.1`, and nothing is sent anywhere unless you turn on the optio
   - read and approve a Claude Code plan, or send it back with comments;
   - type a reply (Claude Code replies can carry images), stop the agent, run slash commands.
 
+  A session that finished while you were away from its tab gets a dot before its title until you open
+  the card, its feed or its tab; "N new" in the summary line marks the cards on screen as seen.
   Each card shows the agent's task list (for Codex, its plan checklist) and a step-by-step feed of
   tool calls, commands with exit codes, errors and changed files. The feed opened on the right has the
   card's reply field under it, in the compact view too. A session running in another
@@ -41,7 +43,9 @@ server on `127.0.0.1`, and nothing is sent anywhere unless you turn on the optio
 - **Statistics.** Tokens, active time, cost at API prices and cache hit rate over a period, broken
   down by agent (Claude Code, Codex), model, domain, topic, session, tool, skill and subagent, plus a
   weekly rhythm heatmap. Claude Code replies are priced at Anthropic API prices, Codex replies at
-  OpenAI API prices.
+  OpenAI API prices. The cache tile also shows what rewriting the cache cost: replies that sent the
+  context again after a pause or a context change. At 10% of the period's cost or more the tile is
+  highlighted; ⓘ shows the causes and a panel lists the sessions that paid the most.
 - **Updates at a glance.** A short, visual “What’s new” summary once after an update. Reopen it from the command palette; automatic summaries can be turned off in settings.
 - **Agent terminals.** Ribbon buttons and commands open Claude Code or Codex in a terminal tab inside
   Obsidian. Each tab remembers the session it holds; after Obsidian restarts every agent tab brings its

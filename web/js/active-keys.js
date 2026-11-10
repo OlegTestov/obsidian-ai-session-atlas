@@ -48,6 +48,7 @@ function focusAnswer(id) {
   }
   const area = find();
   if (area && !area.disabled) area.focus();
+  seeCard(id);
 }
 
 document.addEventListener("keydown", e => {
@@ -99,4 +100,5 @@ function selectCardByClick(e) {
   if (!card) return;
   selectedCard = card.dataset.id;
   applySelection();
+  seeCard(selectedCard);
 }

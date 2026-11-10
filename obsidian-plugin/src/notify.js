@@ -6,6 +6,7 @@ import * as http from "http";
 import { VIEW_TYPE } from "./constants";
 import { translate } from "./i18n";
 import { codexScreenState } from "./dialog-codex";
+import { leafFocused } from "./unread";
 
 const POLL_MS = 10000;
 // How long a notice stays: seconds, or "sticky" — until you click or close it.
@@ -79,6 +80,7 @@ class NotifyMethods {
     this.lastActivity = null;           // null: no poll yet
     this.waitingCount = 0;
     this.openNotices = new Map();       // session id → its notice on screen
+    this.watchUnread();
     this.registerInterval(window.setInterval(() => this.pollActive(), POLL_MS));
     this.pollActive();
   }
@@ -117,6 +119,7 @@ class NotifyMethods {
       const { next, started, waiting } = waitingTransitions(this.lastActivity || new Map(), sessions);
       this.lastActivity = next;
       this.setWaitingCount(waiting);
+      await this.updateUnread(sessions, started);
       this.dropStaleNotices(sessions);
       await this.trackOpenSessions(sessions);
       // The first poll stays silent by itself: every session is new to it.
@@ -146,8 +149,8 @@ class NotifyMethods {
   async notifyWaiting(s) {
     const tab = await this.tabForSession(s);
     const focused = windowFocused();
-    // You are looking right at this tab: a notification would only get in the way.
-    if (focused && tab && this.activeLeaf() === tab.leaf) return;
+    // You are looking right at this tab, in whichever window it is: a notification would only get in the way.
+    if (tab && this.activeLeaf() === tab.leaf && leafFocused(tab.leaf)) return;
     const go = () => { if (tab) this.actOnTab("focus-tab", tab.pid, s.title || ""); };
     const t = (key, vars) => this.t(key, vars);
     const hold = this.settings && this.settings.noticeHold;

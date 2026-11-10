@@ -28,6 +28,7 @@ import { ReloadMethods } from "./reload";
 import { ExplorerMethods } from "./explorer";
 import { resolveLanguage, obsidianLanguage, translate } from "./i18n";
 import { NotifyMethods } from "./notify";
+import { UnreadMethods } from "./unread";
 import { RestoreMethods } from "./restore";
 import { StartupMethods } from "./startup";
 import { OpenPathMethods } from "./open-path";
@@ -229,6 +230,10 @@ class SessionAtlasPlugin extends PluginData {
       this.replyTabs(event.source);
       return;
     }
+    if (data.type === "seen") {
+      if (this.markSeen(data)) this.replyTabs(event.source);
+      return;
+    }
     if (data.type === "bg-bring-back" || data.type === "bg-stop") {
       if (typeof data.job !== "string") return;
       const source = event.source;
@@ -315,6 +320,8 @@ class SessionAtlasPlugin extends PluginData {
       // The page offers only the agents enabled here (Settings → Agents).
       agents: { claude: this.agentEnabled("claude"), codex: this.agentEnabled("codex") },
       groups: true,                    // tabs can be put into session groups from the page
+      unread: this.unreadIds(),        // sessions that finished while you were not looking
+      front: this.atlasInFront(target),      // the page is read even when the keyboard focus is outside it
       cover: this.statusBarCover(target),
     }, this.atlasOrigin());
   }
@@ -377,7 +384,8 @@ class SessionAtlasPlugin extends PluginData {
 }
 
 // Methods from the other files are mixed into the plugin class and run with the plugin as `this`.
-for (const methods of [TerminalMethods, InputMethods, MultiQuestionMethods, CodexInputMethods, NotifyMethods, RestoreMethods, HeldMethods,
+for (const methods of [TerminalMethods, InputMethods, MultiQuestionMethods, CodexInputMethods, NotifyMethods,
+                       UnreadMethods, RestoreMethods, HeldMethods,
                        AgentMethods, GuardMethods, BackgroundTabMethods, ExplorerMethods, RuntimeMethods,
                        StatusLineMethods, ReloadMethods, StartupMethods, OpenPathMethods, GroupMethods,
                        GroupStripMethods, WhatsNewMethods, GroupNavigationMethods, GroupDragMethods]) {

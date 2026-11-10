@@ -14,7 +14,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 
-from . import config, openai_costs
+from . import cache_rewrites, config, openai_costs
 from .agents import CODEX
 from .messages import msg
 
@@ -45,7 +45,7 @@ WITH d AS (
          MAX(a.active_s) AS act, MAX(a.model) AS model,
          MAX(a.input) AS inp, MAX(a.output) AS out, MAX(a.cache_read) AS cr,
          MAX(a.cache_write) AS cw, MAX(a.cost) AS cost, MAX(a.tools) AS tools,
-         MAX(s.agent) AS agent
+         MAX(s.agent) AS agent, MAX(a.sub) AS sub
     FROM activity a JOIN sessions s ON s.session_id = a.session_id
    WHERE a.ts >= :since AND a.ts < :until AND (:auto OR s.session_kind = 'interactive'){agents}
    GROUP BY a.key)
@@ -281,6 +281,8 @@ def _summary(conn, period, automation, now, agents, prices) -> dict:
            "until": until.isoformat(), "automation": automation, "agent_filter": agents,
            "totals": _totals(rows), "series": _series(rows, since, until)}
     out.update(_breakdowns(conn, rows))
+    out["cache_rewrites"] = cache_rewrites.summarize(
+        conn, rows, out["totals"]["cost"], prices, _utc(since) if since else None)
     # The previous span of equal length, for "more / less than usual" comparison.
     if since is not None:
         prev = _rows(conn, since - (until - since), since, automation, agents, prices)

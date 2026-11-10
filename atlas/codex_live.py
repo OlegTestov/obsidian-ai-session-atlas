@@ -90,6 +90,7 @@ def card(conn: sqlite3.Connection, pid: int, path: str, table: dict) -> dict | N
         "started_at": info.get("started_at") or meta.get("timestamp") or started,
         "process_started_at": started,
         "last_message_at": t["last_at"],
+        "status_at": None,            # Codex keeps no status time; its dialogs are read from the screen
         "reply_tail": active.markdown_tail(reply),
         "reply_len": len(reply),
         "reply_at": t["reply_at"],

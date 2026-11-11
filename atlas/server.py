@@ -79,7 +79,7 @@ def _warm_stats(lang: str) -> None:
     learns it from the plugin's first request, so a restart does not warm the wrong one."""
     if lang not in _warmed:
         _warmed.add(lang)
-        stats_cache.SNAPSHOTS.warm(stats_cache.key_for("7d", False, None, lang))
+        stats_cache.SNAPSHOTS.warm(stats_cache.key_for("7d", True, None, lang))   # background runs on by default
 
 
 class _Pass:

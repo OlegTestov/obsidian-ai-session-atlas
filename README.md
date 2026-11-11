@@ -67,8 +67,9 @@ server on `127.0.0.1`, and nothing is sent anywhere unless you turn on the optio
   notification when Obsidian is in the background. Notices stack, one per session; they hide after
   10 s, 30 s or 1 min, or stay until you click or close them, and go by themselves once the session
   works again.
-- **Optional AI features**, off by default: topics and domains for sessions, a one-line summary of
-  what was done, and a handoff document for continuing the work in a fresh session.
+- **AI features**, on by default and run only from a button, after a preview: topics and domains for
+  sessions, a one-line summary of what was done, and a handoff document for continuing the work in a
+  fresh session. Hourly auto-classification is a separate switch, off by default.
 - **File explorer clicks** (off by default): left click opens a file in a new tab, middle click in
   the current one, and a file that is already open is focused instead of opened twice.
 - English and Russian interface.
@@ -83,8 +84,8 @@ codex-cli 0.160.0. Differences from Claude Code:
   (`state_*.sqlite`), opened read-only. Codex instructions, reasoning and tool output are not indexed.
   `codex exec` runs and subagent threads count as automation, like Claude Code SDK runs.
 - **Rename** changes the name in the catalog only. Existing Codex session files are never written.
-- **Exact context fork** is Claude Code only.
-- **New from this one** (a new session with a handoff) starts the source session's agent: a Codex
+- **Branch session** is Claude Code only.
+- **Continue fresh** (a new session that starts from a session note, the handoff) starts the source session's agent: a Codex
   session continues in Codex, with the same first prompt that names the handoff file. Codex picks its
   own thread id when it starts, so each Codex launch writes its own handoff file, and the catalog
   links the new thread to its source once a thread whose first prompt names that file is indexed.
@@ -214,12 +215,14 @@ many sessions the first index can take a few minutes.
 - **Settings:**
   - *Installation check:* macOS, `python3`, Claude Code, Codex, the server, the index (with a
     Rebuild button) and the subscription limits switch.
-  - *Language:* English, Russian or as in Obsidian.
-  - *Agents:* turn Claude Code and Codex on or off, extra launch arguments for each (for example
+  - *Language:* English, Russian or as in Obsidian (the default). Topics, summaries and handoffs are
+    written in the same language.
+  - *Agents:* turn Claude Code and Codex on or off; until you do, each is on when the plugin finds it
+    at start-up, extra launch arguments for each (for example
     `--chrome`), terminal font size, number of messages in a detailed Active card.
   - *Catalog:* note folders, project roots, domains, note areas mapped to domains, sensitive areas
     and projects, ticket prefixes. These live in `config.json` in the data folder.
-  - *AI features:* on/off, output language, model and effort for each task, 1M-token window.
+  - *AI features:* on/off, model and effort for each task, 1M-token window.
   - *Other:* notices and how long they stay, macOS notifications, file explorer clicks.
   - *Advanced:* custom `python3` path and terminal shell.
 - **Codex prices.** `openai_prices` in `config.json` fixes or adds the price of a Codex model, in US
@@ -276,7 +279,7 @@ never started.
 | `~/.codex/config.toml` | read, only for **Resume with… → Codex** | The model provider a new Codex session names |
 | `~/Library/Application Support/session-atlas/` | read, write | The plugin's data folder: unpacked server, index, settings, logs (see "Privacy & data location") |
 | `~/.local/state/obsidian-agent-terminals/` (or `$XDG_STATE_HOME/obsidian-agent-terminals/`) | read, write | Which session each terminal tab holds, so the tab can resume it |
-| `~/.claude/settings.json` | write, only when you turn on **Subscription limits** | Adds the AI Session Atlas status line (see below) |
+| `~/.claude/settings.json` | write, on first install when it has no status line, or when you turn on **Subscription limits** | Adds the AI Session Atlas status line (see below) |
 | A session's transcript in `~/.claude/projects/` | append, only when you rename a session | Saves the new name where Claude Code reads it |
 | A new file in `~/.claude/projects/<folder>/` | create, only when you use **Resume with… → Claude Code** | A new Claude Code session made from a Codex session |
 | A new file in `~/.codex/sessions/YYYY/MM/DD/` | create, only when you use **Resume with… → Codex** | A new Codex session made from a Claude Code session |
@@ -319,7 +322,8 @@ Delete the new session like any other if you no longer need it.
   session; for Codex, that the process holds this session's file open.
   A shared Codex app server is never stopped to move a single session.
 
-**AI features.** Off by default. While they are off, the server refuses every request that would call
+**AI features.** On by default; nothing is sent until you press a button and confirm the preview.
+Turn them off in the settings. While they are off, the server refuses every request that would call
 a model.
 - When on, they run your own `claude` CLI (`claude -p`) with your settings, hooks, MCP servers and
   tools disabled. `ANTHROPIC_API_KEY` is removed from the environment of these calls, so they use the
@@ -341,6 +345,7 @@ a model.
 
 **Subscription limits.** Claude Code reports 5-hour and weekly limits only to a status line script.
 The **Subscription limits** switch adds a AI Session Atlas status line to `~/.claude/settings.json`.
+On first install it is turned on by itself when the file has no status line yet, and a notice says so.
 Before its first edit the plugin saves a copy as `settings.json.session-atlas.bak` next to it. If you
 already have a status line, or the file is not valid JSON, the switch is disabled and the file is
 left alone. While enabled, the status line runs for every Claude Code session on the computer and

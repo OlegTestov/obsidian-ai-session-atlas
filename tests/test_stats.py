@@ -141,3 +141,58 @@ def test_answer_continued_in_the_next_pass_adds_its_time(atlas_env, write_sessio
     assert s["totals"]["answers"] == 1
     assert s["totals"]["active_s"] == 120
     assert s["tools"] == [{"name": "Bash", "count": 1}]
+
+
+BIG = {"input_tokens": 1_000_000}      # a cost that survives rounding to cents
+
+
+def _background(line):
+    cli, sdk = '"entrypoint":"cli"', '"entrypoint":"sdk-cli"'
+    return line.replace('"entrypoint": "cli"', '"entrypoint": "sdk-cli"').replace(cli, sdk)
+
+
+def _mixed(write_session):
+    write_session("human", [prompt("задача", "2026-09-01T10:00:00.000Z", "u1"),
+                            answer("hm1", "2026-09-01T10:01:00.000Z", **BIG)])
+    write_session("nightly", [_background(prompt("nightly", "2026-09-01T03:00:00.000Z", "n1")),
+                              _background(answer("bm1", "2026-09-01T03:01:00.000Z", **BIG))])
+
+
+def test_auto_cost_is_the_background_part_of_the_cost(atlas_env, write_session):
+    _mixed(write_session)
+    conn = _index(atlas_env)
+    both = stats.summary(conn, "all", automation=True, now=NOW)["totals"]
+    human = stats.summary(conn, "all", automation=False, now=NOW)["totals"]
+    assert human["auto_cost"] == 0
+    assert both["cost"] > human["cost"] > 0
+    assert both["auto_cost"] == round(both["cost"] - human["cost"], 2) > 0
+
+
+def test_auto_cost_of_background_only_period_is_the_whole_cost(atlas_env, write_session):
+    write_session("nightly", [_background(prompt("nightly", "2026-09-01T03:00:00.000Z", "n1")),
+                              _background(answer("bm1", "2026-09-01T03:01:00.000Z", **BIG))])
+    t = stats.summary(_index(atlas_env), "all", automation=True, now=NOW)["totals"]
+    assert t["cost"] > 0 and t["auto_cost"] == t["cost"]
+
+
+def test_auto_cost_is_zero_without_background_runs(atlas_env, write_session):
+    write_session("human", [prompt("задача", "2026-09-01T10:00:00.000Z", "u1"),
+                            answer("hm1", "2026-09-01T10:01:00.000Z", **BIG)])
+    t = stats.summary(_index(atlas_env), "all", automation=True, now=NOW)["totals"]
+    assert t["cost"] > 0 and t["auto_cost"] == 0
+
+
+def test_background_rows_are_left_out_when_the_checkbox_is_off(atlas_env, write_session):
+    _mixed(write_session)
+    conn = _index(atlas_env)
+    off = stats.summary(conn, "all", automation=False, now=NOW)["totals"]
+    on = stats.summary(conn, "all", automation=True, now=NOW)["totals"]
+    assert (off["sessions"], on["sessions"]) == (1, 2)
+    assert off["answers"] == 1 and on["answers"] == 2
+
+
+def test_previous_period_counts_background_cost_the_same_way(atlas_env, write_session):
+    write_session("old", [_background(prompt("nightly", "2026-08-31T12:00:00.000Z", "n1")),
+                          _background(answer("bm1", "2026-08-31T12:01:00.000Z", **BIG))])
+    s = stats.summary(_index(atlas_env), "today", automation=True, now=NOW)
+    assert s["previous"]["auto_cost"] == s["previous"]["cost"] > 0

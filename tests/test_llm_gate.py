@@ -27,10 +27,11 @@ def test_runner_refuses_before_touching_claude(monkeypatch):
         runner.run_isolated("hello")
 
 
-def test_default_config_has_llm_off():
+def test_default_config_has_llm_on():
+    # Buttons with a preview only: the hourly pass has its own switch, off (test_autoclassify).
     os.remove(os.path.join(os.environ["ATLAS_HOME"], "config.json"))
     config.reset()
-    assert runner.llm_enabled() is False
+    assert runner.llm_enabled() is True
 
 
 @pytest.mark.parametrize("path, body", [

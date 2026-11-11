@@ -19,7 +19,7 @@ const BUNDLE = path.join(await build(path.join(TMP, "build")), "main.js");
 /** Runs a test file in a child node with its own environment; returns the TAP summary. */
 function runChild(args, env) {
   const r = childProcess.spawnSync(process.execPath, ["--test-reporter=tap", ...args],
-                                   { env, encoding: "utf8", timeout: 180000 });
+                                   { env, encoding: "utf8", timeout: 400000 });
   const count = (name) => Number((new RegExp(`^# ${name} (\\d+)$`, "m").exec(r.stdout) || [])[1] || 0);
   return { status: r.status, pass: count("pass"), fail: count("fail"), output: r.stdout + r.stderr };
 }
@@ -34,7 +34,8 @@ function childEnv(extra) {
 defineRuntimeTests(BUNDLE);
 
 describe("bundle behaves like the sources", () => {
-  it("passes every plugin bridge check", () => {
+  // The whole plugin suite in a child: about 90 s alone, more under load, so above the 120 s default.
+  it("passes every plugin bridge check", { timeout: 420000 }, () => {
     const r = runChild(["--test", path.join(HERE, "plugin.test.mjs")], childEnv({ ATLAS_PLUGIN_BUNDLE: BUNDLE }));
     assert.equal(r.status, 0, r.output);
     assert.equal(r.fail, 0, r.output);

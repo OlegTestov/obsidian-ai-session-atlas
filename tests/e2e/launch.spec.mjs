@@ -1,4 +1,4 @@
-// Starting sessions from the catalog: "+ Session" with an agent choice and "New from this one".
+// Starting sessions from the catalog: "+ Session" with an agent choice and "Continue fresh".
 // The page runs in a frame of a stand-in host, which records what the plugin would receive.
 import fs from "node:fs";
 import path from "node:path";
@@ -14,7 +14,7 @@ const FAKE_CALLS = path.join(run.root, "fake-claude", "calls.log");
 // The thread Codex would start from the handoff, one per page language.
 const NEW_THREAD = { en: "0199a1b2-c3d4-7e5f-8a6b-0000000000a1", ru: "0199a1b2-c3d4-7e5f-8a6b-0000000000a2" };
 const CODEX_HANDOFF = /launch-[0-9A-Za-z-]{1,8}-[0-9a-f]{12}\.md$/;
-const LABEL = { en: { newFrom: "New from this one" }, ru: { newFrom: "Новая на основе этой" } };
+const LABEL = { en: { newFrom: "Continue fresh" }, ru: { newFrom: "Продолжить начисто" } };
 
 /** shlex.quote, as atlas/actions.py builds the command. */
 function quote(s) {
@@ -156,7 +156,7 @@ test.describe("+ Session", () => {
   });
 });
 
-// --- "New from this one" --------------------------------------------------------------------
+// --- "Continue fresh" -----------------------------------------------------------------------
 
 // The handoff is an AI artifact: the button exists only with AI features on, and the server calls
 // `claude -p`. A stand-in `claude` set as claude_bin answers with a valid handoff; no model is called.
@@ -166,7 +166,7 @@ const HANDOFF_TEXT = ["## Goal", "Keep the ledger totals stable.", "## Current s
   "## Risks and gotchas", "None known.", "## Next concrete step", "Add a test for negative totals.",
   "## Цель", "## Текущее состояние", "## Следующий конкретный шаг"].join("\n");
 
-test.describe("New from this one", () => {
+test.describe("Continue fresh", () => {
   let original;
 
   test.beforeEach(async () => {

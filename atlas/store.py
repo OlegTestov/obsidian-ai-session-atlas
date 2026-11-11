@@ -232,7 +232,7 @@ def store_codex(conn, path: str, st, sig: str, title: str | None = None) -> str:
         _write_meta_row(conn, session_id, title, facts, resolved)
         _write_turns(conn, session_id, facts)
         _record_source(conn, path, session_id, st, sig, facts)
-        # "New from this one" for Codex: the thread's id is known only now (atlas/actions.py).
+        # "Continue fresh" for Codex: the thread's id is known only now (atlas/actions.py).
         actions.link_codex_launch(conn, session_id, facts.first_user_text)
         return session_id
 

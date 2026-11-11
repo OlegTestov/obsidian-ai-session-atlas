@@ -10,7 +10,7 @@ Module._load=original;
 function context(){
  const saved=[],effects=[], config={models:{}};
  const plugin={settings:JSON.parse(JSON.stringify(DEFAULT_SETTINGS)),t:k=>k,
-  readServerConfig:()=>config,writeServerConfig:cfg=>{Object.assign(config,cfg);effects.push(cfg);},agentEnabled:()=>true,
+  readServerConfig:()=>config,writeServerConfig:cfg=>{Object.assign(config,cfg||{});effects.push(cfg||"config");},agentEnabled:()=>true,
   saveData:async data=>saved.push(JSON.parse(JSON.stringify(data))),
   register(){},refreshAgentButtons:()=>effects.push("buttons"),writeAgentArgs:()=>effects.push("args")};
  const tab=new AtlasSettingTab({},plugin);
@@ -29,9 +29,9 @@ function controls(def){
 describe("settings discovery",()=>{
  it("cached server definitions read current values whenever settings reopen",async()=>{
   const {tab,config}=context();const def=flat(tab.getSettingDefinitions()).find(d=>d.name==="ai.enabled");
-  const first=controls(def);assert.equal(first.values[0],false);
-  await first[0](true);assert.equal(config.llm_enabled,true);
-  assert.equal(controls(def).values[0],true);
+  const first=controls(def);assert.equal(first.values[0],true);          // no setting yet: on
+  await first[0](false);assert.equal(config.llm_enabled,false);
+  assert.equal(controls(def).values[0],false);
  });
  it("refresh falls back to display on hosts without the settings-search API",()=>{
   const {tab}=context();tab.update=undefined;let displayed=0;tab.display=()=>displayed++;
@@ -44,6 +44,7 @@ describe("settings discovery",()=>{
    "ai.model.classification","adv.python","adv.shell"]){
    assert.ok(defs.some(d=>d.name===key),key);
   }
+  assert.ok(!defs.some(d=>d.name==="ai.language"),"one language: the plugin's");
   assert.ok(defs.every(d=>typeof d.name==="string"&&typeof d.render==="function"));
  });
  it("declarative agent controls preserve persistence and runtime side effects",async()=>{
@@ -59,6 +60,6 @@ describe("settings discovery",()=>{
   const {tab,plugin,effects}=context();
   const def=flat(tab.getSettingDefinitions()).find(d=>d.name==="settings.language");
   await controls(def)[0]("ru");assert.equal(plugin.settings.language,"ru");
-  assert.deepEqual(effects,["refresh"]);
+  assert.deepEqual(effects,["config","refresh"]);               // config.json takes the new language too
  });
 });

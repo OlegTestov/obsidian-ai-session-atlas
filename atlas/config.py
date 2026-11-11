@@ -2,7 +2,7 @@
 
 Everything that differs between people lives here: where notes and projects are, which work
 domains exist, what tickets look like, what is sensitive, which models to call. Without the file,
-neutral defaults apply: the catalog works but knows no domains or tickets, and AI features are off.
+neutral defaults apply: the catalog works but knows no domains or tickets.
 
 The file is re-read when its mtime changes: the server is long-lived and settings change on the fly.
 """
@@ -17,7 +17,7 @@ import threading
 import time
 
 DEFAULTS = {
-    "language": "en",                 # language of topics, descriptions and handoffs: en | ru
+    "language": "en",                 # topics, descriptions and handoffs: en | ru; the plugin writes its own
     # Note folders (Obsidian vault): the folder itself is a project, its first level is an area.
     "vaults": [],                     # [{"path": "~/…", "id": "vault"}]
     # Roots whose first level is a standalone project; in containers the project is one level deeper.
@@ -33,7 +33,7 @@ DEFAULTS = {
     "project_domains": {},            # {"claude-config": "tools"}: project → domain
     "sensitive": {"vault_areas": [], "projects": []},   # never sent to the model
     "ticket_prefixes": [],            # ["ABC", "OPS"] → tickets ABC-123; empty: no ticket search
-    "llm_enabled": False,             # AI features spend the subscription: explicit consent only
+    "llm_enabled": True,              # buttons with a preview; hourly auto-classification is its own switch, off
     "models": {
         "classification": ["sonnet", "low"],
         "catalog_summary": ["sonnet", "low"],

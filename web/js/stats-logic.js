@@ -102,6 +102,25 @@
     return tr("stats.rewrites.line", { cost: money(rw.cost), share: pct });
   }
 
+  const STATS_PREFS_V = 2;
+
+  /** Saved prefs + defaults. Background runs are on by default: prefs saved before that
+   *  (no `autoV`) get it once, after that the user's own choice stays. */
+  function migratePrefs(saved) {
+    const prefs = Object.assign({ period: "7d", metric: "cost", auto: true }, saved);
+    const migrated = prefs.autoV !== STATS_PREFS_V;
+    if (migrated) { prefs.auto = true; prefs.autoV = STATS_PREFS_V; }
+    return { prefs, migrated };
+  }
+
+  /** "background runs: $378 (12%)"; null when they are not counted, cost is unknown or the share is 0. */
+  function backgroundLine(totals, auto) {
+    if (!auto || !totals || !totals.auto_cost || !totals.cost) return null;
+    const share = totals.auto_cost / totals.cost;
+    const pct = share < 0.005 ? "<1" : String(Math.round(share * 100));
+    return tr("stats.background.line", { cost: money(totals.auto_cost), share: pct });
+  }
+
   /** One line per cause that happened, with counts, tokens and cost. */
   function causeLines(byCause) {
     return CAUSES.filter(c => byCause[c] && byCause[c].count).map(c => tr("stats.rewrites.cause." + c,
@@ -113,6 +132,6 @@
     .map(c => `${tr("stats.rewrites.short." + c)}: ${causes[c]}`).join(", ");
 
   const api = { PERIODS, METRICS, decimal, bigNum, hoursText, money, metricText, delta, pointLabel,
-                labelStep, share, heatLevel, ranked, REWRITE_WARN_PCT, rewriteWarn, rewriteLine, causeLines, causeShort };
+                labelStep, share, heatLevel, ranked, REWRITE_WARN_PCT, rewriteWarn, rewriteLine, migratePrefs, backgroundLine, causeLines, causeShort };
   root.StatsLogic = api;
 })(window);

@@ -1,4 +1,4 @@
-/* global openFeed -- a page function, called inside page.evaluate */
+/* global openFeed, READ -- page globals, used inside page.evaluate */
 // Unread marks on Active cards: the plugin sends which sessions finished while you were away; the page
 // shows a dot and a "N new" button and reports the cards you open. A stand-in host page plays the plugin.
 import { expect, ids, run, test } from "./fixtures.mjs";
@@ -219,4 +219,84 @@ test("an open feed stays seen when the plugin says the Atlas tab is in front, wi
   await page.evaluate(id => { window.unread = [id]; }, ids.codexLive);
   await expect.poll(async () => (await seenSent(page)).length, { timeout: 12000 }).toBeGreaterThan(before);
   await expect(frame.locator(`.acard[data-id="${ids.codexLive}"] .unread-dot`)).toHaveCount(0);
+});
+
+// A detailed card on screen while you work at the page: a reply you could read as it came is not marked.
+async function readingSetup(page, lang, mode, { settledMs = 300, inputMs = 60000, unread = [], input = true } = {}) {
+  const frame = await openHost(page, lang, unread, mode);
+  await page.evaluate(() => { window.front = true; });
+  await expect(frame.locator(`.acard[data-id="${ids.claudeLive}"]`)).toBeVisible();
+  await frame.locator("body").evaluate((_, r) => Object.assign(READ, r), { settledMs, inputMs });
+  await expect.poll(() => page.evaluate(() => window.sent.filter(m => m.type === "list-tabs").length),
+                    { timeout: 12000 }).toBeGreaterThan(1);       // the page has seen itself in view for a poll
+  await page.waitForTimeout(Math.min(settledMs, 1000) + 100);
+  if (input) {
+    await page.mouse.move(200, 200);
+    await page.mouse.wheel(0, 1);                                   // you are at the screen
+  }
+  return frame;
+}
+const markLater = (page, id) => page.evaluate(i => { window.unread = [i]; }, id);
+const newSeen = async (page, before) => (await seenSent(page)).slice(before.length);
+
+test("detailed view: a reply that comes while you work at the page is not marked", async ({ page, lang }) => {
+  const frame = await readingSetup(page, lang, "full");
+  const before = await seenSent(page);
+  await markLater(page, ids.claudeLive);
+  await expect.poll(async () => (await newSeen(page, before)).flatMap(m => m.ids), { timeout: 12000 })
+    .toContain(ids.claudeLive);
+  await page.waitForTimeout(500);
+  await expect(frame.locator(`.acard[data-id="${ids.claudeLive}"] .unread-dot`)).toHaveCount(0);
+});
+
+test("compact view: the same reply is marked", async ({ page, lang }) => {
+  const frame = await readingSetup(page, lang, "compact");
+  await markLater(page, ids.claudeLive);
+  await expect(frame.locator(`.acard[data-id="${ids.claudeLive}"] .unread-dot`)).toBeVisible({ timeout: 12000 });
+});
+
+test("detailed view without recent input: marked, you may be away from the screen", async ({ page, lang }) => {
+  const frame = await readingSetup(page, lang, "full", { inputMs: 1 });
+  await page.waitForTimeout(50);
+  await markLater(page, ids.claudeLive);
+  await expect(frame.locator(`.acard[data-id="${ids.claudeLive}"] .unread-dot`)).toBeVisible({ timeout: 12000 });
+});
+
+test("detailed view, the page just came into view: marked, the turn may have ended before", async ({ page, lang }) => {
+  const frame = await readingSetup(page, lang, "full", { settledMs: 600000 });
+  await markLater(page, ids.claudeLive);
+  await expect(frame.locator(`.acard[data-id="${ids.claudeLive}"] .unread-dot`)).toBeVisible({ timeout: 12000 });
+});
+
+test("detailed view, the card is off screen: marked", async ({ page, lang }) => {
+  const frame = await readingSetup(page, lang, "full");
+  await frame.locator(`.acard[data-id="${ids.claudeLive}"]`).evaluate(c => {
+    const sheet = new CSSStyleSheet();                              // inline <style> is refused by the page's CSP
+    sheet.replaceSync(".e2e-far{margin-top:5000px}");
+    c.ownerDocument.adoptedStyleSheets = [...c.ownerDocument.adoptedStyleSheets, sheet];
+    c.classList.add("e2e-far");
+  });
+  await page.mouse.wheel(0, 1);
+  await markLater(page, ids.claudeLive);
+  await expect(frame.locator(`.acard[data-id="${ids.claudeLive}"] .unread-dot`)).toBeAttached({ timeout: 12000 });
+});
+
+test("detailed view: a mark from while you were away stays when you come back and move the mouse", async ({ page, lang }) => {
+  const frame = await readingSetup(page, lang, "full", { unread: [ids.claudeLive] });
+  const before = await seenSent(page);
+  await page.mouse.wheel(0, 1);
+  await page.waitForTimeout(6000);                                  // more polls with the same mark
+  await expect(frame.locator(`.acard[data-id="${ids.claudeLive}"] .unread-dot`)).toBeVisible();
+  expect((await newSeen(page, before)).flatMap(m => m.ids)).not.toContain(ids.claudeLive);
+});
+
+test("detailed view: the page scrolling itself or a pointer move is not you at the screen", async ({ page, lang }) => {
+  const frame = await readingSetup(page, lang, "full", { input: false });
+  await frame.locator("body").evaluate(() => {
+    document.dispatchEvent(new Event("scroll"));
+    document.dispatchEvent(new PointerEvent("pointermove", { bubbles: true }));
+    for (const el of document.querySelectorAll(".acard .feed, .acard")) el.scrollTop = el.scrollHeight;
+  });
+  await markLater(page, ids.claudeLive);
+  await expect(frame.locator(`.acard[data-id="${ids.claudeLive}"] .unread-dot`)).toBeVisible({ timeout: 12000 });
 });

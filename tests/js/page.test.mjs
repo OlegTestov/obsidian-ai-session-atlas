@@ -533,6 +533,38 @@ describe("statistics", () => {
   });
 });
 
+describe("background runs in Statistics", () => {
+  test("background runs are on by default", () => {
+    assert.equal(SL.migratePrefs({}).prefs.auto, true);
+    assert.equal(SL.migratePrefs({ autoV: 2, period: "30d" }).prefs.auto, true);
+  });
+  test("prefs saved before the default changed (auto:false, no marker) become on once and are saved", () => {
+    const { prefs, migrated } = SL.migratePrefs({ period: "30d", auto: false });
+    assert.ok(prefs.auto && migrated && prefs.autoV === 2);
+    assert.equal(prefs.period, "30d");
+  });
+  test("with the marker the user's own choice stays", () => {
+    const { prefs, migrated } = SL.migratePrefs({ auto: false, autoV: 2 });
+    assert.equal(prefs.auto, false);
+    assert.equal(migrated, false);
+  });
+  test("line: cost and share in both languages", () => {
+    const totals = { cost: 3150, auto_cost: 378 };
+    assert.equal(nb(SL.backgroundLine(totals, true)), "из них фоновые $378 (12%)");
+    I18N.setLang("en");
+    try { assert.equal(SL.backgroundLine(totals, true), "background runs: $378 (12%)"); } finally { I18N.setLang("ru"); }
+  });
+  test("line: hidden at zero share, with the checkbox off, and when the cost is unknown", () => {
+    assert.equal(SL.backgroundLine({ cost: 100, auto_cost: 0 }, true), null);
+    assert.equal(SL.backgroundLine({ cost: 100, auto_cost: 20 }, false), null);
+    assert.equal(SL.backgroundLine({ cost: null, auto_cost: 0 }, true), null);
+    assert.equal(SL.backgroundLine({ cost: 100 }, true), null);
+  });
+  test("line: a share under 1% reads <1%", () => {
+    assert.ok(SL.backgroundLine({ cost: 1000, auto_cost: 1 }, true).includes("<1%"));
+  });
+});
+
 describe("cache rewrites", () => {
   const bc = { pause_long: { count: 2, tokens: 400000, cost: 3.5 }, pause: { count: 0, tokens: 0, cost: 0 },
                changed: { count: 1, tokens: 90000, cost: 0.4 } };

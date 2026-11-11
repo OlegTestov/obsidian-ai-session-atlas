@@ -131,10 +131,7 @@ function aiDefinitions(tab) {
   const save = changes => plugin.writeServerConfig(changes);
   return { type: "group", heading: plugin.t("ai.heading"), items: [
     { name: plugin.t("ai.enabled"), desc: plugin.t("ai.enabled.desc"), render: setting => setting.addToggle(toggle =>
-      toggle.setValue(!!cfg().llm_enabled).onChange(v => save({ llm_enabled: v }))) },
-    { name: plugin.t("ai.language"), desc: plugin.t("ai.language.desc"), render: setting => setting.addDropdown(d =>
-      d.addOption("en", "English").addOption("ru", "Русский").setValue(cfg().language === "ru" ? "ru" : "en")
-        .onChange(v => save({ language: v }))) },
+      toggle.setValue(cfg().llm_enabled !== false).onChange(v => save({ llm_enabled: v }))) },
     ...Object.keys(DEFAULT_MODELS).map(kind => ({ name: plugin.t(`ai.model.${kind}`), desc: plugin.t("ai.model.desc"),
       render: setting => setting.addText(text => {
         text.setPlaceholder(DEFAULT_MODELS[kind].join(" ")).setValue(F.modelToText(models()[kind]));

@@ -28,6 +28,17 @@ async function freshApi(path) {
   throw new Error(`${path}: still stale after 30 s`);
 }
 
+// Background runs are counted by default now. The specs below were written for the unticked box and
+// seed that choice (with the migration marker); the "by default" specs run with empty storage.
+test.beforeEach(async ({ page }, info) => {
+  if (info.title.includes("by default")) return;
+  await page.addInitScript(() => {
+    if (window.localStorage.getItem("atlas.stats") === null) {
+      window.localStorage.setItem("atlas.stats", JSON.stringify({ auto: false, autoV: 2 }));
+    }
+  });
+});
+
 async function pickAgents(page, want) {
   await page.locator("#stats-bar .agent-ms .ms-btn").click();
   const pop = page.locator("#stats-bar .agent-ms .ms-pop");
@@ -116,6 +127,31 @@ test("background runs add the codex exec run, priced from the OpenAI table", asy
   const after = parseMoney(await agentRow(page, t, "Codex").locator(".bv").textContent());
   expect(Math.abs(after - before - EXEC_COST)).toBeLessThan(0.011);
   await expect(page.locator("#stats-body .spanel", { hasText: "Summarize the nightly ops log" })).toBeVisible();
+});
+
+test("background runs are counted by default and the cost tile shows their share", async ({ page, open, t, lang }) => {
+  await open("stats");
+  await settled(page);
+  const box = page.locator("#stats-bar label.chk", { hasText: t.background }).locator("input");
+  await expect(box).toBeChecked();
+  const data = await freshApi("/api/stats?period=7d&auto=1");
+  expect(data.totals.auto_cost).toBeGreaterThan(0);
+  const share = Math.round(100 * data.totals.auto_cost / data.totals.cost);
+  const costTile = page.locator("#stats-body .tile", { has: page.locator(".tt", { hasText: t.cost }) });
+  const line = costTile.locator(".bgl");
+  const text = lang === "ru" ? `из них фоновые ${money(data.totals.auto_cost, lang)} (${share < 1 ? "<1" : share}%)`
+                             : `background runs: ${money(data.totals.auto_cost, lang)} (${share < 1 ? "<1" : share}%)`;
+  await expect(line).toHaveText(text.replace(/ /g, " "));
+  // Unticking removes the line and the choice survives a reload.
+  const loaded = page.waitForResponse(r => /\/api\/stats\?.*auto=0/.test(r.url()));
+  await box.uncheck();
+  await loaded;
+  await settled(page);
+  await expect(costTile.locator(".bgl")).toHaveCount(0);
+  expect((await stored(page, "atlas.stats")).auto).toBe(false);
+  await page.reload();
+  await open("stats");
+  await expect(page.locator("#stats-bar label.chk", { hasText: t.background }).locator("input")).not.toBeChecked();
 });
 
 test("the cost caption is one short line; how it is counted shows behind ⓘ on hover and on focus",
@@ -279,7 +315,7 @@ test("the cache tile shows what rewrites cost, warns, and the panel opens the se
   expect(hint).toContain(lang === "ru" ? "После паузы дольше 5-минутного кэша" : "After a pause longer than the 5-minute cache");
   expect(hint).toContain(lang === "ru" ? "Контекст изменился, пока кэш ещё жил" : "Context changed while the cache was still alive");
   expect(hint).not.toContain("/clear");
-  expect(hint).toContain(lang === "ru" ? "Новая на основе этой" : "New from this one");
+  expect(hint).toContain(lang === "ru" ? "Продолжить начисто" : "Continue fresh");
   await expect(info).toHaveAttribute("aria-describedby", "cache-tip");
 
   const panel = rewritePanel(page, lang);

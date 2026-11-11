@@ -4,7 +4,7 @@ import { renderStatus, catalogDefinitions, aiDefinitions, advancedDefinitions } 
 import { NOTICE_HOLDS, DEFAULT_NOTICE_HOLD } from "./notify";
 import { DEFAULT_FONT_SIZE } from "./constants";
 
-const DEFAULT_SETTINGS = { notify: true, systemNotify: true, explorerClicks: false, language: "en",
+const DEFAULT_SETTINGS = { notify: true, systemNotify: true, explorerClicks: false, language: "auto",
                            agents: {}, agentArgs: { claude: "", codex: "" }, terminalFontSize: DEFAULT_FONT_SIZE,
                            cardMessages: 10, noticeHold: DEFAULT_NOTICE_HOLD, loadAgentTabs: true, showWhatsNew: true };
 
@@ -42,9 +42,10 @@ class AtlasSettingTab extends PluginSettingTab {
         } },
       definition("settings.language", "settings.language.desc", setting => setting.addDropdown(dropdown =>
         dropdown.addOption("auto", t("settings.language.auto")).addOption("ru", "Русский").addOption("en", "English")
-          .setValue(plugin.settings.language || "en").onChange(async value => {
+          .setValue(plugin.settings.language || "auto").onChange(async value => {
             plugin.settings.language = value;
             await this.save();
+            plugin.writeServerConfig();          // topics, descriptions and handoffs follow the plugin's language
             this.refresh();
           }))),
       { type: "group", heading: t("settings.agentsHeading"), items: [

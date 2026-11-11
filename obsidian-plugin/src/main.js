@@ -33,6 +33,7 @@ import { RestoreMethods } from "./restore";
 import { StartupMethods } from "./startup";
 import { OpenPathMethods } from "./open-path";
 import { WhatsNewMethods } from "./whats-new";
+import { FirstRunMethods } from "./first-run";
 import { GroupDragMethods } from "./groups-drag";
 import { GroupNavigationMethods } from "./groups-navigation";
 import { GroupMethods } from "./groups";
@@ -52,6 +53,7 @@ function markerPort(file) {
 class SessionAtlasPlugin extends PluginData {
   async onload() {
     const saved = (await this.loadData()) || {};
+    const firstRun = !Object.keys(saved).length;       // no data.json yet: a fresh install
     this.settings = Object.assign({}, DEFAULT_SETTINGS, saved);
     this.loadedAt = Date.now();
     // Before the tabs come back: a process an earlier Obsidian left behind would hold their sessions.
@@ -77,7 +79,9 @@ class SessionAtlasPlugin extends PluginData {
       if (!saved.agentArgs && this.adoptAgentArgs()) await this.saveData(this.settings);
       this.writeAgentArgs();
     } catch (error) { console.error("AI Session Atlas: could not sync agent arguments", error); }
-    this.app.workspace.onLayoutReady(() => this.detectAgents().catch(() => {}));
+    this.app.workspace.onLayoutReady(() => this.detectAgents()
+      .then(() => (firstRun ? this.firstRunSetup() : null))
+      .catch((error) => console.error("AI Session Atlas: agents check or first-run setup failed", error)));
     this.app.workspace.onLayoutReady(() => this.watchOwnBuild());
     // Held processes whose tabs are still in the layout wait for them; the rest are offered back.
     this.app.workspace.onLayoutReady(() => { keepHeldTabs(this.app.workspace); this.offerHeldTabs(); });
@@ -388,7 +392,7 @@ for (const methods of [TerminalMethods, InputMethods, MultiQuestionMethods, Code
                        UnreadMethods, RestoreMethods, HeldMethods,
                        AgentMethods, GuardMethods, BackgroundTabMethods, ExplorerMethods, RuntimeMethods,
                        StatusLineMethods, ReloadMethods, StartupMethods, OpenPathMethods, GroupMethods,
-                       GroupStripMethods, WhatsNewMethods, GroupNavigationMethods, GroupDragMethods]) {
+                       GroupStripMethods, WhatsNewMethods, FirstRunMethods, GroupNavigationMethods, GroupDragMethods]) {
   for (const name of Object.getOwnPropertyNames(methods.prototype)) {
     if (name === "constructor") continue;
     Object.defineProperty(SessionAtlasPlugin.prototype, name,

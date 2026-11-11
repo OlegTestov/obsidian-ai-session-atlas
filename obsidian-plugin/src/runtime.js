@@ -173,17 +173,17 @@ class RuntimeMethods {
   }
 
   /**
-   * The server's config.json. Without a file, creates one with this vault's folder and Obsidian's
-   * language. With one, changes only what changes by itself (the claude and codex paths) and what is passed
-   * explicitly (from the settings).
+   * The server's config.json. Without a file, creates one with this vault's folder. With one, changes only
+   * what changes by itself (the plugin's language, the claude and codex paths) and what is passed explicitly
+   * (from the settings).
    */
   writeServerConfig(changes = {}) {
     const current = this.readServerConfig();
     const next = current ? Object.assign({}, current) : {
-      language: this.lang(),
       vaults: this.getVaultPath() ? [{ path: this.getVaultPath(), id: this.app.vault.getName() }] : [],
     };
     Object.assign(next, changes);
+    next.language = this.lang();                  // one language: the plugin's, also for the model's texts
     if (this.shellInfo && this.shellInfo.claude) next.claude_bin = this.shellInfo.claude;
     if (this.shellInfo && this.shellInfo.codex) next.codex_bin = this.shellInfo.codex;
     if (JSON.stringify(next) === JSON.stringify(current)) return next;

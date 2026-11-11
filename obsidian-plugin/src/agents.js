@@ -143,9 +143,15 @@ class AgentMethods {
     this.refreshAgentButtons();
   }
 
+  /** The user's own choice wins; otherwise what the last check found. Nothing found keeps Claude Code:
+   *  its button stays and the environment check in the settings says what is missing. */
   agentEnabled(kind) {
-    const agents = (this.settings && this.settings.agents) || {};
-    return kind === "claude" ? agents.claude !== false : agents.codex === true;
+    const chosen = (this.settings && this.settings.agents) || {};
+    if (typeof chosen[kind] === "boolean") return chosen[kind];
+    const found = this.settings && this.settings.agentsFound;
+    if (!found) return kind === "claude";
+    if (kind === "claude" && !found.claude && !found.codex) return true;
+    return found[kind] === true;
   }
 
   refreshAgentButtons() {
@@ -176,14 +182,23 @@ class AgentMethods {
     }
   }
 
-  /** Codex is on by default only when it is installed. */
+  /** Every start: an agent installed after the plugin gets its button. A failed probe changes nothing. */
   async detectAgents() {
-    if (!this.settings.agents) this.settings.agents = {};
-    if (this.settings.agents.codex !== undefined) return;
     const shell = await this.shellProbe();
-    this.settings.agents.codex = !!shell.codex;
-    await this.saveData(this.settings);
+    if (!shell || !shell.PATH) return this.settings.agentsFound || null;
+    const found = { claude: !!shell.claude, codex: !!shell.codex };
+    // Up to 2.9.0 the first start saved Codex's probe result as if you had chosen it: drop it once.
+    const chosen = this.settings.agents;
+    if (!this.settings.agentsFound && chosen && typeof chosen.codex === "boolean") {
+      this.settings.agents = Object.assign({}, chosen);
+      delete this.settings.agents.codex;
+    }
+    if (JSON.stringify(found) !== JSON.stringify(this.settings.agentsFound || null)) {
+      this.settings.agentsFound = found;
+      await this.saveData(this.settings);
+    }
     this.refreshAgentButtons();
+    return found;
   }
 
   /** The script from the extracted build; for an install from the repository, the copy in the vault. */

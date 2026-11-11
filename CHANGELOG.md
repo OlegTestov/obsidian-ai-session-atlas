@@ -7,6 +7,34 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.9.1] - 2026-11-11
+
+### Added
+
+- A first-run notice after installation says what is turned on (subscription limits, AI features, the
+  agents found) and opens the plugin settings on a click.
+
+### Changed
+
+- New installs with Claude Code turn on subscription limits in Active by themselves when
+  `~/.claude/settings.json` has no status line yet; a status line of your own is never touched. Existing installs keep their choice.
+- AI features are on by default, also for installs that never touched the switch. They still run only
+  from a button, after a preview; hourly auto-classification stays a separate switch, off.
+- The agent buttons follow what is installed: Claude Code and Codex are each checked at every start and
+  turned on when found, until you switch them yourself. With neither found, Claude Code stays on so the
+  installation check can say what is missing. The Codex setting saved by the first start of older versions
+  is dropped once, so an install that got Codex later gets its button.
+- One language: topics, summaries and handoffs are written in the plugin's language; the separate
+  language choice in AI features is gone, so a different language chosen there gives way to the plugin's.
+  The plugin language defaults to Obsidian's.
+- In the detailed view of Active, a reply that comes while you work at the page with its card on screen
+  is not marked as new. Marks that came while you were away stay until you open the card.
+- Card menu names: Continue fresh (was New from this one), Session note (Handoff without launching),
+  Detailed summary (Detailed description), Branch session (Exact context fork).
+- Statistics counts background runs (nightly agents, hooks, `claude -p`, `codex exec`) by default, and the
+  cost tile shows how much of the period's cost they are ("background runs: $378 (12%)"). Untick
+  "background runs" to see your own work only; saved settings are switched on once, after that your choice stays.
+
 ## [2.9.0] - 2026-11-10
 
 ### Added

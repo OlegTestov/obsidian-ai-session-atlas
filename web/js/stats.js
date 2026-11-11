@@ -7,8 +7,9 @@ const STATS_KEY = "atlas.stats";
 const WEEKDAYS = i18n("stats.weekdays").split(" ");
 const LIST_ROWS = 8;
 
-let statsPrefs = Object.assign({ period: "7d", metric: "cost", auto: false },
+const statsLoaded = S.migratePrefs(
   (() => { try { return JSON.parse(window.localStorage.getItem(STATS_KEY) || "{}"); } catch { return {}; } })());
+let statsPrefs = statsLoaded.prefs;
 let statsData = null;
 let statsSeq = 0;
 let statsUpdating = false;     // a stale snapshot is shown while the server counts a newer one
@@ -19,6 +20,8 @@ let statsAgents = null;        // built once: the bar redraws on every load, an 
 function saveStatsPrefs() {
   try { window.localStorage.setItem(STATS_KEY, JSON.stringify(statsPrefs)); } catch { /* private window */ }
 }
+
+if (statsLoaded.migrated) saveStatsPrefs();
 
 function renderStatsBar() {
   const auto = el("label", "chk");
@@ -161,6 +164,8 @@ function renderTiles(d) {
   tip.id = "cost-tip";
   tip.setAttribute("role", "tooltip");
   costSub.append(" ", info, tip);
+  const bgLine = S.backgroundLine(t, d.automation === true);   // the data's own scope, not a box ticked since
+  if (bgLine) costSub.append(el("div", "bgl", bgLine));
   const box = el("div", "tiles");
   box.append(
     tile(i18n("stats.tile.sessions"), S.bigNum(t.sessions),

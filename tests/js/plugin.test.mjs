@@ -135,6 +135,8 @@ const { attachProcesses } = loadSrc("terminal");
 Module._load = realLoad;
 // No plugin instance in these tests writes to the real data folder.
 SessionAtlasPlugin.prototype.dataDirOverride = TEST_DATA;
+// Nor to the real ~/.claude: a fresh install turns the status line on there.
+SessionAtlasPlugin.prototype.claudeDirOverride = path.join(TMP, "claude");
 
 const readJson = (name) => JSON.parse(fs.readFileSync(path.join(FIXTURES, name), "utf8"));
 const settle = (ms = 50) => delay(ms);
@@ -1764,11 +1766,57 @@ describe("agent settings", () => {
     // Obsidian's HTMLElement.toggle shows or hides through the display style.
     const ribbon = (i) => ({ style: {}, i, toggle(show) { this.style.display = show ? "" : "none"; } });
     ag.agentRibbons = { claude: ribbon(1), codex: ribbon(2) };
-    ag.shellProbe = async () => ({ claude: "/x/claude" });          // codex is not found
+    ag.shellProbe = async () => ({ PATH: "/x", claude: "/x/claude" });          // codex is not found
     await ag.detectAgents();
-    assert.equal(ag.settings.agents.codex, false);
+    assert.deepEqual(ag.settings.agentsFound, { claude: true, codex: false });
+    assert.equal(ag.agentEnabled("codex"), false);
     assert.equal(ag.agentRibbons.codex.style.display, "none");
     assert.equal(ag.agentRibbons.claude.style.display, "");
+  });
+  it("both found: both on; Codex installed later: on at the next start", async () => {
+    const p = new SessionAtlasPlugin();
+    p.settings = { agents: {} };
+    p.shellProbe = async () => ({ PATH: "/x", claude: "/x/claude" });
+    await p.detectAgents();
+    assert.equal(p.agentEnabled("codex"), false);
+    p.shellProbe = async () => ({ PATH: "/x", claude: "/x/claude", codex: "/x/codex" });
+    await p.detectAgents();
+    assert.equal(p.agentEnabled("claude"), true);
+    assert.equal(p.agentEnabled("codex"), true);
+    assert.deepEqual(p.stored.agentsFound, { claude: true, codex: true });
+  });
+  it("only Codex found: Claude Code off; nothing found: Claude Code stays on", async () => {
+    const p = new SessionAtlasPlugin();
+    p.settings = { agents: {} };
+    p.shellProbe = async () => ({ PATH: "/x", codex: "/x/codex" });
+    await p.detectAgents();
+    assert.equal(p.agentEnabled("claude"), false);
+    assert.equal(p.agentEnabled("codex"), true);
+    p.shellProbe = async () => ({ PATH: "/x" });
+    await p.detectAgents();
+    assert.equal(p.agentEnabled("claude"), true);
+    assert.equal(p.agentEnabled("codex"), false);
+  });
+  it("upgrade: the Codex value older versions saved by themselves gives way to detection, once", async () => {
+    const p = new SessionAtlasPlugin();
+    p.settings = { agents: { codex: false, claude: true } };
+    p.shellProbe = async () => ({ PATH: "/x", claude: "/x/claude", codex: "/x/codex" });
+    await p.detectAgents();
+    assert.equal(p.agentEnabled("codex"), true);
+    assert.equal(p.settings.agents.claude, true);                    // only Codex was ever saved by detection
+    p.settings.agents.codex = false;                                  // now it is your own choice
+    await p.detectAgents();
+    assert.equal(p.agentEnabled("codex"), false);
+  });
+  it("a failed shell probe keeps the last result; the user's own choice beats detection", async () => {
+    const p = new SessionAtlasPlugin();
+    p.settings = { agents: { claude: false }, agentsFound: { claude: true, codex: true } };
+    p.shellProbe = async () => ({});
+    await p.detectAgents();
+    assert.deepEqual(p.settings.agentsFound, { claude: true, codex: true });
+    assert.equal(p.stored, undefined);                               // nothing rewritten
+    assert.equal(p.agentEnabled("claude"), false);
+    assert.equal(p.agentEnabled("codex"), true);
   });
   it("Codex turned on: the button and the command appear at once", () => {
     ag.settings.agents.codex = true;
@@ -1997,6 +2045,7 @@ describe("plugin start-up", () => {
     boot.ensureServer = async () => { started++; return true; };
     boot.watchOwnBuild = () => {};
     boot.detectAgents = async () => {};
+    boot.firstRunSetup = async () => {};
     boot.startWatch = () => {};
     await boot.onload();
     ready.forEach((fn) => fn());
@@ -2005,8 +2054,120 @@ describe("plugin start-up", () => {
   it("one plugin: catalog, Claude Code and Codex buttons; default settings", () => {
     assert.equal(alone.ribbons.map((r) => r.icon).join(), "library,bot,codex-bot");
     assert.equal(alone.settings.explorerClicks, false);   // changes core explorer clicks: opt-in
-    assert.equal(alone.settings.language, "en");
+    assert.equal(alone.settings.language, "auto");          // as in Obsidian
     assert.equal(alone.settings.terminalFontSize, 12);
+  });
+});
+
+describe("fresh install", () => {
+  const start = async (stored) => {
+    const p = new SessionAtlasPlugin();
+    const ready = [];
+    p.stored = stored;
+    p.app = { plugins: { enabledPlugins: new Set() },
+              workspace: { on: () => null, onLayoutReady: (fn) => ready.push(fn), getLeavesOfType: () => [] } };
+    let runs = 0;
+    p.ensureServer = async () => true;
+    p.watchOwnBuild = () => {};
+    p.startWatch = () => {};
+    p.detectAgents = async () => ({ claude: true, codex: false });
+    p.firstRunSetup = async () => { runs++; };
+    await p.onload();
+    ready.forEach((fn) => fn());
+    await settle();
+    return runs;
+  };
+  it("the first start without data.json sets up once; a start with settings does not", async () => {
+    assert.equal(await start(null), 1);
+    assert.equal(await start({ language: "ru" }), 0);
+  });
+
+  // Obsidian adds createEl to DOM nodes; a fragment of plain objects is enough here.
+  const node = () => ({ children: [], createEl(tag, opts) { const n = node(); Object.assign(n, { tag }, opts); this.children.push(n); return n; } });
+  const setup = async ({ state = "off", llm = true, agentsFound = { claude: true, codex: true }, claudeDir = null } = {}) => {
+    const doc = getGlobal("document");
+    doc.createDocumentFragment = node;
+    const p = new SessionAtlasPlugin();
+    p.settings = { agents: {}, agentsFound, language: "en" };
+    p.manifest = { id: "session-atlas" };
+    p.claudeDirOverride = claudeDir || path.join(os.homedir(), ".claude");   // setStatusLine is a stand-in: nothing is written
+    const opened = [];
+    p.app = { setting: { open: () => opened.push("open"), openTabById: (id) => opened.push(id) } };
+    const calls = [];
+    p.statusLineState = () => ({ state });
+    p.setStatusLine = async (on) => { calls.push(on); return { ok: true }; };
+    p.readServerConfig = () => (llm === null ? {} : { llm_enabled: llm });
+    const result = await p.firstRunSetup();
+    delete doc.createDocumentFragment;
+    return { p, calls, result, opened, notice: lastNotice() };
+  };
+  it("no status line yet: ours goes in; the notice lists limits, AI and the agents found and stays", async () => {
+    const { calls, result, notice } = await setup();
+    assert.deepEqual(calls, [true]);
+    assert.equal(result.limits, true);
+    assert.equal(notice.duration, 0);
+    assert.equal(result.lines.length, 3);
+    assert.match(result.lines[0], /status line was added to .*settings\.json/);
+    assert.match(result.lines[0], /added to ~\/\.claude\/settings\.json$/);   // home shown as ~; no file, no copy
+    assert.match(result.lines[1], /AI features/);
+    assert.equal(result.lines[2], "agent buttons: Claude Code, Codex");
+  });
+  it("someone else's status line or ours: the file is not touched and limits are not listed", async () => {
+    for (const state of ["foreign", "ours", "broken"]) {
+      const { calls, result } = await setup({ state });
+      assert.deepEqual(calls, [], state);
+      assert.equal(result.limits, false);
+      assert.ok(!result.lines.some((l) => /status line/.test(l)), state);
+    }
+  });
+  it("AI turned off by hand is not listed; no setting means on; only the agents found are named", async () => {
+    assert.ok(!(await setup({ llm: false })).result.lines.some((l) => /AI features/.test(l)));
+    assert.ok((await setup({ llm: null })).result.lines.some((l) => /AI features/.test(l)));
+    const { result } = await setup({ agentsFound: { claude: false, codex: true } });
+    assert.equal(result.lines[result.lines.length - 1], "agent buttons: Codex");
+  });
+  it("Claude Code not found: its settings file is not touched", async () => {
+    const { calls, result } = await setup({ agentsFound: { claude: false, codex: true } });
+    assert.deepEqual(calls, []);
+    assert.equal(result.limits, false);
+  });
+  it("the copy is named only when there was a file to copy", async () => {
+    const dir = path.join(TMP, "claude-first-run");
+    const none = await setup({ claudeDir: dir });
+    assert.equal(none.result.copied, false);
+    assert.ok(!/a copy of the file/.test(none.result.lines[0]));
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "settings.json"), "{}");
+    const some = await setup({ claudeDir: dir });
+    assert.equal(some.result.copied, true);
+    assert.match(some.result.lines[0], /a copy of the file is next to it/);
+    fs.writeFileSync(path.join(dir, "settings.json.session-atlas.bak"), "{}");
+    assert.equal((await setup({ claudeDir: dir })).result.copied, false);   // an older copy stays; none is made now
+  });
+  it("a click on the notice opens the plugin's settings", async () => {
+    const { notice, opened } = await setup();
+    notice.containerEl.listeners.forEach((fn) => fn());
+    assert.deepEqual(opened, ["open", "session-atlas"]);
+  });
+});
+
+describe("one language for the plugin and the model's texts", () => {
+  it("config.json gets the plugin's language on every write, also over a hand-set one", () => {
+    const p = new SessionAtlasPlugin();
+    p.app = { vault: { adapter: { getBasePath: () => TMP }, getName: () => "v" } };
+    p.settings = { language: "ru" };
+    fs.rmSync(p.configPath(), { force: true });
+    assert.equal(p.writeServerConfig().language, "ru");
+    fs.writeFileSync(p.configPath(), JSON.stringify({ language: "en", llm_enabled: false }));
+    p.settings.language = "auto";
+    obsidianLanguage = "ru";
+    const next = p.writeServerConfig({ ticket_prefixes: ["AB"] });
+    assert.equal(next.language, "ru");
+    assert.equal(next.llm_enabled, false);                  // the rest is kept
+    p.settings.language = "en";
+    assert.equal(JSON.parse(fs.readFileSync(p.configPath(), "utf8")).language, "ru");
+    p.writeServerConfig();
+    assert.equal(JSON.parse(fs.readFileSync(p.configPath(), "utf8")).language, "en");
   });
 });
 
@@ -2559,6 +2720,7 @@ describe("close guard survives a plugin reload", () => {
 // --- copying from the agent terminal ---
 
 describe("terminal copy", () => {
+  before(() => { alone.settings.language = "en"; });   // menu titles below are the English ones
   const copy = loadSrc("term-copy");
   const key = (extra) => Object.assign({ type: "keydown", metaKey: true, key: "c", code: "KeyC" }, extra);
 

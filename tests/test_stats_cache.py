@@ -242,6 +242,7 @@ def test_the_warm_up_is_in_the_page_language(atlas_env, live_server, monkeypatch
     assert warmed == []
     get("ru")
     get("ru")
-    assert [(k[0], k[1], k[2], k[3]) for k in warmed] == [("7d", False, None, "ru")]
+    assert [(k[0], k[1], k[2], k[3]) for k in warmed] == [("7d", True, None, "ru")]   # background runs on
     get("en")                                        # the owner switched the language
     assert [k[3] for k in warmed] == ["ru", "en"]
+

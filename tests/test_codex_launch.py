@@ -1,4 +1,4 @@
-"""Starting Codex from the catalog: "New from this one" for a Codex thread and "+ Session" with Codex.
+"""Starting Codex from the catalog: "Continue fresh" for a Codex thread and "+ Session" with Codex.
 
 Codex cannot start with a given id, so a launch is linked to its thread by the handoff file its
 first prompt names.
@@ -17,7 +17,7 @@ from atlas import actions, db, enrich, index, launch, prompts
 from tests.conftest import cx_agent, cx_context, cx_meta, cx_user, user_text
 
 SOURCE = "019e0000-aaaa-7000-8000-000000000001"     # the Codex thread a handoff was made from
-NEW = "019e0000-bbbb-7000-8000-000000000002"        # the thread "New from this one" started
+NEW = "019e0000-bbbb-7000-8000-000000000002"        # the thread "Continue fresh" started
 OTHER = "019e0000-cccc-7000-8000-000000000003"
 CLAUDE_ID = "11111111-2222-3333-4444-555555555555"
 

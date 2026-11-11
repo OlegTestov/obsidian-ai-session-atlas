@@ -21,7 +21,7 @@
 .tile .ts .tip{display:none;position:absolute;z-index:5;left:0;top:calc(100% + 6px);width:min(320px,80vw);padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink);font-size:12px;line-height:1.45;white-space:pre-line;box-shadow:0 4px 14px rgba(0,0,0,.18)}
 .tile .ts .info:hover+.tip,.tile .ts .info:focus-visible+.tip{display:block}
 .tile.warn{border-color:var(--warn)}
-.tile .rw{margin-top:2px}
+.tile .rw,.tile .bgl{margin-top:2px}
 .tile.warn .rw{color:var(--warn);font-weight:600}
 .tile .rw .tip{font-weight:400;color:var(--ink)}
 .delta{font-size:12px;font-weight:600;color:var(--dim)}

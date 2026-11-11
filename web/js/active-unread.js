@@ -5,13 +5,43 @@
 /* exported hostUnread, readHostUnread, unreadMark, seeCard, unreadButton -- used by other page scripts */
 let hostUnread = new Set();
 let hostFront = false;                   // the plugin says the Atlas tab is in front of a focused window
+let inViewSince = 0;                     // since when the page has been in view without a break; 0: not now
+let lastInput = 0;                       // your last click, key or wheel on the page
+
+// A detailed card you could read as its reply came is not marked. Only when you are at the screen (input
+// this recent) and the page was in view for a while before: the mark is new, so the turn ended while you
+// looked. Marks that came while you were away stay until you open the card, also when you scroll to it.
+const READ = { inputMs: 60_000, settledMs: 10_000 };     // an object: browser tests shorten them
+// Not scroll or pointer moves: the page scrolls chats itself and the browser sends moves after a redraw.
+for (const type of ["pointerdown", "keydown", "wheel"]) {
+  document.addEventListener(type, () => { lastInput = Date.now(); }, { capture: true, passive: true });
+}
+
+/** At least half of the card (or of the screen, for a tall one) is on screen. */
+function cardOnScreen(id) {
+  const card = shownCards().find(c => c.dataset.id === id);
+  if (!card) return false;
+  const r = card.getBoundingClientRect();
+  const shown = Math.min(r.bottom, window.innerHeight) - Math.max(r.top, 0);
+  return r.height > 0 && shown >= Math.min(r.height, window.innerHeight) / 2;
+}
+
+function readInPlace(id, now) {
+  return activeMode === "full" && inViewSince > 0 && now - inViewSince >= READ.settledMs
+    && now - lastInput <= READ.inputMs && cardOnScreen(id);
+}
 
 function readHostUnread(d) {
+  const before = hostUnread;
   hostUnread = new Set(Array.isArray(d.unread) ? d.unread.filter(id => typeof id === "string") : []);
   hostFront = d.front === true;
-  // The feed open on the right is being read while the page is in view: its session stays seen.
+  const now = Date.now();
   const inView = !document.hidden && (hostFront || document.hasFocus());
-  if (feedSid && hostUnread.has(feedSid) && inView) seeCard(feedSid);
+  inViewSince = inView ? inViewSince || now : 0;
+  const read = inView ? [...hostUnread].filter(id => !before.has(id) && readInPlace(id, now)) : [];
+  // The feed open on the right is being read while the page is in view: its session stays seen.
+  if (feedSid && hostUnread.has(feedSid) && inView && !read.includes(feedSid)) read.push(feedSid);
+  if (read.length) read.forEach(seeCard);
   else applyUnread();
 }
 

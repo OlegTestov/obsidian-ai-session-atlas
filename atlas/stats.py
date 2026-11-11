@@ -45,7 +45,8 @@ WITH d AS (
          MAX(a.active_s) AS act, MAX(a.model) AS model,
          MAX(a.input) AS inp, MAX(a.output) AS out, MAX(a.cache_read) AS cr,
          MAX(a.cache_write) AS cw, MAX(a.cost) AS cost, MAX(a.tools) AS tools,
-         MAX(s.agent) AS agent, MAX(a.sub) AS sub
+         MAX(s.agent) AS agent, MAX(a.sub) AS sub,
+         MAX(COALESCE(s.session_kind, '') <> 'interactive') AS bg
     FROM activity a JOIN sessions s ON s.session_id = a.session_id
    WHERE a.ts >= :since AND a.ts < :until AND (:auto OR s.session_kind = 'interactive'){agents}
    GROUP BY a.key)
@@ -123,6 +124,8 @@ def _totals(rows) -> dict:
         else:
             t["cost"] += r["cost"]
             t["priced"] += 1
+            if r.get("bg"):
+                t["auto_cost"] += r["cost"]
     # One formula for both agents: cached ÷ all input (fresh + cache writes + cached).
     fresh = t["inp"] + t["cw"] + t["cr"]
     return {
@@ -133,6 +136,8 @@ def _totals(rows) -> dict:
         "active_s": round(t["active_s"]), "wall_s": round(wall_seconds(rows)),
         # No priced reply at all is "unknown", not $0 (a Codex-only period with unpriced models).
         "cost": round(t["cost"], 2) if t["priced"] or not unknown else None,
+        # Part of `cost` that background runs spent: 0 when none are in the rows (checkbox off).
+        "auto_cost": round(t["auto_cost"], 2),
         "unpriced_models": sorted(unknown),
     }
 

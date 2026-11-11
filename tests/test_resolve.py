@@ -129,7 +129,7 @@ def test_without_settings_nothing_personal_is_assumed(tmp_path):
     from atlas import config
     _os.remove(_os.path.join(_os.environ["ATLAS_HOME"], "config.json"))
     config.reset()
-    assert config.vaults() == [] and config.ticket_re() is None and config.get("llm_enabled") is False
+    assert config.vaults() == [] and config.ticket_re() is None and config.get("llm_enabled") is True
     assert resolve.classify_path(os.path.join(HOME, "Code/app")).project_id == "app"   # default roots
     assert resolve.resolve_sensitivity([os.path.join(HOME, "Notes/Personal")], []) == resolve.UNCLASSIFIED
 

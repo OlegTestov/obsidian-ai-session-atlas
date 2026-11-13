@@ -23,6 +23,7 @@ def conn_with_names():
       CREATE TABLE activity (session_id TEXT, key TEXT, kind TEXT, ts TEXT, model TEXT, input INTEGER,
         output INTEGER, cache_read INTEGER, cache_write INTEGER, cost REAL, sub INTEGER);
       CREATE TABLE session_projects (session_id TEXT, project_id TEXT, role TEXT);
+      CREATE TABLE session_forks (session_id TEXT, parent_id TEXT, at TEXT);
       INSERT INTO sessions VALUES ('s1', 'First title'), ('s2', NULL);
       INSERT INTO session_projects VALUES ('s1', 'demo', 'primary');""")
     return conn

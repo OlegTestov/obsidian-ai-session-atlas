@@ -94,6 +94,11 @@ class SessionFacts:
     continued_from: str | None = None
     copied_until: str | None = None    # the child's records up to here are copies of the parent
     copied: int = 0
+    # A copy Claude Code made (`--fork-session`, /branch) keeps the source's records: /branch marks
+    # them with `forkedFrom`, every copied record keeps the source's id in `session_id`.
+    forked_from: str | None = None
+    copied_from: str | None = None
+    forked_at: str | None = None       # the last copied record: about when the copy was made
 
 
 TURN_FIELDS = ("user_text", "assistant_text", "commands", "paths", "summaries")
@@ -279,6 +284,7 @@ def parse_range(path: str, facts: SessionFacts, start: int) -> None:
                 continue
             facts.records += 1
             kind = rec.get("type")
+            _note_fork(facts, rec)
 
             ts = rec.get("timestamp")
             if _is_copy(facts, rec, kind, ts):
@@ -317,6 +323,31 @@ def parse_range(path: str, facts: SessionFacts, start: int) -> None:
                 _handle_continued(facts, rec)
             else:
                 _handle_meta(facts, rec, kind or "")
+
+
+def _note_fork(facts: SessionFacts, rec: dict) -> None:
+    """The last copied record names the direct source: a copy of a copy also keeps the older ids."""
+    own = facts.session_id
+    copied = False
+    marker = rec.get("forkedFrom")
+    source = marker.get("sessionId") if isinstance(marker, dict) else None
+    if isinstance(source, str) and source and source != own:
+        facts.forked_from, copied = source, True
+    source = rec.get("session_id")
+    if isinstance(source, str) and source and source != own and source != rec.get("sessionId", own):
+        facts.copied_from, copied = source, True
+    ts = rec.get("timestamp")
+    if copied and isinstance(ts, str) and ts > (facts.forked_at or ""):
+        facts.forked_at = ts
+
+
+def fork_source(facts: SessionFacts) -> str | None:
+    """The session this one is a Claude Code copy of. A parked conversation's background job and a
+    "Resume with…" conversion copy records too, but they are continuations, not copies."""
+    if facts.agent != "claude" or facts.continued_from:
+        return None
+    source = facts.forked_from or facts.copied_from
+    return source if source and source != facts.session_id else None
 
 
 def _is_copy(facts: SessionFacts, rec: dict, kind, ts) -> bool:

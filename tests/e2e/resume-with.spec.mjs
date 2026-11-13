@@ -11,14 +11,14 @@ import { PHRASES } from "./corpus.mjs";
 const HOST = `${run.base}/e2e-resume-with-host.html`;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const L = {
-  en: { button: "Resume with…", own: "this session's agent — the ordinary resume", other: "a new session from this conversation",
+  en: { button: "Resume with…", own: "this session's agent — a normal resume", other: "a new session from this conversation",
         off: "Codex is turned off in the plugin settings (Settings → Agents)", title: a => `Resume in ${a}`,
         badge: a => `↪ from ${a}`, from: a => `Continued from the ${a} session`, to: "Continued in:",
         resume: "Resume session", note: "[Continued conversation]" },
-  ru: { button: "Открыть с помощью…", own: "агент этой сессии — обычное восстановление", other: "новая сессия из этого разговора",
+  ru: { button: "Открыть с помощью…", own: "агент этой сессии — обычное продолжение", other: "новая сессия из этого разговора",
         off: "Codex выключен в настройках плагина (Настройки → Агенты)", title: a => `Продолжить в ${a}`,
         badge: a => `↪ из ${a}`, from: a => `Продолжение сессии ${a}`, to: "Продолжена в:",
-        resume: "Восстановить сессию", note: "[Continued conversation]" },
+        resume: "Продолжить сессию", note: "[Continued conversation]" },
 };
 const BOTH = { claude: true, codex: true };
 

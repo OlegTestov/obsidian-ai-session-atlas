@@ -59,7 +59,7 @@ function summaryBlock(art, cardLine, confidence) {
   try { data = JSON.parse(art.payload); } catch { /* not JSON: data stays null */ }
   if (data) {
     b.appendChild(kv([[i18n("card.did"), data.did], [i18n("card.result"), data.result],
-                      [i18n("card.open"), data.open], [i18n("card.outcome"), data.work_outcome]]));
+                      [i18n("card.open"), data.open], [i18n("card.outcome"), i18nValue("outcome", data.work_outcome)]]));
   } else {
     b.appendChild(el("pre", null, art.payload));
   }
@@ -70,14 +70,14 @@ function classifyBlock(s) {
   const b = el("div", "block");
   const low = s.topic_confidence != null && s.topic_confidence < LOW_CONFIDENCE;
   const h = el("h4", null, i18n("card.classification"));
-  if (s.topic_source) h.appendChild(el("span", "src", "  ·  " + s.topic_source));
+  if (s.topic_source) h.appendChild(el("span", "src", "  ·  " + i18nValue("source", s.topic_source)));
   b.appendChild(h);
   b.appendChild(kv([
     [i18n("search.topic"), (s.topic || i18n("card.topicNone"))
       + (s.topic_stale ? i18n("card.topicStaleSuffix") : "")],
     [i18n("search.domain"), (s.domains || []).join(", ") || i18n("card.domainNone")],
     [i18n("card.confidence"), s.topic_confidence == null ? "—" : s.topic_confidence.toFixed(2)],
-    [i18n("card.sensitivity"), s.sensitivity],
+    [i18n("card.sensitivity"), i18nValue("sensitivity", s.sensitivity)],
   ]));
   if (low) {
     b.appendChild(el("p", "note low", i18n("card.lowConfidence")));
@@ -92,7 +92,7 @@ function classifyBlock(s) {
   topic.type = "text"; topic.placeholder = i18n("card.topicPlaceholder"); topic.value = s.topic || "";
   const sens = document.createElement("select");
   sens.appendChild(new Option(i18n("card.sensKeep"), ""));
-  ["unclassified", "normal", "sensitive"].forEach(v => sens.appendChild(new Option(v, v)));
+  ["unclassified", "normal", "sensitive"].forEach(v => sens.appendChild(new Option(i18nValue("sensitivity", v), v)));
   const save = el("button", null, i18n("common.save"));
   const done = el("span", "ok");
   save.addEventListener("click", async () => {
@@ -142,7 +142,14 @@ function actionBar(s) {
   if (s.actions && s.actions.fork_command) item(i18n("card.exactFork"), () => showResume(s, true));
   item(i18n("delete.menu"), () => deleteSession(s));
   menu.lastChild.classList.add("danger");
-  more.addEventListener("click", e => { e.stopPropagation(); closeResumeWith(); menu.classList.toggle("hidden"); });
+  more.addEventListener("click", e => {
+    e.stopPropagation(); closeResumeWith(); menu.classList.toggle("hidden");
+    if (menu.classList.contains("hidden")) return;
+    // Right edge under the "…" button, but inside the bar on a narrow pane (CSSOM: allowed by the CSP).
+    const right = more.offsetLeft + more.offsetWidth - menu.offsetWidth;
+    const room = more.offsetParent ? more.offsetParent.clientWidth - menu.offsetWidth - 8 : right;
+    menu.style.left = Math.max(8, Math.min(right, room)) + "px";
+  });
 
   bar.append(...(llm ? [resume, withBtn, fresh, more, menu, withMenu] : [resume, withBtn, more, menu, withMenu]));
   return bar;

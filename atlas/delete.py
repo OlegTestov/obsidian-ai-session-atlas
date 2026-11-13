@@ -184,7 +184,7 @@ def delete_session(conn: sqlite3.Connection, session_id: str) -> dict:
     history = _drop_history(os.path.join(home, HISTORY), session_id)
     with index.writer_lock():            # the indexer cannot write the session back mid-deletion
         with search_rows.writing(conn):
-            store.purge(conn, session_id)
+            store.purge(conn, session_id, gone=True)
             for table in DB_TABLES:
                 conn.execute(f"DELETE FROM {table} WHERE session_id=?", (session_id,))
             conn.execute("DELETE FROM pending_launches WHERE new_session_id=? OR source_session_id=?",

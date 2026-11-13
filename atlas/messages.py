@@ -26,85 +26,114 @@ MESSAGES: dict[str, dict] = {
     "server.no_origin": {"en": "mutating request without Origin",
                          "ru": "мутирующий запрос без Origin"},
     "server.bad_csrf": {"en": "wrong CSRF token", "ru": "неверный CSRF-токен"},
-    "server.bad_session_id": {"en": "bad session id", "ru": "плохой id сессии"},
-    "server.no_session": {"en": "no session", "ru": "нет сессии"},
-    "server.no_such_session": {"en": "no such session", "ru": "нет такой сессии"},
+    "server.bad_session_id": {
+        "en": "invalid session id",
+        "ru": "неверный id сессии"},
+    "server.no_session": {
+        "en": "session not found",
+        "ru": "сессия не найдена"},
+    "server.no_such_session": {
+        "en": "session not found",
+        "ru": "сессия не найдена"},
     "server.plan_not_found": {"en": "plan not found", "ru": "план не найден"},
-    "server.no_job": {"en": "no such job", "ru": "нет такой джобы"},
-    "server.no_path": {"en": "no such path", "ru": "нет такого пути"},
+    "server.no_job": {
+        "en": "background task not found",
+        "ru": "фоновое задание не найдено"},
+    "server.no_path": {
+        "en": "no such address",
+        "ru": "нет такого адреса"},
     "server.no_file": {"en": "no such file", "ru": "нет такого файла"},
-    "server.unknown_artifact": {"en": "unknown artifact kind", "ru": "неизвестный вид артефакта"},
-    "server.need_confirm": {"en": "preview confirmation required",
-                            "ru": "нужно подтверждение preview"},
+    "server.unknown_artifact": {
+        "en": "unknown result type",
+        "ru": "неизвестный тип результата"},
+    "server.need_confirm": {
+        "en": "confirm in the preview first",
+        "ru": "сначала подтверди в предпросмотре"},
     "server.no_workdir": {"en": "no working folder for this session",
                           "ru": "нет рабочей папки для этой сессии"},
-    "server.handoff_first": {"en": "build the handoff first", "ru": "сначала построй хендофф"},
-    "server.bad_destination": {"en": "destination is not in the allowed list",
-                               "ru": "цель не из списка разрешённых"},
+    "server.handoff_first": {
+        "en": "create a session note first",
+        "ru": "сначала создай заметку по сессии"},
+    "server.bad_destination": {
+        "en": "destination is not in the allowed list",
+        "ru": "эта папка не из списка разрешённых"},
     "server.llm_off": {"en": "AI features are off — turn them on in the plugin settings",
                        "ru": "ИИ-функции выключены — включи их в настройках плагина"},
     "server.enabled_bool": {"en": "enabled must be true or false",
                             "ru": "нужно enabled: true или false"},
     "export.desktop": {"en": "Desktop", "ru": "Рабочий стол"},
     "export.documents": {"en": "Documents", "ru": "Документы"},
-    "delete.running": {"en": "the session is running — stop it or close its tab first",
-                       "ru": "сессия запущена — сначала останови её или закрой вкладку"},
+    "delete.running": {
+        "en": "the session is still running — stop it first; closing the tab does not stop a background session",
+        "ru": "сессия ещё работает — сначала останови её; фоновую сессию закрытие вкладки не останавливает"},
     "delete.outside": {"en": "refusing to delete outside the Claude Code folder: {path}",
                        "ru": "не удаляю за пределами папки Claude Code: {path}"},
     "delete.outside_codex": {"en": "refusing to delete outside the Codex folder: {path}",
                              "ru": "не удаляю за пределами папки Codex: {path}"},
     "delete.codex_app_note": {
-        "en": "Codex itself may still list this thread for a while, until it notices the file is gone",
-        "ru": "Сам Codex может ещё какое-то время показывать этот тред в списке, пока не заметит, "
-              "что файла нет"},
-    "session_id.invalid": {"en": "invalid session_id", "ru": "невалидный session_id"},
+        "en": "Codex itself may still list this session for a while, until it notices the file is gone",
+        "ru": "Сам Codex может ещё какое-то время показывать эту сессию в списке, пока не заметит, что файла нет"},
+    "session_id.invalid": {
+        "en": "invalid session id",
+        "ru": "неверный id сессии"},
 
     # --- actions.py ---
     "terminal.osascript_failed": {"en": "could not run osascript: {error}",
                                   "ru": "не удалось вызвать osascript: {error}"},
     "terminal.automation_hint": {
-        "en": " — Automation permission seems missing in System Settings › Privacy",
-        "ru": " — похоже, не выдано разрешение Automation в System Settings › Privacy"},
+        "en": " — Automation permission for Terminal seems missing: System Settings → Privacy & Security → "
+              "Automation",
+        "ru": " — похоже, нет разрешения на управление Terminal: «Системные настройки» → «Конфиденциальность и "
+              "безопасность» → «Автоматизация»"},
     "terminal.osascript_error": {"en": "osascript returned an error",
                                  "ru": "osascript вернул ошибку"},
     "terminal.sent": {"en": "command sent to Terminal", "ru": "команда отправлена в Terminal"},
     "rename.empty": {"en": "empty title", "ru": "пустой заголовок"},
-    "rename.no_transcript": {"en": "transcript not found in the catalog",
-                             "ru": "транскрипт не найден в каталоге"},
+    "rename.no_transcript": {
+        "en": "history file not found in the catalog",
+        "ru": "файл истории не найден в каталоге"},
     "rename.codex_transcript": {
-        "en": "Codex sessions are renamed in the catalog only: the Codex transcript is not changed",
-        "ru": "сессии Codex переименовываются только в каталоге: транскрипт Codex не меняется"},
-    "rename.append_failed": {"en": "could not append to the transcript: {error}",
-                             "ru": "не удалось дописать в транскрипт: {error}"},
+        "en": "the Codex session was renamed in the catalog only; Codex itself keeps the old name",
+        "ru": "сессия Codex переименована только в каталоге: в самом Codex имя прежнее"},
+    "rename.append_failed": {
+        "en": "the name was saved in the catalog but not in the history file: {error}",
+        "ru": "имя сохранено в каталоге, но не в файле истории: {error}"},
     "actions.no_workdir": {
-        "en": "The session's working folder does not exist — the terminal launch is unavailable, "
-              "pick a folder manually.",
-        "ru": "Рабочая папка сессии не существует — запуск в терминале недоступен, "
-              "выбери папку вручную."},
+        "en": "The session's working folder no longer exists — the terminal launch is unavailable; run it yourself "
+              "from the right folder.",
+        "ru": "Рабочей папки сессии больше нет — запуск в терминале недоступен, запусти вручную из нужной папки."},
     "actions.resume_copy": {
         "en": "The CLI may continue this same session or open a copy of it — "
               "neither is guaranteed.",
         "ru": "CLI может продолжить эту же сессию, а может открыть её копию — "
               "гарантии в обе стороны нет."},
 
-    "job.interrupted": {"en": "Atlas restarted before this task finished. Please try again.",
-                        "ru": "Atlas перезапустился до завершения задачи. Запустите её повторно."},
+    "job.interrupted": {
+        "en": "Atlas restarted before this task finished. Please try again.",
+        "ru": "Atlas перезапустился до завершения задачи. Запусти её ещё раз."},
 
     # --- folders.py (the folder field of "+ Session") ---
-    "folder.not_text": {"en": "the folder must be text", "ru": "папка должна быть текстом"},
-    "folder.empty": {"en": "type a folder or pick one", "ru": "впиши папку или выбери из списка"},
+    "folder.not_text": {
+        "en": "the folder path must be text",
+        "ru": "путь к папке должен быть текстом"},
+    "folder.empty": {
+        "en": "type a folder path or pick one",
+        "ru": "впиши путь к папке или выбери из списка"},
     "folder.bad_chars": {"en": "the path has control characters or is too long",
                          "ru": "в пути управляющие символы, или он слишком длинный"},
     "folder.relative": {"en": "not a full path: start with / or ~",
                         "ru": "это не полный путь: начни с / или ~"},
-    "folder.relative_vaults": {"en": "not a full path: start with /, ~ or a vault name ({names})",
-                               "ru": "это не полный путь: начни с /, ~ или имени vault ({names})"},
-    "folder.dotdot": {"en": "“..” is not accepted: type the folder itself",
-                      "ru": "«..» не принимается: впиши саму папку"},
+    "folder.relative_vaults": {
+        "en": "not a full path: start with /, ~ or a vault name ({names})",
+        "ru": "это не полный путь: начни с /, ~ или имени хранилища ({names})"},
+    "folder.dotdot": {
+        "en": "“..” is not supported: type the full folder path",
+        "ru": "«..» не поддерживается: впиши полный путь к папке"},
     "folder.missing": {"en": "no such folder: {path}", "ru": "такой папки нет: {path}"},
     "folder.not_dir": {"en": "not a folder: {path}", "ru": "это не папка: {path}"},
-    "folder.temp": {"en": "temporary and system folders are not opened as a session",
-                    "ru": "во временных и системных папках сессия не запускается"},
+    "folder.temp": {
+        "en": "sessions are not started in temporary or system folders",
+        "ru": "во временных и системных папках сессия не запускается"},
 
     # --- launch.py ---
     "launch.prompt_not_text": {"en": "the prompt must be text", "ru": "запрос должен быть текстом"},
@@ -116,9 +145,12 @@ MESSAGES: dict[str, dict] = {
     # --- convert.py ("Resume with…") ---
     "convert.busy": {"en": "The catalog is busy. Please try again shortly.",
                      "ru": "Каталог занят. Повтори попытку чуть позже."},
-    "convert.empty": {"en": "nothing to copy: the session has no messages since its last compaction",
-                      "ru": "копировать нечего: после последней компактации в сессии нет сообщений"},
-    "convert.no_transcript": {"en": "the session's transcript is gone", "ru": "транскрипта сессии больше нет"},
+    "convert.empty": {
+        "en": "nothing to copy: the session has no messages since its last compaction",
+        "ru": "копировать нечего: после последнего сжатия контекста в сессии нет сообщений"},
+    "convert.no_transcript": {
+        "en": "the session's history file is gone",
+        "ru": "файла истории сессии больше нет"},
     "convert.long_folder": {"en": "the folder path is too long for Claude Code's project folder",
                             "ru": "путь папки слишком длинный для папки проекта Claude Code"},
 
@@ -153,7 +185,9 @@ MESSAGES: dict[str, dict] = {
     "query.how.phrase": {"en": "whole phrase", "ru": "фраза целиком"},
 
     # --- steps.py: turn steps in the feed, one at a time ---
-    "step.edit": {"en": "edit {name}", "ru": "правка {name}"},
+    "step.edit": {
+        "en": "edited {name}",
+        "ru": "изменил {name}"},
     "step.write": {"en": "wrote {name}", "ru": "записал {name}"},
     "step.read": {"en": "read {name}", "ru": "прочитал {name}"},
     "step.search": {"en": "searched {pattern}", "ru": "искал {pattern}"},
@@ -181,8 +215,9 @@ MESSAGES: dict[str, dict] = {
     "feed.searched": {"en": ["searched code {n} time", "searched code {n} times"],
                       "ru": ["искал в коде {n} раз", "искал в коде {n} раза",
                              "искал в коде {n} раз"]},
-    "feed.agents": {"en": ["{n} subagent", "{n} subagents"],
-                    "ru": ["{n} сабагент", "{n} сабагента", "{n} сабагентов"]},
+    "feed.agents": {
+        "en": ["{n} subagent", "{n} subagents"],
+        "ru": ["{n} субагент", "{n} субагента", "{n} субагентов"]},
     "feed.web": {"en": "web: {n}", "ru": "веб: {n}"},
 
     # --- session fact card: payload (runner.py) and classifier signal (classify.py) ---
@@ -193,22 +228,35 @@ MESSAGES: dict[str, dict] = {
     "fact.folder": {"en": "Folder: {cwd} · branch: {branch}", "ru": "Папка: {cwd} · ветка: {branch}"},
     "fact.workdir": {"en": "Working folder: {cwd} · branch: {branch}",
                      "ru": "Рабочая папка: {cwd} · ветка: {branch}"},
-    "fact.turns": {"en": "User turns: {value}", "ru": "Ходов пользователя: {value}"},
+    "fact.turns": {
+        "en": "User prompts: {value}",
+        "ru": "Запросов пользователя: {value}"},
     "fact.tickets": {"en": "Tickets: {value}", "ru": "Тикеты: {value}"},
     "fact.projects": {"en": "Projects by path: {value}", "ru": "Проекты по путям: {value}"},
-    "fact.files_n": {"en": "Edited files ({n}): {value}", "ru": "Правленые файлы ({n}): {value}"},
-    "fact.files": {"en": "Edited files:", "ru": "Правленые файлы:"},
+    "fact.files_n": {
+        "en": "Changed files ({n}): {value}",
+        "ru": "Изменённые файлы ({n}): {value}"},
+    "fact.files": {
+        "en": "Changed files:",
+        "ru": "Изменённые файлы:"},
     "fact.links": {"en": "Links: {value}", "ru": "Ссылки: {value}"},
     "fact.first_prompt": {"en": "First prompt: {value}", "ru": "Первый запрос: {value}"},
     "fact.last_prompt": {"en": "Last prompt: {value}", "ru": "Последний запрос: {value}"},
     "fact.prompt_n": {"en": "Prompt {i}: {value}", "ru": "Запрос {i}: {value}"},
     "fact.separator": {"en": "--- Session {n} ---", "ru": "--- Сессия {n} ---"},
-    "payload.header": {"en": "Header", "ru": "Шапка"},
-    "payload.summaries": {"en": "Compaction summaries", "ru": "Сводки компактации"},
+    "payload.header": {
+        "en": "Session details",
+        "ru": "Сведения о сессии"},
+    "payload.summaries": {
+        "en": "Compaction summaries",
+        "ru": "Сводки сжатия контекста"},
     "payload.prompts": {"en": "User prompts", "ru": "Запросы пользователя"},
-    "payload.answers": {"en": "Assistant replies (session tail)",
-                        "ru": "Ответы ассистента (хвост сессии)"},
-    "payload.commands": {"en": "Commands (tail)", "ru": "Команды (хвост)"},
+    "payload.answers": {
+        "en": "Latest agent replies",
+        "ru": "Последние ответы агента"},
+    "payload.commands": {
+        "en": "Latest commands",
+        "ru": "Последние команды"},
     "payload.skipped": {"en": "\n\n…  {n} characters skipped  …\n\n",
                         "ru": "\n\n…  пропущено {n} символов  …\n\n"},
 
@@ -217,42 +265,49 @@ MESSAGES: dict[str, dict] = {
                          "ru": "claude не найден ни в PATH, ни в {paths}"},
     "runner.no_session": {"en": "no such session: {sid}", "ru": "нет такой сессии: {sid}"},
     "runner.egress_denied": {
-        "en": "the session is marked “{sensitivity}”; there is no permission to send this "
-              "session state to an external model ({backend}/{model})",
-        "ru": "сессия помечена как «{sensitivity}», разрешения на отправку во внешнюю модель "
-              "({backend}/{model}) для этого состояния сессии нет"},
+        "en": "the session is marked “{sensitivity}”: sending to {backend}/{model} was not confirmed",
+        "ru": "сессия помечена как «{sensitivity}»: отправка в {backend}/{model} не подтверждена"},
     "runner.preflight_prompt": {"en": "Reply with one word: ok", "ru": "Ответь одним словом: ок"},
-    "runner.preflight_failed": {"en": "the call preflight failed: {detail}",
-                                "ru": "предпроверка вызова не прошла: {detail}"},
+    "runner.preflight_failed": {
+        "en": "the pre-call check failed: {detail}",
+        "ru": "проверка перед вызовом не прошла: {detail}"},
     "runner.cli_error": {"en": "claude -p returned an error", "ru": "claude -p вернул ошибку"},
 
     # --- enrich.py ---
     "enrich.no_json": {"en": "the model did not return JSON", "ru": "модель не вернула JSON"},
     "enrich.no_did": {"en": "the JSON lacks the required field did",
                       "ru": "в JSON нет обязательного поля did"},
-    "enrich.handoff_missing": {"en": "the handoff lacks required sections: {sections}",
-                               "ru": "в хендоффе нет обязательных разделов: {sections}"},
+    "enrich.handoff_missing": {
+        "en": "the session note lacks required sections: {sections}",
+        "ru": "в заметке по сессии нет обязательных разделов: {sections}"},
     "enrich.cancelled": {"en": "cancelled before start", "ru": "отменено до запуска"},
-    "enrich.no_handoff": {"en": "the handoff has not been built yet",
-                          "ru": "хендофф ещё не построен"},
+    "enrich.no_handoff": {
+        "en": "the session note has not been created yet",
+        "ru": "заметка по сессии ещё не создана"},
 
     # --- classify.py / autoclassify.py ---
     "classify.registry_empty": {"en": "(empty so far — create topics yourself)",
                                 "ru": "(пока пуст — заводи темы сам)"},
     "classify.no_array": {"en": "the classifier did not return a JSON array",
                           "ru": "классификатор не вернул массив JSON"},
-    "classify.bad_domain": {"en": "domain outside the canon: {domain}",
-                            "ru": "домен вне канона: {domain}"},
+    "classify.bad_domain": {
+        "en": "the model returned a category that is not configured: {domain}",
+        "ru": "модель вернула направление не из настроек: {domain}"},
     "classify.empty_topic": {"en": "empty topic", "ru": "пустая тема"},
-    "classify.batch_failed": {"en": "batch from {sid}: {error}", "ru": "пачка с {sid}: {error}"},
-    "classify.merge_failed": {"en": "topic merge: {error}", "ru": "схлопывание тем: {error}"},
-    "classify.merge_no_json": {"en": "the merge pass did not return JSON",
-                               "ru": "проход схлопывания не вернул JSON"},
+    "classify.batch_failed": {
+        "en": "could not classify the batch from {sid}: {error}",
+        "ru": "не удалось классифицировать группу с {sid}: {error}"},
+    "classify.merge_failed": {
+        "en": "topic merge: {error}",
+        "ru": "объединение тем: {error}"},
+    "classify.merge_no_json": {
+        "en": "the topic merge did not return JSON",
+        "ru": "объединение тем не вернуло JSON"},
     "classify.note": {
-        "en": "Sensitive sessions are not included. A fact card is sent, not the transcript: "
-              "title, first and last prompt, paths, tickets.",
-        "ru": "Чувствительные сессии в выборку не попадают. Уходит карточка фактов, "
-              "а не транскрипт: заголовок, первый и последний запрос, пути, тикеты."},
+        "en": "Sensitive sessions are not included. A fact card is sent, not the conversation history: title, "
+              "first and last prompt, paths, tickets — plus the topic list and context.md.",
+        "ru": "Конфиденциальные сессии в выборку не попадают. Уходит карточка фактов, а не история разговора: "
+              "заголовок, первый и последний запрос, пути, тикеты — плюс список тем и context.md."},
     "auto.summary_failed": {"en": "{sid}: “What was done”: {error}",
                             "ru": "{sid}: «Что сделано»: {error}"},
 }

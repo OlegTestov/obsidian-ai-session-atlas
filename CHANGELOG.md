@@ -7,6 +7,31 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.9.2] - 2026-11-13
+
+### Added
+
+- A session copied with Copy session (Claude Code `--fork-session` or `/branch`) that keeps its source's
+  name shows a number, such as "Billing export (2)". Its card links to the source, and the
+  source lists its copies.
+
+### Changed
+
+- Action names say what happens: Resume (RU «Продолжить»), Continue in a new session, Create session
+  note, Summarize session and Copy session replace Continue fresh, Session note, Detailed summary and
+  Branch session.
+- One word for one thing across the plugin and the page: context compaction, category (was domain),
+  vault, automated runs (was background runs), prompts (was turns).
+- A card shows status, sensitivity and source in words instead of internal values.
+- Sensitive sessions are described the same way everywhere: never sent automatically, and a manual
+  send goes only after the preview.
+- About 280 other texts are shorter and plainer, in English and Russian.
+
+### Fixed
+
+- The "…" menu on a card opens under its own button, not at the left edge of the bar.
+- The send preview counts megabytes in UTF-8 bytes; for Russian text it showed about half the size.
+
 ## [2.9.1] - 2026-11-11
 
 ### Added

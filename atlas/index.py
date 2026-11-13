@@ -5,6 +5,7 @@ import fcntl
 import glob
 import hashlib
 import os
+import re
 import sqlite3
 import sys
 import time
@@ -121,7 +122,7 @@ def _changed(row: sqlite3.Row | None, sig: str) -> bool:
 
 
 def _purge(conn: sqlite3.Connection, session_id: str) -> None:
-    store.purge(conn, session_id)
+    store.purge(conn, session_id, gone=True)
     conn.execute("DELETE FROM index_costs WHERE session_id=?", (session_id,))
 
 
@@ -185,6 +186,7 @@ def index_all(conn: sqlite3.Connection, root: str = PROJECTS_ROOT,
         if only_if_flagged and not recovery and db.get_meta(conn, "needs_reindex") != "1":
             return stats
         _reread_newly_priced(conn)
+        _reread_copies_once(conn)
         known = {r["path"]: r for r in conn.execute("SELECT * FROM sources")}
         present = set()
         for path in discover(root):
@@ -245,6 +247,49 @@ def index_all(conn: sqlite3.Connection, root: str = PROJECTS_ROOT,
             db.set_meta(conn, "needs_reindex", "1" if remaining else "0")
         conn.commit()
     return stats
+
+
+FORK_MARK = re.compile(rb'"forkedFrom"|"session_id":\s*"([^"]+)"')
+FORK_HEAD_BYTES = 512 << 10   # session metadata and attachments come before the first prompt
+_TURN = re.compile(rb'"type":\s*"(?:user|assistant)"')
+
+
+def _foreign(chunk: bytes, own: bytes) -> bool:
+    return any(m.group(1) is None or m.group(1) != own for m in FORK_MARK.finditer(chunk))
+
+
+def is_copy_head(path: str) -> bool:
+    """A Claude Code copy (--fork-session, /branch) starts with the source's records: its first
+    prompt or reply names another session. Reading stops there, and never goes past the head."""
+    own = os.path.splitext(os.path.basename(path))[0].encode()
+    seen = 0
+    try:
+        with open(path, "rb") as fh:
+            while seen < FORK_HEAD_BYTES:
+                raw = fh.readline(FORK_HEAD_BYTES - seen)
+                if not raw:
+                    return False
+                seen += len(raw)
+                turn = _TURN.search(raw)
+                if turn or FORK_MARK.search(raw):
+                    if _foreign(raw, own):
+                        return True
+                    if turn and raw.endswith(b"\n"):
+                        return False
+    except OSError:
+        return False
+    return False
+
+
+def _reread_copies_once(conn: sqlite3.Connection) -> None:
+    """Copies indexed before session_forks existed: parse them in full once so the table fills."""
+    if db.get_meta(conn, "copies_scanned") == "1":
+        return
+    for row in conn.execute("SELECT source_path FROM sessions WHERE agent = 'claude'").fetchall():
+        if is_copy_head(row["source_path"]):
+            _retry_full(conn, row["source_path"])
+    db.set_meta(conn, "copies_scanned", "1")
+    conn.commit()
 
 
 def _retry_full(conn: sqlite3.Connection, path: str) -> None:

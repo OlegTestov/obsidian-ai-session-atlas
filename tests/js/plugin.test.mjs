@@ -281,7 +281,7 @@ describe("Active view: terminal tabs", () => {
     leaves = [hungLeaf];
     const h = await healthOf();
     assert.equal(h.ok, false);
-    assert.match(h.reason, /не отдают процесс/);
+    assert.match(h.reason, /не удалось определить процессы/);
   });
 
   it("link: a terminal without input", async () => {
@@ -751,7 +751,7 @@ describe("dialog answers", () => {
   });
   it("preview question: 👁 while a note is open types nothing", async () => {
     const r = await previewPress("preview_notes", {}, { option: 2, text: "Yes, with changes" }, "preview-option");
-    assert.match(r.reply.reason, /заметка/);
+    assert.match(r.reply.reason, /комментарий к ответу/);
     assert.deepEqual(r.typed, []);
   });
 
@@ -765,7 +765,7 @@ describe("dialog answers", () => {
     screen = ["❯ ", "? for shortcuts"];
     const seen = await ask();
     assert.equal(seen.dialog, null);
-    assert.match(seen.reason, /не разобран/);
+    assert.match(seen.reason, /не удалось прочитать диалог/);
   });
   it("session not waiting: no dialog", async () => {
     sessionStates[8001].status = "idle";
@@ -932,7 +932,7 @@ describe("notifications", () => {
   it("a dialog notifies; a new session (even in a dialog) does not", async () => {
     await poll([ses("a", "idle"), ses("b", "idle"), ses("c", "waiting"), ses("d", "waiting")]);
     assert.equal(notices.length, 1);
-    assert.match(notices[0], /диалоге/);
+    assert.match(notices[0], /нужно твоё решение/);
   });
   it("no changes: no notifications", async () => {
     await poll([ses("a", "idle"), ses("b", "idle"), ses("c", "waiting"), ses("d", "waiting")]);
@@ -1116,7 +1116,7 @@ describe("start server from the page", () => {
     raiseMsg();
     await settle(80);
     assert.equal(raised[1].m.ok, false);
-    assert.match(raised[1].m.reason, /не поднял/);
+    assert.match(raised[1].m.reason, /не запустил/);
   });
   it("a foreign origin starts nothing", async () => {
     raiseMsg(EVIL);
@@ -1581,7 +1581,7 @@ describe("close guard", () => {
       assert.equal(shown.title, "Закрыть вкладку с фоновой сессией?");
       assert.match(shown.text, /«Clipwright» работает в фоне Claude Code/);
       assert.deepEqual(shown.contentEl.buttons.filter((b) => b.tag === "button").map((b) => [b.text, b.cls || ""]),
-                       [["Оставить", ""], ["Закрыть, сессия работает", ""], ["Закрыть и остановить", "mod-warning"]]);
+                       [["Оставить", ""], ["Закрыть только вкладку", ""], ["Закрыть и остановить", "mod-warning"]]);
       await settle(10);                        // focus moves on the next tick
       assert.deepEqual(shown.contentEl.buttons.filter((b) => b.tag === "button").map((b) => b.focused), [1, 0, 0]);
       click(shown, "Оставить");
@@ -1595,7 +1595,7 @@ describe("close guard", () => {
     });
     it("close only: the tab closes, the job is not stopped", () => {
       const shown = open(bLeaf);
-      click(shown, "Закрыть, сессия работает");
+      click(shown, "Закрыть только вкладку");
       assert.ok(bLeaf.detached);
       assert.deepEqual(stops, []);
       bLeaf.detached = false;
@@ -1680,7 +1680,7 @@ describe("close guard", () => {
       guard.settings.language = "en";
       const shown = open(bLeaf);
       assert.equal(shown.title, "Close the tab of a background session?");
-      assert.deepEqual([shown.closeLabel, shown.stopLabel], ["Close, keep running", "Close and stop"]);
+      assert.deepEqual([shown.closeLabel, shown.stopLabel], ["Close tab only", "Close and stop"]);
       click(shown, "Keep open");
     });
   });
@@ -2476,7 +2476,7 @@ describe("Codex tab: answers, reply, stop", () => {
     await plugin.pollActive();
     assert.equal(notices.length, 1);
     assert.match(notices[0], /Codex probe/);
-    assert.match(notices[0], /диалоге/);
+    assert.match(notices[0], /нужно твоё решение/);
     assert.equal(plugin.stored.openSessions[0].agent, "codex");
   });
   it("notification: a session not marked codex keeps the server's status", async () => {

@@ -13,7 +13,7 @@ import sqlite3
 import uuid
 from datetime import datetime, timezone
 
-from . import actions, agents, convert_read, convert_write, index, search
+from . import actions, agents, convert_read, convert_write, index
 from .convert_write import ConvertError
 from .messages import msg
 
@@ -30,8 +30,11 @@ def _source(conn: sqlite3.Connection, session_id: str, target: str) -> dict:
     cwd = actions.resume_cwd(conn, session_id)
     if not cwd:
         raise ConvertError(msg("server.no_workdir"))
-    meta = search.load_session(conn, session_id) or {}
-    return {"agent": row["agent"], "path": row["source_path"], "cwd": cwd, "title": meta.get("title")}
+    # The name as given, not the list's "(2)": it is written into the new transcript.
+    named = conn.execute("SELECT COALESCE(NULLIF(u.title, ''), s.title) AS title FROM sessions s "
+                         "LEFT JOIN user_overrides u ON u.session_id = s.session_id WHERE s.session_id=?",
+                         (session_id,)).fetchone()
+    return {"agent": row["agent"], "path": row["source_path"], "cwd": cwd, "title": named["title"]}
 
 
 def _messages(src: dict, session_id: str, target: str):

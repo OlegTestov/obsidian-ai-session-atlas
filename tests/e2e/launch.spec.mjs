@@ -14,7 +14,7 @@ const FAKE_CALLS = path.join(run.root, "fake-claude", "calls.log");
 // The thread Codex would start from the handoff, one per page language.
 const NEW_THREAD = { en: "0199a1b2-c3d4-7e5f-8a6b-0000000000a1", ru: "0199a1b2-c3d4-7e5f-8a6b-0000000000a2" };
 const CODEX_HANDOFF = /launch-[0-9A-Za-z-]{1,8}-[0-9a-f]{12}\.md$/;
-const LABEL = { en: { newFrom: "Continue fresh" }, ru: { newFrom: "Продолжить начисто" } };
+const LABEL = { en: { newFrom: "Continue in a new session" }, ru: { newFrom: "Продолжить в новой сессии" } };
 
 /** shlex.quote, as atlas/actions.py builds the command. */
 function quote(s) {

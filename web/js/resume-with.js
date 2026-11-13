@@ -183,8 +183,10 @@ async function confirmResumeWith(s, agent) {
 
 function lineageBlock(s) {
   const from = s.converted_from, to = s.converted_to || [];
-  if (!from && !to.length) return null;
+  const source = s.forked_from, copies = s.forks || [];
+  if (!from && !to.length && !source && !copies.length) return null;
   const box = el("p", "lineage");
+  const line = () => { if (box.childNodes.length) box.appendChild(el("br")); };
   const link = (id, text) => {
     const b = el("button", "ghost linkish", text);
     b.type = "button";
@@ -196,11 +198,25 @@ function lineageBlock(s) {
                link(from.session_id, from.title || from.session_id.slice(0, 8)));
   }
   if (to.length) {
-    if (from) box.appendChild(el("br"));
+    line();
     box.appendChild(el("span", null, i18n("rw.to") + " "));
     to.forEach((c, i) => {
       if (i) box.appendChild(document.createTextNode(", "));
       box.appendChild(link(c.session_id, `${agentName(c.agent)} · ${fmtDateTime(c.at)}`));
+    });
+  }
+  // A Claude Code copy (--fork-session, /branch): where it was copied from, and its own copies.
+  if (source) {
+    line();
+    box.append(el("span", null, i18n("fork.from") + " "),
+               link(source.session_id, source.title || source.session_id.slice(0, 8)));
+  }
+  if (copies.length) {
+    line();
+    box.appendChild(el("span", null, i18n("fork.copies") + " "));
+    copies.forEach((c, i) => {
+      if (i) box.appendChild(document.createTextNode(", "));
+      box.appendChild(link(c.session_id, c.title || c.session_id.slice(0, 8)));
     });
   }
   return box;

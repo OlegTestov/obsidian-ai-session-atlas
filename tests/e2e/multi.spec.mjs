@@ -71,7 +71,7 @@ for (const mode of ["full", "compact"]) {
     const ru = lang === "ru";
     const { card } = await open(page, lang, mode, await multiDialog());
     const tabs = card.locator(".mtabs button");
-    await expect(tabs).toHaveText(["Colour", "Fruits", "Reviewer", ru ? "Отправить" : "Submit"]);
+    await expect(tabs).toHaveText(["Colour", "Fruits", "Reviewer", ru ? "Проверить ответы" : "Review answers"]);
     await expect(tabs.nth(0)).toHaveClass(/\bon\b/);
     await expect(card.locator(".mq .q")).toHaveText("Which colour should the badge be?");
     // One answer moves on, as in the tab.

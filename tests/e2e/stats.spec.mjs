@@ -139,8 +139,8 @@ test("background runs are counted by default and the cost tile shows their share
   const share = Math.round(100 * data.totals.auto_cost / data.totals.cost);
   const costTile = page.locator("#stats-body .tile", { has: page.locator(".tt", { hasText: t.cost }) });
   const line = costTile.locator(".bgl");
-  const text = lang === "ru" ? `из них фоновые ${money(data.totals.auto_cost, lang)} (${share < 1 ? "<1" : share}%)`
-                             : `background runs: ${money(data.totals.auto_cost, lang)} (${share < 1 ? "<1" : share}%)`;
+  const text = lang === "ru" ? `из них автоматические запуски: ${money(data.totals.auto_cost, lang)} (${share < 1 ? "<1" : share}%)`
+                             : `automated runs: ${money(data.totals.auto_cost, lang)} (${share < 1 ? "<1" : share}%)`;
   await expect(line).toHaveText(text.replace(/ /g, " "));
   // Unticking removes the line and the choice survives a reload.
   const loaded = page.waitForResponse(r => /\/api\/stats\?.*auto=0/.test(r.url()));
@@ -159,8 +159,8 @@ test("the cost caption is one short line; how it is counted shows behind ⓘ on 
     await open("stats");
     const costTile = page.locator("#stats-body .tile", { has: page.locator(".tt", { hasText: t.cost }) });
     const sub = costTile.locator(".ts");
-    const caption = lang === "ru" ? "оценка по ценам API, не подписка" : "estimate at API prices, not the subscription";
-    const hint = lang === "ru" ? /Каждый ответ — по ценам API своей модели/ : /Each reply at its own model's API prices/;
+    const caption = lang === "ru" ? "оценка по ценам API, не платёж за подписку" : "estimate at API prices, not your subscription payment";
+    const hint = lang === "ru" ? /Каждый вызов модели — по ценам API этой модели/ : /Each model call at that model's API prices/;
     await expect(sub).toContainText(caption);
     expect(await sub.evaluate(n => n.firstChild.textContent)).toBe(caption);
     const info = sub.locator("button.info");
@@ -177,7 +177,7 @@ test("the cost caption is one short line; how it is counted shows behind ⓘ on 
     await page.keyboard.press("Tab");                                   // keyboard focus, :focus-visible
     await expect(tip).toBeVisible();
     await expect(info).toHaveAttribute("aria-describedby", "cost-tip");
-    await expect(info).toHaveAccessibleName(lang === "ru" ? "Как оценена цена" : "How the cost is estimated");
+    await expect(info).toHaveAccessibleName(lang === "ru" ? "Как рассчитана стоимость" : "How the cost is estimated");
   });
 
 // Stale-snapshot polling with a faked server: `answers[i]` decides the i-th answer — "old" (stale,
@@ -266,8 +266,8 @@ const CLAUDE_REWRITE_COST = COLD_WRITES.slice(1).reduce((sum, written) => sum + 
 const REWRITE_COST = CLAUDE_REWRITE_COST + CODEX_COLD_EXTRA;       // plus the interactive Codex thread
 const COLD_TITLE = "Rework the export pipeline after lunch";
 const CODEX_COLD_TITLE = "Codex cold: audit the invoice rounding";
-const CACHE_TILE = { en: "Cache hit rate", ru: "Попадание в кэш" };
-const REWRITE_PANEL = { en: "Cache rewrites · extra cost", ru: "Повторная запись кэша · лишний расход" };
+const CACHE_TILE = { en: "Cache hit rate", ru: "Доля из кэша" };
+const REWRITE_PANEL = { en: "Cache rewrites · estimated extra cost", ru: "Повторная запись кэша · оценка переплаты" };
 // The line's own text: the ⓘ button and its tooltip live inside the same element.
 const lineText = (page, lang) => cacheTile(page, lang).locator(".ts.rw").evaluate(n => n.firstChild.textContent.trim());
 const cacheTip = (page, lang) => cacheTile(page, lang).locator(".tip");
@@ -312,10 +312,10 @@ test("the cache tile shows what rewrites cost, warns, and the panel opens the se
   await expect(tip).toBeVisible();
   const hint = await tip.textContent();
   expect(hint).toContain(lang === "ru" ? "После паузы дольше часа: ответов 2" : "After a pause over 1 hour: replies 2");
-  expect(hint).toContain(lang === "ru" ? "После паузы дольше 5-минутного кэша" : "After a pause longer than the 5-minute cache");
-  expect(hint).toContain(lang === "ru" ? "Контекст изменился, пока кэш ещё жил" : "Context changed while the cache was still alive");
+  expect(hint).toContain(lang === "ru" ? "После паузы больше 5 минут (до часа)" : "After a pause over 5 minutes (up to 1 hour)");
+  expect(hint).toContain(lang === "ru" ? "Без долгой паузы — вероятно, изменился контекст" : "No long pause — the context probably changed");
   expect(hint).not.toContain("/clear");
-  expect(hint).toContain(lang === "ru" ? "Продолжить начисто" : "Continue fresh");
+  expect(hint).toContain(lang === "ru" ? "Продолжить в новой сессии" : "Continue in a new session");
   await expect(info).toHaveAttribute("aria-describedby", "cache-tip");
 
   const panel = rewritePanel(page, lang);
@@ -348,7 +348,7 @@ test("no rewrites: no warning and no panel", async ({ page, open, lang }) => {
   await withPayload(page, d => { Object.assign(d.cache_rewrites, { count: 0, cost: 0, share: 0, sessions: [] }); });
   await open("stats");
   await settled(page);
-  await expect.poll(() => lineText(page, lang)).toBe(lang === "ru" ? "Повторной записи кэша нет" : "No cache rewrites");
+  await expect.poll(() => lineText(page, lang)).toBe(lang === "ru" ? "Повторной записи кэша не найдено" : "No cache rewrites found");
   await expect(cacheTile(page, lang)).not.toHaveClass(/\bwarn\b/);
   await expect(rewritePanel(page, lang)).toHaveCount(0);
 });

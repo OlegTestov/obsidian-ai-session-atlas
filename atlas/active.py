@@ -17,7 +17,7 @@ import subprocess
 import time
 from datetime import datetime, timedelta, timezone
 
-from . import codex_parse, codex_procs, codex_tail, costs, paths, prompt_queue, search, tasks
+from . import codex_parse, codex_procs, codex_tail, costs, forks, paths, prompt_queue, search, tasks
 from .parse import COMPACT_PREFIX
 from .resolve import HEADLESS_ENTRYPOINTS
 
@@ -577,7 +577,8 @@ def recently_closed(conn: sqlite3.Connection, live_ids: set[str], now: datetime 
     # A parked conversation is one entry: its job while the parent's card is live, then the job
     # (resuming it opens the whole conversation), not the parent it was handed over from.
     rows = conn.execute(
-        f"""SELECT s.session_id, s.agent, COALESCE(u.title, s.title) AS title, s.last_activity_at,
+        f"""SELECT s.session_id, s.agent, COALESCE(u.title, s.title) AS title,
+                  COALESCE(u.title, '') <> '' AS renamed, s.last_activity_at,
                   s.human_turns, s.cost_usd, s.cwd_last, s.continued_from,
                   (SELECT c.summary FROM classification c WHERE c.session_id = s.session_id) AS summary
              FROM sessions s LEFT JOIN user_overrides u ON u.session_id = s.session_id
@@ -587,8 +588,11 @@ def recently_closed(conn: sqlite3.Connection, live_ids: set[str], now: datetime 
         (cutoff, *(agents or []), limit + len(live_ids))).fetchall()
     out = [dict(r) for r in rows
            if r["session_id"] not in live_ids and r["continued_from"] not in live_ids]
+    nums = forks.numbers(conn) if out else {}
     for r in out:
         del r["continued_from"]
+        r["title"] = forks.shown(r, nums)
+        del r["renamed"]
     return out[:limit]
 
 

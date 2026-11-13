@@ -46,9 +46,9 @@ def test_summaries_and_prompts_survive_a_tight_budget(atlas_env, write_session, 
 
     monkeypatch.setitem(runner.TOKEN_BUDGET, "handoff", int(4000 / runner.CHARS_PER_TOKEN))
     p = runner.build_payload(conn, sid, "handoff")
-    assert p["kept"]["Сводки компактации"] == p["totals"]["summaries"]
+    assert p["kept"]["Сводки сжатия контекста"] == p["totals"]["summaries"]
     assert p["kept"]["Запросы пользователя"] == p["totals"]["prompts"]
-    assert p["kept"].get("Ответы ассистента (хвост сессии)", 0) < p["totals"]["answers"]
+    assert p["kept"].get("Последние ответы агента", 0) < p["totals"]["answers"]
     assert p["truncated"] is True
     assert p["chars"] <= 4000 + 2000          # the header may slightly exceed a tiny budget
 
@@ -64,7 +64,7 @@ def test_long_summaries_and_prompts_are_taken_before_answers(atlas_env, write_se
     # Room for the header, the summary and both prompts, far less than the 60 answers.
     monkeypatch.setattr(runner, "budget_chars", lambda *a, **k: 4000)
     p = runner.build_payload(conn, sid, "handoff")
-    assert p["kept"]["Сводки компактации"] == p["totals"]["summaries"] == 1
+    assert p["kept"]["Сводки сжатия контекста"] == p["totals"]["summaries"] == 1
     assert p["kept"]["Запросы пользователя"] == p["totals"]["prompts"] == 2
 
 
@@ -88,7 +88,7 @@ def test_whole_session_fits_when_budget_allows(atlas_env, write_session, ru):
     sid = conn.execute("SELECT session_id FROM sessions").fetchone()["session_id"]
     p = runner.build_payload(conn, sid, "handoff")
     assert p["truncated"] is False
-    assert p["kept"]["Ответы ассистента (хвост сессии)"] == p["totals"]["answers"]
+    assert p["kept"]["Последние ответы агента"] == p["totals"]["answers"]
 
 
 def test_handoff_budget_is_far_larger_than_summary_budget():

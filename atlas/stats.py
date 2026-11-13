@@ -14,7 +14,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 
-from . import cache_rewrites, config, openai_costs
+from . import cache_rewrites, config, forks, openai_costs
 from .agents import CODEX
 from .messages import msg
 
@@ -175,6 +175,7 @@ def _breakdowns(conn: sqlite3.Connection, rows) -> dict:
         marks = ",".join("?" * len(chunk))
         for r in conn.execute(f"""
             SELECT s.session_id, COALESCE(u.title, s.title) AS title,
+                   COALESCE(u.title, '') <> '' AS renamed,
                    (SELECT project_id FROM session_projects p
                      WHERE p.session_id = s.session_id AND p.role = 'primary') AS project,
                    COALESCE(u.domain, c.domain, (SELECT domain FROM session_domains d
@@ -232,10 +233,11 @@ def _breakdowns(conn: sqlite3.Connection, rows) -> dict:
         for item in top("session", SESSIONS_EACH, key):
             picked[item["name"]] = item
     sessions = list(picked.values())
+    nums = forks.numbers(conn) if sessions else {}
     for s in sessions:
         meta = names.get(s["name"])
         s["session_id"] = s["name"]
-        s["name"] = (meta["title"] if meta else None) or s["name"][:8]
+        s["name"] = (forks.shown(meta, nums) if meta else None) or s["name"][:8]
         s["project"] = meta["project"] if meta else None
     return {
         "projects": top("project"), "domains": top("domain"), "topics": top("topic"),

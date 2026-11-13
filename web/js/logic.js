@@ -389,7 +389,12 @@
     return line.length > 4000 ? "" : line;
   }
 
-  const api = { AGENTS, freeTextOption, freeAnswerText, agentOf, agentSelection, agentParam, agentPasses, toggleAgent, newSessionAgents,
+  /** Megabytes the text takes in UTF-8, as it is sent: Cyrillic is two bytes a character. */
+  function sizeMb(text) {
+    return (new TextEncoder().encode(String(text || "")).length / 1e6).toFixed(2);
+  }
+
+  const api = { AGENTS, sizeMb, freeTextOption, freeAnswerText, agentOf, agentSelection, agentParam, agentPasses, toggleAgent, newSessionAgents,
                 newSessionAgent, cardHistory, applyFrozenOrder, pruneClosedNotes, CLOSED_NOTE_TTL_MS, pluralRu, tasksSummary, jumpMatches, durationText, stepPasses, relPath, terminalStatus, infoParts, shortTokens, arrangeSessions, contextLevel, limitsText, limitsAge, activeUrl, deliveryState, DELIVERY_WAIT_MS, commandMatches,
                 historyStep, PERIODS, periodOf, valuesOf, passes, filterOptions, parseLayout,
                 backgroundReasons, unansweredPrompt, nextCard, costText };

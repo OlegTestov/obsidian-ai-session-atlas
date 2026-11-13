@@ -174,7 +174,7 @@ describe("active logic", () => {
 
   test("background reasons in words", () => {
     assert.equal(json(L.backgroundReasons({ shells: 1, agents: 2, wake_at: "T", crons: 1 }, () => "16:35")),
-      '["команда в фоне","2 агента","проснётся в 16:35","по расписанию"]');
+      '["команда в фоне","2 субагента","продолжит в 16:35","по расписанию"]');
   });
 });
 
@@ -294,7 +294,7 @@ describe("context and limits", () => {
   test("context: no data, no badge", () => assert.equal(L.contextLevel({}), null));
   test("context: 87% is alarming", () => {
     const c = L.contextLevel({ context_tokens: 870094, context_window: 1000000 });
-    assert.ok(c.pct === 87 && c.tone === "warn" && /компактация/.test(c.hint), json(c));
+    assert.ok(c.pct === 87 && c.tone === "warn" && /сжатие контекста/.test(c.hint), json(c));
   });
   test("context: 61% is middle", () => {
     assert.equal(L.contextLevel({ context_tokens: 122000, context_window: 200000 }).tone, "mid");
@@ -306,7 +306,7 @@ describe("context and limits", () => {
                                            { label: "неделя", used_percentage: 87.2, resets_at: "y" }] };
   test("limits: the line", () => {
     const t = L.limitsText(lim, (v) => (v === "y" ? "01.10" : "00:36"));
-    assert.equal(t.text, "лимиты: 5 часов 42% до 00:36 · неделя 87% до 01.10");
+    assert.equal(t.text, "лимиты: 5 часов 42%, сброс в 00:36 · неделя 87%, сброс в 01.10");
     assert.equal(t.tone, "mid");
   });
   test("limits: numbers that are not live carry their age", () => {
@@ -320,7 +320,7 @@ describe("context and limits", () => {
   test("limits: a spent window says so", () => {
     const t = L.limitsText({ windows: [{ label: "5 часов", used_percentage: 100, resets_at: "x" },
                                        { label: "неделя", used_percentage: 68 }] }, () => "17:58");
-    assert.equal(t.text, "лимиты: 5 часов 100%, исчерпан до 17:58 · неделя 68%");
+    assert.equal(t.text, "лимиты: 5 часов 100%, исчерпан, сброс в 17:58 · неделя 68%");
     assert.ok(t.reached && t.tone === "warn");
     assert.equal(L.limitsText(lim).reached, false);
   });
@@ -365,7 +365,7 @@ describe("card line", () => {
                 context_tokens: 605574, context_window: 1000000 };
     const p = L.infoParts(s, () => "12 ч назад", () => "26.08 16:36");
     assert.equal([...p.when, ...p.nums, p.context.text].join(" · "),
-      "26.08 16:36 · 12 ч назад · 396 ходов · ≈$832 · 606k/1M");
+      "26.08 16:36 · 12 ч назад · 396 запросов · ≈$832 · 606k/1M");
   });
   test("line: a recorded sum has no ≈, a small one shows cents", () => {
     assert.equal(L.infoParts({ cost_usd: 5.1, cost_now: 5.1 }, () => "", () => "").nums.join(), "$5.10");
@@ -409,6 +409,18 @@ describe("terminal link, cost and plurals", () => {
     assert.equal(L.costText({ cost_usd: 10, cost_now: 10, cost_recorded_at: "x" }, () => "25.09"), "$10.00 на 25.09");
   });
   test("cost: unknown", () => assert.equal(L.costText({}), "$ —"));
+  test("send size counts UTF-8 bytes: Cyrillic is two a character", () => {
+    assert.equal(L.sizeMb("a".repeat(1000000)), "1.00");
+    assert.equal(L.sizeMb("я".repeat(500000)), "1.00");
+    assert.equal(L.sizeMb(null), "0.00");
+  });
+  test("data values in words, an unknown value as is", () => {
+    assert.equal(I18N.i18nValue("outcome", "in_progress"), "в работе");
+    assert.equal(I18N.i18nValue("sensitivity", "sensitive"), "конфиденциальная");
+    assert.equal(I18N.i18nValue("source", "llm"), "ИИ");
+    assert.equal(I18N.i18nValue("outcome", "something_new"), "something_new");
+    assert.equal(I18N.i18nValue("outcome", null), null);
+  });
   test("Russian plurals", () => {
     assert.ok(L.pluralRu(1, "ход", "хода", "ходов") === "ход" && L.pluralRu(3, "ход", "хода", "ходов") === "хода"
       && L.pluralRu(11, "ход", "хода", "ходов") === "ходов" && L.pluralRu(22, "ход", "хода", "ходов") === "хода");
@@ -550,9 +562,9 @@ describe("background runs in Statistics", () => {
   });
   test("line: cost and share in both languages", () => {
     const totals = { cost: 3150, auto_cost: 378 };
-    assert.equal(nb(SL.backgroundLine(totals, true)), "из них фоновые $378 (12%)");
+    assert.equal(nb(SL.backgroundLine(totals, true)), "из них автоматические запуски: $378 (12%)");
     I18N.setLang("en");
-    try { assert.equal(SL.backgroundLine(totals, true), "background runs: $378 (12%)"); } finally { I18N.setLang("ru"); }
+    try { assert.equal(SL.backgroundLine(totals, true), "automated runs: $378 (12%)"); } finally { I18N.setLang("ru"); }
   });
   test("line: hidden at zero share, with the checkbox off, and when the cost is unknown", () => {
     assert.equal(SL.backgroundLine({ cost: 100, auto_cost: 0 }, true), null);
@@ -583,14 +595,14 @@ describe("cache rewrites", () => {
   test("ru line: cost and share, share left out when unknown, none when empty", () => {
     assert.equal(nb(SL.rewriteLine({ count: 3, cost: 12.4, share: 0.084 })), "Повторная запись кэша: $12,40 · 8% расхода");
     assert.equal(SL.rewriteLine({ count: 3, cost: 12.4, share: null }), "Повторная запись кэша: $12,40");
-    assert.equal(SL.rewriteLine({ count: 0, cost: 0, share: 0 }), "Повторной записи кэша нет");
+    assert.equal(SL.rewriteLine({ count: 0, cost: 0, share: 0 }), "Повторной записи кэша не найдено");
     assert.ok(SL.rewriteLine({ count: 1, cost: 0.01, share: 0.001 }).includes("<1%"));
   });
   test("causes: only the ones that happened, in a fixed order", () => {
     const lines = SL.causeLines(bc);
     assert.equal(lines.length, 2);
-    assert.ok(lines[0].startsWith("После паузы дольше часа: ответов 2") && lines[1].startsWith("Контекст изменился"));
-    assert.equal(SL.causeShort({ pause_long: 2, pause: 0, changed: 1 }), "пауза больше часа: 2, контекст изменился: 1");
+    assert.ok(lines[0].startsWith("После паузы дольше часа: ответов 2") && lines[1].startsWith("Без долгой паузы"));
+    assert.equal(SL.causeShort({ pause_long: 2, pause: 0, changed: 1 }), "пауза больше часа: 2, без долгой паузы: 1");
   });
 });
 
@@ -621,12 +633,12 @@ describe("English: the same functions after switching the language", () => {
   });
   test("en: turn plurals instead of pluralRu", () => {
     const p = L.infoParts({ human_turns: 1 }, () => "", () => "");
-    assert.ok(p.nums[0] === "1 turn"
-      && L.infoParts({ human_turns: 396 }, () => "", () => "").nums[0] === "396 turns", json(p.nums));
+    assert.ok(p.nums[0] === "1 prompt"
+      && L.infoParts({ human_turns: 396 }, () => "", () => "").nums[0] === "396 prompts", json(p.nums));
   });
   test("en: background reasons", () => {
     assert.equal(json(L.backgroundReasons({ shells: 2, agents: 1, crons: 1 })),
-      '["background commands: 2","1 agent","scheduled"]');
+      '["background commands: 2","1 subagent","scheduled"]');
   });
   test("ru again after en", () => {
     I18N.setLang("ru");

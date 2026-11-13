@@ -11,7 +11,7 @@ import sqlite3
 from collections import defaultdict
 from datetime import datetime, timedelta
 
-from . import costs, openai_costs
+from . import costs, forks, openai_costs
 from .agents import CODEX
 
 COLD_MIN = 20_000
@@ -71,6 +71,7 @@ def _session_names(conn: sqlite3.Connection, ids: list[str]) -> dict:
         chunk = ids[i:i + 500]
         for r in conn.execute(f"""
             SELECT s.session_id, COALESCE(u.title, s.title) AS title,
+                   COALESCE(u.title, '') <> '' AS renamed,
                    (SELECT project_id FROM session_projects p
                      WHERE p.session_id = s.session_id AND p.role = 'primary') AS project
               FROM sessions s LEFT JOIN user_overrides u ON u.session_id = s.session_id
@@ -169,10 +170,11 @@ def summarize(conn: sqlite3.Connection, rows, period_cost: float | None, prices:
     cost = sum(b["cost"] for b in by_cause.values())
     top = sorted(per_session.items(), key=lambda kv: (-kv[1]["cost"], -kv[1]["count"]))[:TOP_SESSIONS]
     names = _session_names(conn, [sid for sid, _ in top])
+    nums = forks.numbers(conn) if top else {}
     sessions = []
     for sid, s in top:
         meta = names.get(sid)
-        sessions.append({"session_id": sid, "name": (meta["title"] if meta else None) or sid[:8],
+        sessions.append({"session_id": sid, "name": (forks.shown(meta, nums) if meta else None) or sid[:8],
                          "project": meta["project"] if meta else None, "count": s["count"],
                          "cost": round(s["cost"], 2) if s["priced"] else None, "causes": s["causes"]})
     count = sum(b["count"] for b in by_cause.values())

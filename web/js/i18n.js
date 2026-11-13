@@ -53,6 +53,12 @@
     return 2;
   }
 
+  /** A data value (status, sensitivity, source) in words; a value with no words shows as is. */
+  function i18nValue(group, value) {
+    const key = `value.${group}.${value}`;
+    return value != null && (key in dicts[lang] || key in dicts.en) ? lookup(key) : value;
+  }
+
   /** Locale for dates and numbers. */
   function locale() {
     return lang === "ru" ? "ru-RU" : "en-GB";
@@ -68,10 +74,11 @@
     }
   }
 
-  const api = { add, setLang, lang: () => lang, i18n, i18nN, locale, dicts, pluralIndex, applyDom };
+  const api = { add, setLang, lang: () => lang, i18n, i18nN, i18nValue, locale, dicts, pluralIndex, applyDom };
   root.I18N = api;
   root.i18n = i18n;
   root.i18nN = i18nN;
+  root.i18nValue = i18nValue;
   let wanted = null;
   try { wanted = new URLSearchParams(root.location.search).get("lang"); } catch { /* no address */ }
   setLang(wanted || (root.navigator && root.navigator.language) || "en");

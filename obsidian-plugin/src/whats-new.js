@@ -2,7 +2,7 @@
 import { Modal, setIcon } from "obsidian";
 /* global __ATLAS_VERSION__ -- set by esbuild.config.mjs in the release build */
 
-const RELEASE_VERSION = "2.9.1";
+const RELEASE_VERSION = "2.9.2";
 const RELEASE_URL = `https://github.com/OlegTestov/obsidian-ai-session-atlas/releases/tag/${RELEASE_VERSION}`;
 // Obsidian reads plugin manifests only at startup: after an in-place reload this.manifest still names
 // the version Obsidian started with. The release build stamps its own version (esbuild.config.mjs).
@@ -45,7 +45,7 @@ class WhatsNewModal extends Modal {
     this.setTitle(t("title"));
     const el = this.contentEl;
     el.createEl("p", { cls: "sa-updates-version", text: `AI Session Atlas · ${RELEASE_VERSION}` });
-    for (const [key, icon] of [["menu", "list"], ["background", "activity"], ["read", "eye"], ["defaults", "settings"]]) {
+    for (const [key, icon] of [["names", "list"], ["copies", "copy"], ["cardMenu", "more-horizontal"], ["words", "type"]]) {
       const card = el.createDiv({ cls: "sa-update-card" });
       setIcon(card.createSpan({ cls: "sa-update-icon" }), icon);
       card.createEl("h3", { text: t(`${key}.title`) });

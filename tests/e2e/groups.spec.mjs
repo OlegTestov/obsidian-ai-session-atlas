@@ -2,7 +2,7 @@
 // filter picks a group's sessions, and the label asks the plugin for its group menu at the click.
 import { expect, ids, run, test } from "./fixtures.mjs";
 
-const WORDS = { en: { add: "+ Group", filter: "Group" }, ru: { add: "+ Группа", filter: "Группа" } };
+const WORDS = { en: { add: "Add to group…", filter: "Group" }, ru: { add: "В группу…", filter: "Группа" } };
 
 /** A stand-in plugin host; window.setGroup(group) changes the Claude tab's group for the next poll. */
 function hostPage(lang, groups, options = {}) {

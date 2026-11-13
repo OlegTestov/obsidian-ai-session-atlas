@@ -14,15 +14,19 @@ server on `127.0.0.1`, and nothing is sent anywhere unless you turn on the optio
 ## Features
 
 - **Search.** Full-text search over every Claude Code and Codex session: your prompts, the answers,
-  shell commands and edited files. Filters by agent, project, domain, topic and date. A session card
+  shell commands and edited files. Filters by agent, project, category, topic and date. A session card
   shows the cost, edited files and an expandable **Session feed** with your prompts and the agent's
-  replies, in the same format as Active. The latest 20 turns load first; scroll up for earlier turns.
+  replies, in the same format as Active. The latest 20 prompts load first; scroll up for earlier ones.
   As in Active, long messages use the feed's preview limits. The card has buttons to:
-  - resume the session in an Obsidian terminal tab (`claude --resume` or `codex resume`);
+  - **Resume** the session in an Obsidian terminal tab (`claude --resume` or `codex resume`);
   - continue it in the other agent with **Resume with…**: a Claude Code session in Codex, a Codex
     session in Claude Code (see below);
   - rename it (for Claude Code the name is also saved where `claude --resume` shows it);
   - delete it from the computer for good, after a confirmation that lists every file.
+
+  A copy made with **Copy session** (Claude Code only) that keeps its source's name shows as
+  "Name (2)", "(3)"…; its card links to the source ("Copy of …") and the source lists its copies
+  ("Copies: …").
 - **Active.** Every running Claude Code session and every interactive Codex session as a card: what
   it is doing, what it said last, whether it waits for you. For sessions running in an AI Session
   Atlas terminal tab you can also:
@@ -41,7 +45,7 @@ server on `127.0.0.1`, and nothing is sent anywhere unless you turn on the optio
   terminal app can be moved into an Obsidian tab. The header shows each agent's 5-hour and weekly
   limits when they are known.
 - **Statistics.** Tokens, active time, cost at API prices and cache hit rate over a period, broken
-  down by agent (Claude Code, Codex), model, domain, topic, session, tool, skill and subagent, plus a
+  down by agent (Claude Code, Codex), model, category, topic, session, tool, skill and subagent, plus a
   weekly rhythm heatmap. Claude Code replies are priced at Anthropic API prices, Codex replies at
   OpenAI API prices. The cache tile also shows what rewriting the cache cost: replies that sent the
   context again after a pause or a context change. At 10% of the period's cost or more the tile is
@@ -67,9 +71,9 @@ server on `127.0.0.1`, and nothing is sent anywhere unless you turn on the optio
   notification when Obsidian is in the background. Notices stack, one per session; they hide after
   10 s, 30 s or 1 min, or stay until you click or close them, and go by themselves once the session
   works again.
-- **AI features**, on by default and run only from a button, after a preview: topics and domains for
-  sessions, a one-line summary of what was done, and a handoff document for continuing the work in a
-  fresh session. Hourly auto-classification is a separate switch, off by default.
+- **AI features**, on by default and run only from a button, after a preview: topics and categories for
+  sessions, a one-line summary of what was done, a session summary, and a session note for continuing
+  the work in a new session. Hourly auto-classification is a separate switch, off by default.
 - **File explorer clicks** (off by default): left click opens a file in a new tab, middle click in
   the current one, and a file that is already open is focused instead of opened twice.
 - English and Russian interface.
@@ -84,11 +88,11 @@ codex-cli 0.160.0. Differences from Claude Code:
   (`state_*.sqlite`), opened read-only. Codex instructions, reasoning and tool output are not indexed.
   `codex exec` runs and subagent threads count as automation, like Claude Code SDK runs.
 - **Rename** changes the name in the catalog only. Existing Codex session files are never written.
-- **Branch session** is Claude Code only.
-- **Continue fresh** (a new session that starts from a session note, the handoff) starts the source session's agent: a Codex
-  session continues in Codex, with the same first prompt that names the handoff file. Codex picks its
-  own thread id when it starts, so each Codex launch writes its own handoff file, and the catalog
-  links the new thread to its source once a thread whose first prompt names that file is indexed.
+- **Copy session** is Claude Code only.
+- **Continue in a new session** (a new session that starts from a session note) starts the source
+  session's agent: a Codex session continues in Codex, with the same first prompt that names the
+  session note file. Codex picks its own thread id when it starts, so each Codex launch writes its
+  own session note file, and the catalog links the new thread to its source once a thread whose first prompt names that file is indexed.
 - **+ Session** in Active has an **Agent** choice (Claude Code or Codex; Claude Code by default, the
   last choice is remembered in this browser). Codex is offered only when it is turned on in
   **Settings → AI Session Atlas → Agents**. A Codex tab records the new thread id once Codex writes
@@ -122,12 +126,12 @@ codex-cli 0.160.0. Differences from Claude Code:
 resume. The other agent gets a new session of its own, made from this conversation, and it opens in a
 terminal tab with that agent's ordinary resume. Checked with Claude Code 2.1.289 and codex-cli 0.160.0.
 
-- **What is copied:** the conversation since its last compaction, with the compaction summary: your
-  prompts and the agent's replies word for word, and tool calls as short text lines (the command or
-  the file, and the first 800 characters of the result). Thinking, reasoning and encrypted content
+- **What is copied:** the conversation since its last context compaction, with the compaction
+  summary: your prompts and the agent's replies word for word, and tool calls as short text lines
+  (the command or the file, and the first 800 characters of the result). Thinking, reasoning and encrypted content
   are never copied.
 - **Size:** at most about 100,000 tokens, half of a 200,000-token context window. If the conversation
-  is longer, the earliest turns are left out and the new session starts with a note saying so.
+  is longer, the earliest messages are left out and the new session starts with a note saying so.
 - **The first message** says that the conversation continues a Claude Code or Codex session, with its
   id and folder, and that the tool calls in it were made by the other agent.
 - **The source session is not changed.** The new session has its own id and its own file:
@@ -215,12 +219,12 @@ many sessions the first index can take a few minutes.
 - **Settings:**
   - *Installation check:* macOS, `python3`, Claude Code, Codex, the server, the index (with a
     Rebuild button) and the subscription limits switch.
-  - *Language:* English, Russian or as in Obsidian (the default). Topics, summaries and handoffs are
+  - *Language:* English, Russian or as in Obsidian (the default). Topics, summaries and session notes are
     written in the same language.
   - *Agents:* turn Claude Code and Codex on or off; until you do, each is on when the plugin finds it
     at start-up, extra launch arguments for each (for example
     `--chrome`), terminal font size, number of messages in a detailed Active card.
-  - *Catalog:* note folders, project roots, domains, note areas mapped to domains, sensitive areas
+  - *Catalog:* note folders, project roots, categories, note areas mapped to categories, sensitive areas
     and projects, ticket prefixes. These live in `config.json` in the data folder.
   - *AI features:* on/off, model and effort for each task, 1M-token window.
   - *Other:* notices and how long they stay, macOS notifications, file explorer clicks.
@@ -285,7 +289,7 @@ never started.
 | A new file in `~/.codex/sessions/YYYY/MM/DD/` | create, only when you use **Resume with… → Codex** | A new Codex session made from a Claude Code session |
 | A session's files in `~/.claude/` and its lines in `~/.claude/history.jsonl` | delete, only when you delete a session | See "Deleting a session" below |
 | A Codex session's files in `~/.codex/sessions/` and `~/.codex/archived_sessions/`, its lines in `~/.codex/history.jsonl` | delete, only when you delete a Codex session | See "Deleting a session" below |
-| `~/Desktop`, `~/Documents` or a project folder | write, only when you export a handoff there | The exported handoff file |
+| `~/Desktop`, `~/Documents` or a project folder | write, only when you export a session note there | The exported session note file |
 
 If `CLAUDE_CONFIG_DIR` is set in Obsidian's environment, every `~/.claude` path above means that folder.
 If `CODEX_HOME` is set, every `~/.codex` path means that folder. The plugin never writes Codex's
@@ -296,7 +300,8 @@ file only when you use **Resume with…** and deletes files only when you delete
 **Resume with…** (Search card) creates a new session file of the other agent: in `~/.claude/projects/`
 for Claude Code or in `~/.codex/sessions/` for Codex. It happens only after a dialog that names the
 folder; the file is created once and never overwritten, and the source session is only read. The new
-file holds a copy of the conversation since its last compaction (see "Resume with another agent").
+file holds a copy of the conversation since its last context compaction (see "Resume with another
+agent").
 Delete the new session like any other if you no longer need it.
 
 **Processes.**
@@ -330,10 +335,10 @@ a model.
   account you signed in to Claude Code with and count against your subscription. The model is
   `sonnet` unless you change it. Before a request larger than 200,000 characters, a small test
   request checks that the call works.
-- **Summary and handoff:** you see a preview of exactly what will be sent and confirm it. A handoff
-  may send most of the session, as much as fits the model's context window. The full text of each
+- **Session summary and session note:** you see a preview of exactly what will be sent and confirm
+  it. A session note may send most of the session, as much as fits the model's context window. The full text of each
   preview is saved in the data folder (`payloads/`).
-- **Topics and domains:** a batch is sent after a preview of its size and samples. Each session is
+- **Topics and categories:** a batch is sent after a preview of its size and samples. Each session is
   sent as a short fact card: title, working folder and branch, projects, tickets, a few prompts and
   edited file paths.
 - **Hourly automatic mode**, if you turn it on, does the same for new and changed sessions without
@@ -359,9 +364,9 @@ and environment, as the window minus its 33k buffer; the `--autocompact` launch 
 **Deleting a session** (Search card → Delete session) removes, after a confirmation that lists every
 item: the transcript and the session folder in `~/.claude/projects/`, its entries in
 `~/.claude/file-history/`, `~/.claude/session-env/`, `~/.claude/tasks/` and `~/.claude/todos/`, its
-lines in `~/.claude/history.jsonl` (the input history), its handoffs and its catalog data. For a
+lines in `~/.claude/history.jsonl` (the input history), its session notes and its catalog data. For a
 Codex session it removes its session files in `~/.codex/sessions/` and `~/.codex/archived_sessions/`,
-its lines in `~/.codex/history.jsonl`, its handoffs and its catalog data. Codex's own databases are
+its lines in `~/.codex/history.jsonl`, its session notes and its catalog data. Codex's own databases are
 not changed, so Codex may list the thread for a while, until it notices the file is gone. Files are
 deleted, not moved to the Trash. A running session cannot be deleted.
 

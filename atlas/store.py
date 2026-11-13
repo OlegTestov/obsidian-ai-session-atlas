@@ -13,7 +13,7 @@ import sqlite3
 from datetime import datetime, timezone
 
 from . import actions, activity, codex_parse, resolve, search_rows
-from .parse import SessionFacts, facts_state, parse_file, parse_tail
+from .parse import SessionFacts, facts_state, fork_source, parse_file, parse_tail
 
 META_TURN = -2        # title, tickets, paths from file history
 SUBAGENT_TURN = -1    # subagent texts: change only together with their files
@@ -32,15 +32,27 @@ def tail_sig(path: str, offset: int) -> str:
         return hashlib.sha1(fh.read(min(offset, TAIL_SIG_BYTES))).hexdigest()
 
 
-def purge(conn: sqlite3.Connection, session_id: str, keep_text: bool = False) -> None:
+def purge(conn: sqlite3.Connection, session_id: str, keep_text: bool = False, gone: bool = False) -> None:
+    """gone: the session itself is removed. A re-read keeps its copy row: when the copy was made
+    must not move with the reading."""
     with search_rows.writing(conn):
         for table in ("sessions", "session_projects", "session_domains",
                       "session_tickets", "session_files", "session_links", "session_continuations"):
             conn.execute(f"DELETE FROM {table} WHERE session_id=?", (session_id,))
+        if gone:
+            conn.execute("DELETE FROM session_forks WHERE session_id=?", (session_id,))
         if not keep_text:
             search_rows.delete(conn, session_id)
             conn.execute("DELETE FROM parse_state WHERE session_id=?", (session_id,))
             conn.execute("DELETE FROM activity WHERE session_id=?", (session_id,))
+
+
+def _created(st) -> str | None:
+    """The file's creation time (macOS): a copy's transcript is created when the copy is made."""
+    born = getattr(st, "st_birthtime", None)
+    if not born:
+        return None
+    return datetime.fromtimestamp(born, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 def _write_meta(conn, session_id: str, path: str, st, sig: str, facts: SessionFacts,
@@ -74,6 +86,15 @@ def _write_meta(conn, session_id: str, path: str, st, sig: str, facts: SessionFa
     )
     conn.executemany("INSERT INTO session_continuations VALUES (?,?,?)",
                      [(session_id, child, at) for child, at in facts.continuations])
+    source = fork_source(facts)
+    if source:
+        # When the copy was made is set once: the copy's own records can keep the source's id for
+        # days (/branch), so their last timestamp moves on with every reply.
+        conn.execute("INSERT INTO session_forks VALUES (?,?,?) "
+                     "ON CONFLICT(session_id) DO UPDATE SET parent_id=excluded.parent_id",
+                     (session_id, source, _created(st) or facts.forked_at))
+    else:
+        conn.execute("DELETE FROM session_forks WHERE session_id=?", (session_id,))
     conn.executemany("INSERT OR IGNORE INTO session_projects VALUES (?,?,?)",
                      [(session_id, pid, role) for pid, role in projects])
     conn.executemany("INSERT OR IGNORE INTO session_domains VALUES (?,?)",

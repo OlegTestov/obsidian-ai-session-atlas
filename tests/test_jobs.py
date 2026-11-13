@@ -174,7 +174,7 @@ def test_background_job_shown_in_a_tab_is_not_listed(atlas_env, write_session, f
     # A live tab whose own work was parked in it: that tab shows it.
     files(100, PARENT, parkedJobId=JOB_ID)
     assert active.background_jobs(conn, table={k: v for k, v in TABLE.items() if k not in (500, 601)}, **kw) == []
-    # That tab's process gone (closed with "Close, keep running"): the job has no tab any more.
+    # That tab's process gone (closed with "Close tab only"): the job has no tab any more.
     table = {k: v for k, v in TABLE.items() if k not in (100, 500, 601)}
     assert [j["job_id"] for j in active.background_jobs(conn, table=table, **kw)] == [JOB_ID]
 

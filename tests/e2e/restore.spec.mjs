@@ -5,8 +5,8 @@ import { expect, ids, run, test } from "./fixtures.mjs";
 
 const HOST = `${run.base}/e2e-restore-host.html`;
 const TEXT = {
-  en: { all: "Restore all", elsewhere: "already running outside Obsidian" },
-  ru: { all: "Восстановить все", elsewhere: "уже работают вне Obsidian" },
+  en: { all: "Resume all", elsewhere: "already running, not opened twice" },
+  ru: { all: "Продолжить все", elsewhere: "уже запущены, второй раз не открываю" },
 };
 
 function hostPage(lang) {

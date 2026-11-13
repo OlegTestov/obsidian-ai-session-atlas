@@ -11,9 +11,9 @@ const FIXTURES = path.join(path.dirname(new URL(import.meta.url).pathname), ".."
 const screens = JSON.parse(fs.readFileSync(path.join(FIXTURES, "dialog_screens.json"), "utf8"));
 const TEXT = {
   en: { section: "Needs your decision", strip: "Needs your decision · CLAUDE.md", previewOf: n => `Preview of option ${n}`,
-        note: "+ Note", chat: "Chat about this" },
+        note: "+ Comment", chat: "Chat about this" },
   ru: { section: "Нужно решение", strip: "Нужно твоё решение · CLAUDE.md", previewOf: n => `Превью варианта ${n}`,
-        note: "+ Заметка", chat: "Обсудить вопрос" },
+        note: "+ Комментарий", chat: "Обсудить вопрос" },
 };
 
 async function parse(name) {

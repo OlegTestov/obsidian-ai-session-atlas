@@ -358,7 +358,7 @@ def test_page_talks_to_the_host_only_when_embedded():
     html = page_source(here)
     assert "const EMBEDDED = window.parent !== window;" in html
     assert "if (!EMBEDDED) return false;" in html
-    assert "Открыть вкладкой в Obsidian" in html
+    assert "Открыть во вкладке Obsidian" in html
 
 
 def test_menu_hidden_rule_matches_id_specificity():

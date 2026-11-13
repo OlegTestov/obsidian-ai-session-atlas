@@ -21,7 +21,7 @@ EXPENSIVE = ("enrichment", "classification")
 DERIVED = (
     "sources", "sessions", "session_projects", "session_files",
     "session_links", "session_tickets", "session_domains", "fts", "fts_paths", "parse_state",
-    "activity", "session_continuations", "fts_rows", "fts_guard", "index_costs",
+    "activity", "session_continuations", "session_forks", "fts_rows", "fts_guard", "index_costs",
 )
 
 SCHEMA = """
@@ -86,6 +86,13 @@ CREATE TABLE IF NOT EXISTS session_continuations (
   session_id TEXT NOT NULL, child_id TEXT NOT NULL, at TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_continuations_child ON session_continuations(child_id);
+
+-- A copy Claude Code made of a session (`--fork-session`, /branch; atlas/parse.py). A new table needs
+-- no schema bump: index.py re-reads the copies indexed before it once.
+CREATE TABLE IF NOT EXISTS session_forks (
+  session_id TEXT PRIMARY KEY, parent_id TEXT NOT NULL, at TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_forks_parent ON session_forks(parent_id);
 
 CREATE TABLE IF NOT EXISTS session_projects (
   session_id TEXT NOT NULL, project_id TEXT NOT NULL, role TEXT NOT NULL,

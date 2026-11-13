@@ -68,7 +68,7 @@ def test_turns_steps_and_replies(write_rollout):
     assert [(e["kind"], e["status"]) for e in events] == [("bash", "error"), ("edit", "ok"), ("edit", "ok")]
     assert events[0]["detail"] == "make build" and events[0]["error"] == "exit 2"
     assert events[0]["took"] == 2.0 and one["events"]["errors"] == 1
-    assert [e["text"] for e in events[1:]] == ["edit app.py", "wrote NEW.md"]
+    assert [e["text"] for e in events[1:]] == ["edited app.py", "wrote NEW.md"]
     bash = two["events"]["events"]
     assert [(e["detail"], e["status"], e.get("took")) for e in bash] == [("pytest -q", "ok", 3.0),
                                                                          ("git status", "ok", 1.5)]

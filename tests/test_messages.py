@@ -41,10 +41,10 @@ def test_default_is_english_and_unknown_language_falls_back():
 def test_use_lang_switches_and_restores():
     before = messages.request_lang()
     with messages.use_lang("ru"):
-        assert msg("server.no_job") == "нет такой джобы"
+        assert msg("server.no_job") == "фоновое задание не найдено"
         assert msg("upload.too_big", mb=10) == "картинка больше 10 МБ"
     assert messages.request_lang() == before
-    assert msg("server.no_job", "en") == "no such job"
+    assert msg("server.no_job", "en") == "background task not found"
 
 
 @pytest.mark.parametrize("n, ru, en", [
@@ -62,12 +62,12 @@ def test_server_answers_in_the_page_language(live_server):
     base, token = live_server
     with pytest.raises(urllib.error.HTTPError) as en:
         urllib.request.urlopen(f"{base}/api/job/nope", timeout=5)
-    assert json.loads(en.value.read())["error"] == "no such job"
+    assert json.loads(en.value.read())["error"] == "background task not found"
 
     req = urllib.request.Request(f"{base}/api/job/nope", headers={"X-Atlas-Lang": "ru"})
     with pytest.raises(urllib.error.HTTPError) as ru:
         urllib.request.urlopen(req, timeout=5)
-    assert json.loads(ru.value.read())["error"] == "нет такой джобы"
+    assert json.loads(ru.value.read())["error"] == "фоновое задание не найдено"
     assert messages.last_lang() == "ru"                   # the background scheduler picks it up
 
     with pytest.raises(urllib.error.HTTPError) as bad:

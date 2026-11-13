@@ -63,6 +63,7 @@ export function loadPage(files = pageOrder(), { storage = {} } = {}) {
   const ctx = vm.createContext({
     URL,
     URLSearchParams,
+    TextEncoder,
     AbortController,
     ATLAS_TOKEN: "test-token",
     location: { search: "", hash: "", pathname: "/", href: "http://127.0.0.1/" },

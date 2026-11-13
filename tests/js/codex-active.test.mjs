@@ -95,7 +95,7 @@ describe("Codex limits and cost texts", () => {
   test("the server's codex_limits read like Claude's limits", () => {
     const t = p.AtlasLogic.limitsText(codex, (v) => (v === "x" ? "21:40" : "10.10"));
     assert.equal(t.tone, "warn");
-    assert.match(t.text, /5 hours 98% until 21:40 · week 31% until 10\.10/);
+    assert.match(t.text, /5 hours 98%, resets 21:40 · week 31%, resets 10\.10/);
   });
 
   test("strings in both languages", () => {

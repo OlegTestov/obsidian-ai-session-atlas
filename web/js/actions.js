@@ -56,11 +56,11 @@ async function startArtifact(id, kind, thenLaunch) {
   catch (e) { modal(i18n("common.errorTitle"), e.message, ""); return; }
   const where = prev.is_local_backend ? i18n("actions.localModel")
     : i18n("actions.externalModel", { model: prev.model });
-  const mb = (prev.chars / 1e6).toFixed(2);
+  const mb = AtlasLogic.sizeMb(prev.text);
   const parts = (prev.sections || [])
     .map(x => `${x.title}: ${x.items}`).join(" · ");
   const note = i18n("actions.previewNote", { chars: prev.chars.toLocaleString(I18N.locale()), mb,
-      k: Math.round(prev.chars / 4000), where, parts, sensitivity: prev.sensitivity })
+      k: Math.round(prev.chars / 4000), where, parts, sensitivity: i18nValue("sensitivity", prev.sensitivity) })
     + (prev.truncated ? i18n("actions.truncated") : "")
     + (prev.full_path ? i18n("actions.fullPath", { path: prev.full_path }) : "");
   modal(i18n(kind === "handoff" ? "actions.handoffPreview" : "actions.summaryPreview"),
@@ -101,7 +101,7 @@ function readable(payload) {
   try {
     const d = JSON.parse(payload);
     return i18n("actions.readable",
-      { did: d.did, result: d.result, open: d.open || "—", outcome: d.work_outcome });
+      { did: d.did, result: d.result, open: d.open || "—", outcome: i18nValue("outcome", d.work_outcome) });
   } catch { return payload; }
 }
 

@@ -4,6 +4,8 @@ on:
     tags: ["*"]
 jobs:
   release:
+    # Releases ship from the public repo; GitHub does not attest builds in a user-owned private one.
+    if: ${{ !github.event.repository.private }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write

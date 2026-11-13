@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from . import agents as agents_mod, query as q, search_rows
+from . import agents as agents_mod, forks, query as q, search_rows
 from .highlight_chunks import LARGE_FIELD, ChunkHighlighter
 from .query import (  # noqa: F401
     FTS_COLUMNS,
@@ -382,6 +382,8 @@ def _run(conn, query, limit, projects, domains, kinds, since, include_automation
         body = [m for m in matches if m["field"] != "title"] or matches
         meta["score"] = round(-score, 4) if score else 0.0
         meta["title_segments"] = _whole(title["marked"]) if title and title.get("marked") else None
+        if meta["title_segments"] and meta.get("fork_no"):
+            meta["title_segments"].append({"t": f" ({meta['fork_no']})", "hit": False})
         meta["hits"] = sum(m["hits"] for m in body)
         meta["hit_fields"] = {m["field"]: m["hits"] for m in matches}
         meta["matches"] = [{k: v for k, v in m.items() if k != "marked"}
@@ -433,10 +435,14 @@ def _load_session(conn: sqlite3.Connection, session_id: str) -> dict | None:
     else:
         final_domains, domain_source = [], None
 
+    # A Claude Code copy keeps its source's title: the list numbers it while they match.
+    nums = forks.numbers(conn)
+    renamed = bool(override and override["title"])
     return {
         "session_id": session_id,
         "agent": row["agent"],
-        "title": (override["title"] if override and override["title"] else row["title"]),
+        "title": override["title"] if renamed else forks.label(row["title"], nums.get(session_id)),
+        "fork_no": None if renamed else nums.get(session_id),
         "title_source": ("manual" if override and override["title"] else row["title_source"]),
         "session_kind": row["session_kind"],
         "workspace_kind": row["workspace_kind"],
@@ -466,21 +472,25 @@ def _load_session(conn: sqlite3.Connection, session_id: str) -> dict | None:
         # A parked conversation: the background job it went on in, or the session it came from.
         "continued_from": row["continued_from"],
         "continued_in": row["continued_in"],
-        **conversions(conn, session_id),
+        **conversions(conn, session_id, nums),
+        **forks.lineage(conn, session_id, nums),
     }
 
 
-def conversions(conn: sqlite3.Connection, session_id: str) -> dict:
+def conversions(conn: sqlite3.Connection, session_id: str, nums: dict | None = None) -> dict:
     """"Resume with…" (atlas/convert.py): the session this one was copied from, and its copies."""
     source = conn.execute(
         "SELECT c.source_session_id AS session_id, c.source_agent AS agent, c.at, "
-        "COALESCE(u.title, s.title) AS title FROM conversions c "
+        "COALESCE(u.title, s.title) AS title, COALESCE(u.title, '') <> '' AS renamed FROM conversions c "
         "LEFT JOIN sessions s ON s.session_id = c.source_session_id "
         "LEFT JOIN user_overrides u ON u.session_id = c.source_session_id "
         "WHERE c.session_id=?", (session_id,)).fetchone()
+    if source:
+        source = dict(source, title=forks.shown(source, forks.numbers(conn) if nums is None else nums))
+        del source["renamed"]
     copies = conn.execute("SELECT session_id, agent, at FROM conversions "
                           "WHERE source_session_id=? ORDER BY at", (session_id,)).fetchall()
-    return {"converted_from": dict(source) if source else None,
+    return {"converted_from": source,
             "converted_to": [dict(r) for r in copies]}
 
 

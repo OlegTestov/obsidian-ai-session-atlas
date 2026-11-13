@@ -106,3 +106,25 @@ for (const agent of ["codex", "claude"]) {
     expect(fs.existsSync(file)).toBe(true);
   });
 }
+
+test("the card menu opens under its own button, not at the left edge of the bar", async ({ page, open, lang }) => {
+  const id = lang === "en" ? ids.codexRenameEn : ids.codexRenameRu;
+  for (const width of [1280, 520]) {
+    await page.setViewportSize({ width, height: 800 });
+    await open();
+    await row(page, id).click();
+    await expect(page.locator("#card h3")).toBeVisible();
+    const more = page.locator("#bar button.ghost");
+    await more.click();
+    await expect(page.locator("#menu")).toBeVisible();
+    const b = await more.boundingBox(), m = await page.locator("#menu").boundingBox();
+    const bar = await page.locator("#bar").boundingBox();
+    // Inside the bar, and it overlaps the button horizontally.
+    expect(m.x).toBeGreaterThanOrEqual(bar.x);
+    expect(m.x + m.width).toBeLessThanOrEqual(bar.x + bar.width);
+    expect(m.x).toBeLessThan(b.x + b.width);
+    expect(m.x + m.width).toBeGreaterThan(b.x);
+    // With room for it, its right edge lines up with the button's.
+    if (b.x + b.width - m.width >= bar.x + 8) expect(Math.abs(m.x + m.width - (b.x + b.width))).toBeLessThan(2);
+  }
+});

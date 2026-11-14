@@ -32,9 +32,11 @@ KEY = "sk-ant-api03-probe-" + "x" * 60
 ANSI = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07]*\x07|\x1b[()][0-9A-Za-z]|\r")
 
 
-def standin(requests: list, tool_use=None, text_for=None) -> ThreadingHTTPServer:
+def standin(requests: list, tool_use=None, text_for=None, respond=None) -> ThreadingHTTPServer:
     """Anthropic Messages and OpenAI Responses, streamed; every request body is kept.
     tool_use(body) may return {"name", "input"} to answer a Messages request with that tool call;
+    respond(body) may shape a Responses answer: {"call": {"name", "arguments"[, "namespace"]}} for a
+    tool call, "text", "delay" (seconds before answering), "headers", or "error": (status, body);
     text_for(body) may return the reply text instead of PROBE-OK."""
     def sse(events):
         return "".join(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n" for e in events).encode()
@@ -45,8 +47,10 @@ def standin(requests: list, tool_use=None, text_for=None) -> ThreadingHTTPServer
         def log_message(self, *a):
             pass
 
-        def _send(self, body: bytes, ctype="application/json"):
-            self.send_response(200)
+        def _send(self, body: bytes, ctype="application/json", status=200, headers=None):
+            self.send_response(status)
+            for name, value in (headers or {}).items():
+                self.send_header(name, value)
             self.send_header("Content-Type", ctype)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
@@ -89,15 +93,24 @@ def standin(requests: list, tool_use=None, text_for=None) -> ThreadingHTTPServer
                     {"type": "message_delta", "delta": {"stop_reason": "end_turn", "stop_sequence": None},
                      "usage": {"output_tokens": 2}},
                     {"type": "message_stop"}]), "text/event-stream")
-            item = {"type": "message", "role": "assistant", "id": "msg_probe", "status": "completed",
-                    "content": [{"type": "output_text", "text": text, "annotations": []}]}
+            shape = (respond(body) if respond else None) or {}
+            time.sleep(shape.get("delay", 0))
+            if shape.get("error"):
+                status, payload = shape["error"]
+                return self._send(json.dumps(payload).encode(), status=status, headers=shape.get("headers"))
+            call, text = shape.get("call"), shape.get("text") or text
+            item = ({"type": "function_call", "id": "fc_probe", "call_id": f"call_probe_{len(requests)}",
+                     "status": "completed", "name": call["name"], "arguments": json.dumps(call["arguments"]),
+                     **({"namespace": call["namespace"]} if call.get("namespace") else {})} if call else
+                    {"type": "message", "role": "assistant", "id": "msg_probe", "status": "completed",
+                     "content": [{"type": "output_text", "text": text, "annotations": []}]})
             usage = {"input_tokens": 10, "input_tokens_details": {"cached_tokens": 0}, "output_tokens": 2,
                      "output_tokens_details": {"reasoning_tokens": 0}, "total_tokens": 12}
             self._send(sse([
                 {"type": "response.created", "response": {"id": "resp_probe"}},
                 {"type": "response.output_item.done", "output_index": 0, "item": item},
                 {"type": "response.completed", "response": {"id": "resp_probe", "usage": usage, "output": [item]}}]),
-                "text/event-stream")
+                "text/event-stream", headers=shape.get("headers"))
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     threading.Thread(target=server.serve_forever, daemon=True).start()

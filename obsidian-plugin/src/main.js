@@ -12,7 +12,7 @@ import {
   HOST_SOURCE,
 } from "./constants";
 import { TerminalMethods } from "./terminal";
-import { codexScreenState } from "./dialog-codex";
+import { codexQueued, codexScreenState } from "./dialog-codex";
 import { InputMethods } from "./input";
 import { MultiQuestionMethods } from "./multi-answer";
 import { CodexInputMethods } from "./input-codex";
@@ -34,6 +34,7 @@ import { StartupMethods } from "./startup";
 import { OpenPathMethods } from "./open-path";
 import { WhatsNewMethods } from "./whats-new";
 import { FirstRunMethods } from "./first-run";
+import { CodexHookMethods } from "./codex-hook";
 import { GroupDragMethods } from "./groups-drag";
 import { GroupNavigationMethods } from "./groups-navigation";
 import { GroupMethods } from "./groups";
@@ -359,8 +360,11 @@ class SessionAtlasPlugin extends PluginData {
     const job = leaf.view && leaf.view.backgroundJob;
     if (job) info.background = job;               // the card offers Bring back, as the tab menu does
     if (this.tabAgent(leaf) === "codex") {
+      const lines = this.screenLines(leaf);
       info.agent = "codex";
-      info.screen = codexScreenState(this.screenLines(leaf));
+      info.screen = codexScreenState(lines);
+      const queued = codexQueued(lines);         // the terminal UI keeps its queue on the screen only
+      if (queued.length) info.queued = queued;
     }
     return info;
   }
@@ -392,7 +396,8 @@ for (const methods of [TerminalMethods, InputMethods, MultiQuestionMethods, Code
                        UnreadMethods, RestoreMethods, HeldMethods,
                        AgentMethods, GuardMethods, BackgroundTabMethods, ExplorerMethods, RuntimeMethods,
                        StatusLineMethods, ReloadMethods, StartupMethods, OpenPathMethods, GroupMethods,
-                       GroupStripMethods, WhatsNewMethods, FirstRunMethods, GroupNavigationMethods, GroupDragMethods]) {
+                       GroupStripMethods, WhatsNewMethods, FirstRunMethods, GroupNavigationMethods, GroupDragMethods,
+                       CodexHookMethods]) {
   for (const name of Object.getOwnPropertyNames(methods.prototype)) {
     if (name === "constructor") continue;
     Object.defineProperty(SessionAtlasPlugin.prototype, name,

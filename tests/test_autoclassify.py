@@ -34,8 +34,9 @@ class Recorder:
     def __init__(self):
         self.calls = []
 
-    def __call__(self, conn, ids, job_id=None):
+    def __call__(self, conn, ids, job_id=None, backend=None):
         self.calls.append(list(ids))
+        self.backends = [*getattr(self, "backends", []), backend]
         for sid in ids:                          # like the real one: writes the classification
             conn.execute("INSERT OR REPLACE INTO classification (session_id, domain, topic, summary, "
                          "confidence, content_hash, classifier_version, model, backend, created_at) "
@@ -48,7 +49,7 @@ class Summaries:
     def __init__(self, fail=()):
         self.calls, self.fail = [], set(fail)
 
-    def __call__(self, conn, sid, job_id):
+    def __call__(self, conn, sid, job_id, backend):
         self.calls.append(sid)
         if sid in self.fail:
             raise RuntimeError("квота")
@@ -153,13 +154,13 @@ def test_summary_goes_the_same_way_as_the_button(atlas_env, write_session, monke
     from atlas import enrich, runner
     produced = []
     monkeypatch.setattr(runner, "build_payload", lambda c, sid, kind: {"content_hash": "h-" + sid[:4]})
-    monkeypatch.setattr(enrich, "produce", lambda c, sid, kind, job: produced.append((sid, kind, job)))
-    autoclassify.summarize(conn, OLD, "job-1")
+    monkeypatch.setattr(enrich, "produce", lambda c, sid, kind, job, **kw: produced.append((sid, kind, job, kw)))
+    autoclassify.summarize(conn, OLD, "job-1", runner.EXTERNAL_BACKEND)
     model, _ = runner.model_for("catalog_summary")
     grant = conn.execute("SELECT content_hash, backend, model FROM egress_grants WHERE session_id=? "
                          "AND artifact_kind='catalog_summary'", (OLD,)).fetchone()
     assert tuple(grant) == ("h-1111", runner.EXTERNAL_BACKEND, model)
-    assert produced == [(OLD, "catalog_summary", "job-1")]
+    assert produced == [(OLD, "catalog_summary", "job-1", {"backend": runner.EXTERNAL_BACKEND, "model": model})]
 
 
 def test_changes_after_a_run_are_picked_up_next_hour(atlas_env, write_session):
@@ -172,3 +173,33 @@ def test_changes_after_a_run_are_picked_up_next_hour(atlas_env, write_session):
     index.index_all(conn, root=str(atlas_env["projects"]))
     _tick(conn, NOW + 3601, run, summ)
     assert OLD in run.calls[-1], "session changes after a pass go to the next pass"
+
+
+def test_a_changed_agent_pauses_instead_of_sending_elsewhere(atlas_env, write_session, monkeypatch):
+    """Turned on for Claude Code, it never starts sending sessions to Codex by itself (Claude Code no
+    longer found, another choice in settings): it pauses and says why."""
+    from atlas import runner
+    conn = _setup(atlas_env, write_session)
+    agent = {"now": runner.CLAUDE_BACKEND}
+    monkeypatch.setattr(runner, "backend", lambda: agent["now"])
+    autoclassify.set_enabled(conn, True)
+    agent["now"] = runner.CODEX_BACKEND
+    run, summ = Recorder(), Summaries()
+    assert _tick(conn, NOW, run, summ) is None and run.calls == [] and summ.calls == []
+    status = autoclassify.status(conn)
+    assert status["agent"] == "Claude Code" and "Claude Code" in status["paused"] and "Codex" in status["paused"]
+    agent["now"] = runner.CLAUDE_BACKEND                    # back as it was: runs with the agent it was set for
+    assert _tick(conn, NOW, run, summ)["classified"] == 1 and run.backends == [runner.CLAUDE_BACKEND]
+    assert autoclassify.status(conn)["paused"] is None
+    agent["now"] = runner.CODEX_BACKEND                     # off and on again: the user chose Codex
+    autoclassify.set_enabled(conn, False)
+    assert autoclassify.set_enabled(conn, True)["agent"] == "Codex"
+
+
+def test_an_entry_from_before_records_the_agent_it_first_runs_with(atlas_env, write_session, monkeypatch):
+    from atlas import runner
+    conn = _setup(atlas_env, write_session)
+    monkeypatch.setattr(runner, "backend", lambda: runner.CODEX_BACKEND)
+    autoclassify._set_meta(conn, autoclassify.KEY_ENABLED, "1")   # turned on by an older version
+    assert autoclassify.status(conn)["paused"] is None
+    assert autoclassify._meta(conn, autoclassify.KEY_BACKEND) == runner.CODEX_BACKEND

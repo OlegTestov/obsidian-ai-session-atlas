@@ -45,6 +45,8 @@ export const PHRASES = {
   codexTitle: "Refactor the billing ledger",
   codexLiveReply: "Ledger totals now reconcile with the invoices",
   claudeLiveReply: "The login retry now backs off exponentially",
+  codexGoal: "Ship the ledger reconciliation",
+  codexQueued: "then update the changelog",
 };
 
 // The 5-hour and weekly windows Codex reports in token_count, as on a paid plan.
@@ -90,6 +92,15 @@ export function writeCorpus(root, python, now = Date.now()) {
     fs.mkdirSync(dir, { recursive: true });
   }
   fs.writeFileSync(path.join(vault, "Inbox.md"), "a note, not a folder\n");
+  // Codex's own: a skill (typed as $name on its card) and the models its /model picker lists.
+  fs.mkdirSync(path.join(codexHome, "skills", "release-notes"), { recursive: true });
+  fs.writeFileSync(path.join(codexHome, "skills", "release-notes", "SKILL.md"),
+                   "---\nname: release-notes\ndescription: Draft release notes from the git log\n---\nbody\n");
+  fs.writeFileSync(path.join(codexHome, "models_cache.json"), JSON.stringify({ models: [
+    { slug: "gpt-6-luna", display_name: "GPT-6-Luna", visibility: "list",
+      supported_reasoning_levels: [{ effort: "medium" }, { effort: "xhigh" }] },
+    { slug: "codex-auto-review", display_name: "Codex Auto Review", visibility: "hide",
+      supported_reasoning_levels: [{ effort: "low" }] }] }));
   fs.writeFileSync(path.join(atlasHome, "config.json"), JSON.stringify({
     language: "en", ticket_prefixes: ["ABC"], llm_enabled: false,
     workspace_roots: ["~/Code"], vaults: [{ path: "~/Notes", id: "notes" }] }));

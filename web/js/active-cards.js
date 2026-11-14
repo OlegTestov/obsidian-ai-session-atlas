@@ -284,11 +284,23 @@ function historyMessage(m, s) {
   return box;
 }
 
+// Typed in the tab while the agent was working: waits for its turn in the agent's queue.
+function queuedLine(s, box, shown) {
+  const queued = AtlasLogic.queuedNotShown(s, shown);
+  if (!queued.length) return;
+  const first = queued[0].text.replace(/\s+/g, " ").slice(0, 80);
+  const q = el("div", "queued", queued.length > 1
+    ? i18n("active.queuedMany", { n: queued.length, text: first }) : i18n("active.queuedOne", { text: first }));
+  q.title = queued.map(x => x.text).join("\n—\n");
+  box.appendChild(q);
+}
+
 // Tail of the agent's last reply: a question to you is usually at the end, the start reports the work.
 function replyBlock(s) {
   const mine = unansweredPrompt(s);
   if (mine) {
     const box = promptBlock(mine, s);
+    queuedLine(s, box, mine);           // queued before the agent said anything in this turn
     if ((s.activity === "busy" || s.status === "busy") && s.progress) {
       const now = el("div", "txt now md");
       now.appendChild(renderMarkdown(i18n("active.nowMd", { text: s.progress })));
@@ -314,15 +326,7 @@ function replyBlock(s) {
     who.appendChild(more);
   }
   box.appendChild(who);
-  // Typed in the tab while Claude was working: waits for its turn in Claude Code's queue.
-  const queued = s.queued || [];
-  if (queued.length) {
-    const first = queued[0].text.replace(/\s+/g, " ").slice(0, 80);
-    const q = el("div", "queued", queued.length > 1
-      ? i18n("active.queuedMany", { n: queued.length, text: first }) : i18n("active.queuedOne", { text: first }));
-    q.title = queued.map(x => x.text).join("\n—\n");
-    box.appendChild(q);
-  }
+  queuedLine(s, box);
   if (s.status === "busy" && s.progress) {
     const now = el("div", "txt now md");
     const lead = renderMarkdown(i18n("active.nowMd", { text: s.progress }));
@@ -493,10 +497,12 @@ function answerForm(s, pid, inFeed = false) {
   picker.addEventListener("change", () => { attachImages(sid, [...picker.files]); picker.value = ""; });
 
   const controls = agentControls(s);
+  if (controls.agent === "codex") ensureCommands("codex");        // its /model picker needs the models
   const submit = () => {
     const text = area.value;
-    // "/effort" and "/model" without an argument would open a slider in the tab, so buttons pick here.
-    if (controls.commands && argChoices(text)) { chooser.show(text); return; }
+    // "/effort" and "/model" without an argument would open a picker in the tab, so buttons pick here.
+    const pick = controls.commands && argChoices(text, controls.agent);
+    if (pick && !pick.optional) { chooser.show(text); return; }
     const images = (attachments.get(sid) || []).map(a => a.path);
     if ((!text.trim() && !images.length) || send.disabled) return;
     const nonce = Math.random().toString(36).slice(2);
@@ -514,7 +520,7 @@ function answerForm(s, pid, inFeed = false) {
   send.addEventListener("click", submit);
   // Enter sends, Shift+Enter adds a line break; "/" shows command hints, ↑ walks the history.
   const suggest = enhanceComposer(area, sid, submit, controls);
-  const chooser = argChooser(area, submit);
+  const chooser = argChooser(area, submit, controls.agent);
   if (controls.commands) {
     area.addEventListener("input", () => chooser.show(area.value));
     chooser.show(area.value);

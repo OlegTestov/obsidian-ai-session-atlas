@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { expect, run, test } from "./fixtures.mjs";
+import { expect, ids, run, test } from "./fixtures.mjs";
 import { ago } from "./corpus.mjs";
 import { line } from "./records.mjs";
 
@@ -70,4 +70,17 @@ test("a copy is numbered in the list and linked to its source on both cards", as
     files.forEach(f => fs.rmSync(f, { force: true }));
     await reindex(page);
   }
+});
+
+// A Codex copy names its source in its first record (`forked_from_id`): the same links both ways.
+test("a Codex copy is linked to its source on both cards", async ({ page, open, lang }) => {
+  const t = L[lang];
+  await open();
+  const title = async id => page.evaluate(async sid => (await (await fetch(`/api/session/${sid}`)).json()).title, id);
+  const source = await title(ids.codexLedger), copy = await title(ids.codexFork);
+  await row(page, ids.codexFork).click();
+  await expect(page.locator("#card .lineage")).toContainText(`${t.from} ${source}`);
+  await page.locator("#card .lineage").getByRole("button", { name: source, exact: true }).click();
+  await expect(page.locator("#card h3")).toHaveText(source);
+  await expect(page.locator("#card .lineage")).toContainText(`${t.copies} ${copy}`);
 });

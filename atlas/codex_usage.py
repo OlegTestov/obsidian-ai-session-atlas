@@ -2,114 +2,35 @@
 
 Rollouts hold the limits only as of the last model reply, and a run stopped by a spent limit
 writes none. `/status` asks the app server (`account/rateLimits/read`), which reads the account's
-usage with Codex's own login. Atlas does the same over stdio: `initialize`, that one call, exit —
-no thread, no model request. Any failure (not logged in, timeout, an odd answer) leaves the
+usage with Codex's own login. Atlas does the same over stdio (`codex_app.request`): `initialize`, that one call,
+exit — no thread, no model request. Any failure (not logged in, timeout, an odd answer) leaves the
 rollout numbers in place, and the next attempt waits `TTL`.
 """
 from __future__ import annotations
 
-import contextlib
-import json
 import os
-import select
-import shutil
-import signal
-import subprocess
 import threading
 import time
 from datetime import datetime, timezone
 
-from . import codex_tail, config, limits
+from . import codex_app, codex_tail, limits
 
 TTL = 300                 # seconds between reads of the backend, failed or not
-TIMEOUT = 15.0            # the whole exchange; a hung app server is killed
-LINE_MAX = 1024 * 1024
+TIMEOUT = codex_app.TIMEOUT
 BUCKET = "codex"          # the account-wide limit; other buckets are per-model quotas
-# launchd and Obsidian do not pass the login shell's PATH: look where installers put codex.
-CANDIDATES = ("/opt/homebrew/bin/codex", "/usr/local/bin/codex", "~/.local/bin/codex")
 
 _lock = threading.Lock()
 _state: dict = {"home": None, "tried": None, "data": None, "running": False}
-
-
-def find_codex() -> str | None:
-    """ATLAS_CODEX_BIN wins outright (tests point it at a stand-in), then settings, PATH, known places."""
-    forced = os.environ.get("ATLAS_CODEX_BIN")
-    if forced is not None:
-        return forced if forced and os.access(forced, os.X_OK) else None
-    configured = config.get("codex_bin")
-    if configured and os.access(os.path.expanduser(configured), os.X_OK):
-        return os.path.expanduser(configured)
-    for path in [shutil.which("codex")] + [os.path.expanduser(c) for c in CANDIDATES]:
-        if path and os.access(path, os.X_OK):
-            return path
-    return None
-
-
-def _lines(fd: int, deadline: float):
-    buf = b""
-    while True:
-        left = deadline - time.monotonic()
-        if left <= 0:
-            raise TimeoutError("codex app-server did not answer in time")
-        ready, _, _ = select.select([fd], [], [], left)
-        if not ready:
-            continue
-        chunk = os.read(fd, 65536)
-        if not chunk:
-            raise EOFError("codex app-server exited")
-        buf += chunk
-        while b"\n" in buf:
-            line, buf = buf.split(b"\n", 1)
-            yield line
-        if len(buf) > LINE_MAX:
-            raise ValueError("codex app-server sent an oversized line")
-
-
-def _stop(proc: subprocess.Popen) -> None:
-    for sig, wait in ((signal.SIGTERM, 2), (signal.SIGKILL, 2)):
-        with contextlib.suppress(OSError):
-            os.killpg(proc.pid, sig)                  # its own group: helpers it started go too
-        try:
-            proc.wait(timeout=wait)
-            return
-        except subprocess.TimeoutExpired:
-            continue
+find_codex = codex_app.find_codex
 
 
 def read_rate_limits(binary: str, home: str, timeout: float = TIMEOUT) -> dict:
     """The `account/rateLimits/read` result; raises on any failure, a JSON-RPC error included."""
-    proc = subprocess.Popen([binary, "app-server"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                            stderr=subprocess.DEVNULL, cwd=home, env=dict(os.environ, CODEX_HOME=home),
-                            start_new_session=True)
-
-    def send(obj: dict) -> None:
-        proc.stdin.write((json.dumps(obj) + "\n").encode())
-        proc.stdin.flush()
-    try:
-        send({"id": 1, "method": "initialize", "params": {"clientInfo": {"name": "session-atlas", "version": "1"}}})
-        for raw in _lines(proc.stdout.fileno(), time.monotonic() + timeout):
-            try:
-                reply = json.loads(raw)
-            except ValueError:
-                continue
-            if not isinstance(reply, dict) or reply.get("id") not in (1, 2):
-                continue                               # notifications
-            if reply.get("error") is not None:
-                raise RuntimeError(str((reply["error"] or {}).get("message") or reply["error"])[:200])
-            if reply["id"] == 1:
-                send({"method": "initialized"})
-                send({"id": 2, "method": "account/rateLimits/read",
-                      "params": {"excludeResetCreditDetails": True}})
-            elif isinstance(reply.get("result"), dict):
-                return reply["result"]
-            else:
-                raise ValueError("codex app-server sent no rate limits")
-        raise EOFError("codex app-server exited")      # pragma: no cover - _lines raises first
-    finally:
-        with contextlib.suppress(OSError):
-            proc.stdin.close()
-        _stop(proc)
+    result = codex_app.request(binary, home, "account/rateLimits/read",
+                               {"excludeResetCreditDetails": True}, timeout)
+    if not isinstance(result, dict):
+        raise ValueError("codex app-server sent no rate limits")
+    return result
 
 
 def _has_windows(snap) -> bool:
@@ -151,7 +72,7 @@ def refresh(home: str, now: float | None = None) -> None:
     binary = find_codex()
     try:
         data = read_rate_limits(binary, home) if binary else None
-    except (OSError, ValueError, RuntimeError, EOFError, TimeoutError):
+    except (OSError, ValueError, RuntimeError, EOFError, TimeoutError):  # CodexError is a RuntimeError
         data = None
     with _lock:
         if _state["home"] == home and data is not None:

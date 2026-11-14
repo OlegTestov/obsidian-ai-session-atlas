@@ -268,3 +268,16 @@ test("waiting for the catalog prevents duplicate requests and allows retry after
   await expect(frame.locator("#m-note")).toContainText(lang === "ru" ? "Каталог занят" : "catalog is busy");
   expect(await sentOf(page, "resume")).toHaveLength(0);
 });
+
+// "Copy session" in the card's "…" menu: Claude Code forks with --fork-session, Codex with `codex fork`.
+test("Copy session on a Codex card opens `codex fork` in a new tab", async ({ page, lang }) => {
+  const frame = await openCard(page, lang, ids.codexLedger);
+  await frame.locator("#bar button.ghost").click();
+  await frame.locator("#menu button", { hasText: lang === "ru" ? "Создать копию сессии" : "Copy session" }).click();
+  const cwd = run.corpus.cwds.billing;
+  const command = `cd ${quote(cwd)} && codex fork ${ids.codexLedger}`;
+  await expect(frame.locator("#m-body")).toContainText(command);
+  await frame.locator("#m-ok").click();
+  await expect.poll(() => sentOf(page, "resume")).toEqual([
+    expect.objectContaining({ session_id: ids.codexLedger, cwd, command })]);
+});

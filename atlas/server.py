@@ -22,6 +22,7 @@ from . import (
     agents,
     autoclassify,
     classify,
+    codex_commands,
     codex_live,
     commands,
     config,
@@ -253,12 +254,13 @@ def _run_job(job_id: str, session_id: str, artifact_kind: str, backend: str, mod
         conn.close()
 
 
-def _run_classify(job_id: str, session_ids: list[str], lang: str = messages.DEFAULT) -> None:
+def _run_classify(job_id: str, session_ids: list[str], lang: str = messages.DEFAULT,
+                  backend: str | None = None) -> None:
     conn = db.connect()
     try:
         messages.set_lang(lang, remember=False)
         actions.set_job_state(conn, job_id, "running")
-        result = classify.classify_batch(conn, session_ids, job_id=job_id)
+        result = classify.classify_batch(conn, session_ids, job_id=job_id, backend=backend)
         actions.set_job_state(conn, job_id, "done",
                               result=json.dumps(result, ensure_ascii=False))
     except Exception as exc:
@@ -346,6 +348,9 @@ class Handler(BaseHTTPRequestHandler):
             if url.path.startswith("/static/"):
                 return self._static(url.path[len("/static/"):])
             if url.path == "/api/commands":
+                if (query.get("agent") or [""])[0] == "codex":
+                    return self._json(200, {"commands": codex_commands.all_commands(),
+                                            "models": codex_commands.models()})
                 return self._json(200, {"commands": commands.all_commands()})
             if url.path == "/health":
                 from . import APP
@@ -616,11 +621,13 @@ class Handler(BaseHTTPRequestHandler):
         kind = body.get("artifact_kind", "handoff")
         if kind not in actions.JOB_KINDS:
             return self._json(400, {"error": msg("server.unknown_artifact")})
-        backend = body.get("backend", runner.EXTERNAL_BACKEND)
-        model = runner.model_for(kind)[0]           # model and 1M window come only from MODELS
+        backend = runner.backend()                  # the agent comes from settings, never from the page
+        model = runner.model_for(kind, backend)[0]  # model and 1M window come only from MODELS
         payload = runner.build_payload(conn, session_id, kind)
         if body.get("confirmed") is not True:
             return self._json(400, {"error": msg("server.need_confirm")})
+        if body.get("backend") != backend:          # the user confirmed another agent in the preview
+            return self._agent_refused(body, backend)
         runner.grant_egress(conn, session_id, payload["content_hash"], kind, backend, model)
         job_id, created = actions.claim_job(conn, session_id, kind, payload["content_hash"])
         if created:
@@ -628,6 +635,11 @@ class Handler(BaseHTTPRequestHandler):
                              args=(job_id, session_id, kind, backend, model,
                                    messages.request_lang())).start()
         self._json(200, {"job_id": job_id, "created": created})
+
+    def _agent_refused(self, body, backend: str) -> None:
+        # No agent at all: a page loaded before the update, whose preview never named one.
+        key = "server.page_outdated" if not body.get("backend") else "server.agent_changed"
+        return self._json(409, {"error": msg(key, agent=runner.agent_name(backend))})
 
     def _cancel(self, conn, body) -> None:
         self._json(200, {"cancelled": actions.cancel_job(conn, body["job_id"])})
@@ -697,6 +709,9 @@ class Handler(BaseHTTPRequestHandler):
     def _classify(self, conn, body) -> None:
         if body.get("confirmed") is not True:
             return self._json(400, {"error": msg("server.need_confirm")})
+        backend = runner.backend()
+        if body.get("backend") != backend:
+            return self._agent_refused(body, backend)
         ids = classify.pending(conn)
         if not ids:
             return self._json(200, {"job_id": None, "pending": 0})
@@ -704,7 +719,7 @@ class Handler(BaseHTTPRequestHandler):
                                             f"pending-{len(ids)}")
         if created:
             threading.Thread(target=_run_classify, daemon=True,
-                             args=(job_id, ids, messages.request_lang())).start()
+                             args=(job_id, ids, messages.request_lang(), backend)).start()
         self._json(200, {"job_id": job_id, "created": created, "pending": len(ids)})
 
     def _relocate(self, conn, body) -> None:

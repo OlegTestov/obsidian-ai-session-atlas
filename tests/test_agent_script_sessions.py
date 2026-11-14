@@ -503,3 +503,26 @@ def test_new_codex_launch_disables_daemon_only_when_supported(tab):
                       '[[ "$1" == --help ]] && { print -- --no-daemon; exit 0; }', 1))
     _rollout(tab["codex"], TID, _current(TID, str(tab["work"])))
     assert tab["run"]("codex", "cx-daemon-mode", "resume", TID)[0] == ["--no-daemon", "resume", TID]
+
+
+def test_codex_quitting_mid_record_leaves_no_lock_behind(tab):
+    """The tab's tracker may be inside the registry lock when codex quits: it must still let go, or
+    the next record waits the full lock timeout (20 s) and fails. `mv` inside the lock is slowed down
+    so codex always quits while the tracker holds it."""
+    bin_dir = Path(tab["env"]["PATH"].split(":")[0])
+    line = cx_meta_current(TID, str(tab["work"])).strip().replace("'", "")
+    (bin_dir / "codex").write_text(
+        STUB + 'd="$CODEX_HOME/sessions/2026/10/05"; mkdir -p "$d"; f="$d/rollout-2026-10-05T11-08-50-'
+        f"{TID}.jsonl\"\nprint -r -- '{line}' > \"$f\"\n"
+        # Named codex in `ps`, holding the rollout open as codex does, for a moment.
+        '( sleep 1; kill $$ ) & exec -a codex /usr/bin/tail -f "$f" > /dev/null\n', encoding="utf-8")
+    (bin_dir / "mv").write_text("#!/bin/sh\nsleep 1.5\nexec /bin/mv \"$@\"\n", encoding="utf-8")
+    (bin_dir / "mv").chmod(0o755)
+    env = dict(tab["env"], OBS_AGENT_CODEX_TRACK_EVERY="0.2")
+    started = time.monotonic()
+    subprocess.run(["zsh", str(SCRIPT), "codex", "cx-9", "new", "", "сделай отчёт"], cwd=tab["work"], env=env,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=60, check=True)
+    assert time.monotonic() - started < 12
+    assert f"codex\tcx-9\t{TID}\t" in (tab["state"] / "resume.tsv").read_text(encoding="utf-8")
+    time.sleep(2)                                  # a stray slow mv of a killed tracker has finished
+    assert not (tab["state"] / "resume.lock").exists()

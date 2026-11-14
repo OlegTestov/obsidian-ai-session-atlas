@@ -39,6 +39,7 @@ def _run(cmd: list[str], **kw):
 
 
 _map_cache: dict[tuple, tuple] = {}         # (pid, start) → (checked at, rollout path or None)
+_open_cache: dict[tuple, list] = {}         # (pid, start) → every rollout it held open at that check
 _meta_cache: dict[str, dict] = {}           # rollout path → its session_meta
 _find_cache: dict[str, str] = {}            # thread id → rollout path
 
@@ -108,10 +109,12 @@ def session_meta(path: str) -> dict:
             meta = rec["payload"]
     except (OSError, ValueError):
         return {}
+    subagent = meta.get("thread_source") == "subagent" \
+        or (isinstance(meta.get("source"), dict) and "subagent" in meta["source"])
+    parent = meta.get("parent_thread_id") if subagent else None
     meta = {"id": str(meta.get("id") or meta.get("session_id") or codex_parse.session_id_of(path) or ""),
-            "cwd": meta.get("cwd"), "timestamp": meta.get("timestamp"),
-            "subagent": meta.get("thread_source") == "subagent"
-            or (isinstance(meta.get("source"), dict) and "subagent" in meta["source"])}
+            "cwd": meta.get("cwd"), "timestamp": meta.get("timestamp"), "subagent": subagent,
+            "parent": str(parent).lower() if parent else None}
     _meta_cache[path] = meta
     return meta
 
@@ -198,11 +201,56 @@ def rollouts_for(table: dict, run=None, home: str | None = None, fresh: bool = F
                 if resumed in shared and not session_meta(resumed).get("subagent"):
                     path = resumed
                 _map_cache[keys[pid]] = (now, path)
+                _open_cache[keys[pid]] = list(found.get(pid, []))
             elif keys[pid] not in _map_cache:      # keep an older answer; retried next time
                 _map_cache[keys[pid]] = (0.0, _from_argv(table[pid][2], home))
     for key in [k for k in _map_cache if k not in keys.values()]:
         del _map_cache[key]                         # the process is gone
+        _open_cache.pop(key, None)
     return {pid: _map_cache[key][1] for pid, key in keys.items() if _map_cache[key][1]}
+
+
+def subagent_rollouts(pid: int, table: dict, session_id: str) -> list[str]:
+    """Subagent threads of this thread the process held open at its last check (rollouts_for).
+    A subagent's own subagents count too: each names its parent, up to this thread."""
+    row = table.get(pid)
+    paths = _open_cache.get((pid, row[1]), []) if row else []
+    parents = {thread_id(p): session_meta(p).get("parent") for p in paths if session_meta(p).get("subagent")}
+    sid = (session_id or "").lower()
+
+    def under(tid: str) -> bool:
+        seen = set()
+        while tid and tid not in seen:
+            seen.add(tid)
+            tid = parents.get(tid)
+            if tid == sid:
+                return True
+        return False
+    return [p for p in paths if session_meta(p).get("subagent") and under(thread_id(p))]
+
+
+def subagents_on_disk(session_id: str, home: str | None = None, now: float | None = None) -> list[str]:
+    """Subagent rollouts of this thread started today or yesterday, whichever process writes them: a
+    Codex started outside an Atlas tab runs its threads in the app-server daemon, not in the process
+    the card follows, so the open files of that process do not show them."""
+    home = home or index.codex_home()
+    now = time.time() if now is None else now
+    paths = []
+    for day in sorted({time.strftime("%Y/%m/%d", time.localtime(now - back)) for back in (0, 86400)}):
+        paths += glob.glob(os.path.join(glob.escape(home), "sessions", day, "rollout-*.jsonl"))
+    subs = [p for p in paths if session_meta(p).get("subagent")]
+    parents = {thread_id(p): session_meta(p).get("parent") for p in subs}
+    sid = (session_id or "").lower()
+
+    def under(tid: str) -> bool:
+        seen = set()
+        while tid and tid not in seen:
+            seen.add(tid)
+            tid = parents.get(tid)
+            if tid == sid:
+                return True
+        return False
+    return [p for p in subs if under(thread_id(p))]
 
 
 def owner(pid: int, session_id: str, table: dict, run=None, home: str | None = None) -> bool:

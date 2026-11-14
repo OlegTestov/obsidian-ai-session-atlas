@@ -342,11 +342,12 @@ def _note_fork(facts: SessionFacts, rec: dict) -> None:
 
 
 def fork_source(facts: SessionFacts) -> str | None:
-    """The session this one is a Claude Code copy of. A parked conversation's background job and a
-    "Resume with…" conversion copy records too, but they are continuations, not copies."""
-    if facts.agent != "claude" or facts.continued_from:
+    """The session this one is a copy of (Claude Code or Codex). A parked conversation's background
+    job and a "Resume with…" conversion copy records too, but they are continuations, not copies."""
+    if facts.continued_from:
         return None
-    source = facts.forked_from or facts.copied_from
+    # Codex names its source in session_meta (codex_parse); copied records mean a copy only in Claude Code.
+    source = facts.forked_from or (facts.copied_from if facts.agent == "claude" else None)
     return source if source and source != facts.session_id else None
 
 

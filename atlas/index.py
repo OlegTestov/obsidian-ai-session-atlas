@@ -56,6 +56,50 @@ def discover_codex(home: str | None = None) -> list[str]:
     return sorted(p for p in found if codex_parse.session_id_of(p))
 
 
+CODEX_HEAD_BYTES = 8192          # ids and thread source come before the long instructions
+_SUBAGENT = re.compile(rb'"thread_source":\s*"subagent"|"source":\s*\{"subagent"')
+_PARENT = re.compile(rb'"parent_thread_id":\s*"([0-9a-fA-F-]{36})"')
+_codex_heads: dict[str, tuple] = {}   # path → (inode, parent thread id or None): a head never changes
+
+
+def _codex_parent(path: str) -> str | None:
+    """The thread that spawned this one when this is a Codex subagent thread, from the first line."""
+    try:
+        ino = os.stat(path).st_ino
+    except OSError:
+        return None
+    cached = _codex_heads.get(path)
+    if cached and cached[0] == ino:
+        return cached[1]
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(CODEX_HEAD_BYTES)
+    except OSError:
+        return None
+    first = head.split(b"\n", 1)[0]
+    found = _PARENT.search(first) if _SUBAGENT.search(first) else None
+    parent = found.group(1).decode().lower() if found else None
+    _codex_heads[path] = (ino, parent)
+    return parent
+
+
+def codex_subagents(paths: list[str]) -> dict[str, list[str]]:
+    """Rollout of a thread → the rollouts of the subagents it spawned, theirs included, as Claude Code
+    keeps subagents with their session. A subagent whose root thread is not here stays its own."""
+    ids = {p: codex_parse.session_id_of(p) for p in paths}
+    present = set(ids.values())
+    parent = {ids[p]: _codex_parent(p) for p in paths}
+    by_root: dict[str, list[str]] = {}
+    for path in paths:
+        tid, seen = ids[path], set()
+        while parent.get(tid) and tid not in seen:
+            seen.add(tid)
+            tid = parent[tid]
+        if tid != ids[path] and tid in present and not parent.get(tid):
+            by_root.setdefault(tid, []).append(path)
+    return {p: sorted(by_root[ids[p]]) for p in paths if ids[p] in by_root}
+
+
 def discover_subagents(session_path: str) -> list[str]:
     """A parked conversation's job links the subagents still running at the hand-over to the
     parent's files: those belong to the parent and are indexed there."""
@@ -152,7 +196,7 @@ def _note_cost(conn: sqlite3.Connection, session_id: str, seconds: float) -> Non
 
 def _codex_signature(path: str, title: str | None) -> str:
     """A rename in Codex changes only its state database: the title is part of the signature."""
-    sig = _signature(path, [])
+    sig = _signature(path, []) + f"|p:{codex_parse.PARSE_VERSION}"     # a parser change rereads them once
     return sig + ("|t:" + hashlib.sha1(title.encode()).hexdigest()[:12] if title else "")
 
 
@@ -251,6 +295,7 @@ def index_all(conn: sqlite3.Connection, root: str = PROJECTS_ROOT,
 
 FORK_MARK = re.compile(rb'"forkedFrom"|"session_id":\s*"([^"]+)"')
 FORK_HEAD_BYTES = 512 << 10   # session metadata and attachments come before the first prompt
+CODEX_FORK_HEAD_BYTES = 4096  # ids, time and folder come before the long instructions
 _TURN = re.compile(rb'"type":\s*"(?:user|assistant)"')
 
 
@@ -281,15 +326,27 @@ def is_copy_head(path: str) -> bool:
     return False
 
 
+def is_codex_fork_head(path: str) -> bool:
+    """A Codex fork names its source near the start of its first line (session_meta)."""
+    try:
+        with open(path, "rb") as fh:
+            return b'"forked_from_id"' in fh.read(CODEX_FORK_HEAD_BYTES)
+    except OSError:
+        return False
+
+
 def _reread_copies_once(conn: sqlite3.Connection) -> None:
-    """Copies indexed before session_forks existed: parse them in full once so the table fills."""
-    if db.get_meta(conn, "copies_scanned") == "1":
-        return
-    for row in conn.execute("SELECT source_path FROM sessions WHERE agent = 'claude'").fetchall():
-        if is_copy_head(row["source_path"]):
-            _retry_full(conn, row["source_path"])
-    db.set_meta(conn, "copies_scanned", "1")
-    conn.commit()
+    """Copies indexed before session_forks existed, or before Codex copies were recorded: parse
+    them in full once so the table fills."""
+    for marker, agent, is_copy in (("copies_scanned", "claude", is_copy_head),
+                                   ("codex_copies_scanned", "codex", is_codex_fork_head)):
+        if db.get_meta(conn, marker) == "1":
+            continue
+        for row in conn.execute("SELECT source_path FROM sessions WHERE agent = ?", (agent,)).fetchall():
+            if is_copy(row["source_path"]):
+                _retry_full(conn, row["source_path"])
+        db.set_meta(conn, marker, "1")
+        conn.commit()
 
 
 def _retry_full(conn: sqlite3.Connection, path: str) -> None:
@@ -332,7 +389,11 @@ def _relink_continuations(conn: sqlite3.Connection, stats: dict) -> None:
 def _index_codex(conn, home: str, known: dict, present: set, stats: dict, full: bool) -> None:
     paths_ = discover_codex(home)
     titles = codex_parse.thread_titles(home) if paths_ else {}
+    children = codex_subagents(paths_)
+    folded = {p for subs in children.values() for p in subs}
     for path in paths_:
+        if path in folded:
+            continue             # part of its root thread's session; a row of its own is purged below
         present.add(path)
         stats["seen"] += 1
         stats["codex"] += 1
@@ -341,12 +402,14 @@ def _index_codex(conn, home: str, known: dict, present: set, stats: dict, full: 
         except FileNotFoundError:
             continue
         title = titles.get(codex_parse.session_id_of(path) or "")
-        sig = _codex_signature(path, title)
+        subagents = children.get(path, [])
+        stats["subagent_files"] += len(subagents)
+        sig = _codex_signature(path, title) + ("|s:" + _files_signature(subagents) if subagents else "")
         if not full and not _changed(known.get(path), sig):
             stats["skipped"] += 1
             continue
         try:
-            store.store_codex(conn, path, st, sig, title)
+            store.store_codex(conn, path, st, sig, title, subagents)
             conn.commit()
             stats["full"] += 1
             stats["indexed"] += 1

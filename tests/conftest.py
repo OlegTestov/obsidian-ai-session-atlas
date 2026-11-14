@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import threading
 import uuid
 
 import pytest
 
 from atlas import codex_usage, config
+from tests import codex_standin
 
 HOME = os.path.expanduser("~")
 NOTES = os.path.join(HOME, "Notes")       # test profile vault: path resolution is lexical
@@ -258,3 +260,19 @@ def write_rollout(codex_home):
             fh.write("".join(lines))
         return path
     return _write
+
+
+@pytest.fixture
+def codex_cli(tmp_path, monkeypatch, codex_home):
+    """A stand-in `codex` for Codex's own commands (tests/codex_standin.py)."""
+    script = tmp_path / "codex-standin"
+    script.write_text(f"#!{sys.executable}\n{codex_standin.SCRIPT}")
+    script.chmod(0o755)
+    log = tmp_path / "codex-standin.log"
+    monkeypatch.setenv("ATLAS_CODEX_BIN", str(script))
+    monkeypatch.setenv("STANDIN_LOG", str(log))
+
+    def runs():
+        return [json.loads(x) for x in log.read_text().splitlines()] if log.exists() else []
+    return {"script": str(script), "runs": runs, "home": codex_home,
+            "mode": lambda m: monkeypatch.setenv("STANDIN_MODE", m)}

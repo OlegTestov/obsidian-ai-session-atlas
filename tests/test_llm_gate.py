@@ -59,7 +59,8 @@ def test_turning_auto_classify_off_is_always_allowed(live_server):
 def test_classify_passes_the_gate_when_on(live_server):
     base, token = live_server
     _llm(True)
-    r = _post(base + "/api/classify", {"confirmed": True}, {"Origin": base, "X-Atlas-Token": token})
+    r = _post(base + "/api/classify", {"confirmed": True, "backend": runner.backend()},
+              {"Origin": base, "X-Atlas-Token": token})
     assert r.status == 200
 
 

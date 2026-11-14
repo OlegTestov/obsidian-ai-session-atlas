@@ -7,7 +7,7 @@ import re
 import sqlite3
 from datetime import datetime, timezone
 
-from . import actions, agents, config, db, prompts, runner
+from . import actions, agents, codex_exec, config, db, prompts, runner
 from .messages import msg
 
 CLASSIFIER_VERSION = 4
@@ -191,11 +191,12 @@ def _store(conn: sqlite3.Connection, session_id: str, verdict: dict, content_has
 
 
 def classify_batch(conn: sqlite3.Connection, session_ids: list[str], job_id: str | None = None,
-                   backend: str = runner.EXTERNAL_BACKEND,
+                   backend: str | None = None,
                    model: str | None = None, effort: str | None = None) -> dict:
     """In batches of BATCH_SIZE, one batch per call, batches in sequence: a background
     claude -p uses the same subscription quota as interactive use."""
-    default_model, default_effort = runner.model_for("classification")
+    backend = backend or runner.backend()
+    default_model, default_effort = runner.model_for("classification", backend)
     model = model or default_model
     effort = effort or default_effort
     done, failed, errors = 0, 0, []
@@ -224,8 +225,9 @@ def classify_batch(conn: sqlite3.Connection, session_ids: list[str], job_id: str
         prompt = prompts.classify().format(context=owner_context(),
                                registry=_registry_text(registry(conn)), signal=body)
         try:
-            verdicts = parse_batch(
-                runner.run_isolated(prompt, model=model, effort=effort), len(signals))
+            verdicts = parse_batch(runner.run_isolated(
+                prompt, model=model, effort=effort, backend_name=backend,
+                schema=codex_exec.CLASSIFY_SCHEMA), len(signals))
         except Exception as exc:
             failed += len(signals)
             if len(errors) < 5:
@@ -242,7 +244,7 @@ def classify_batch(conn: sqlite3.Connection, session_ids: list[str], job_id: str
     merged = {}
     if done:
         try:                                     # the pass is cheap: only topic names leave the machine
-            merged = merge_topics(conn, model=model)
+            merged = merge_topics(conn, model=model, backend=backend)
         except Exception as exc:
             errors.append(msg("classify.merge_failed", error=f"{type(exc).__name__}: {exc}"))
     return {"classified": done, "failed": failed, "errors": errors,
@@ -260,7 +262,8 @@ def dry_run(conn: sqlite3.Connection, session_ids: list[str], model: str,
                             for i, sig in enumerate(signals))
         prompt = prompts.classify().format(context=owner_context(),
                                registry=_registry_text(registry(conn)), signal=body)
-        verdicts = parse_batch(runner.run_isolated(prompt, model=model, effort=effort),
+        verdicts = parse_batch(runner.run_isolated(prompt, model=model, effort=effort,
+                                                   backend_name=runner.CLAUDE_BACKEND),
                                len(signals))
         for i, sid in enumerate(chunk, start=1):
             if i in verdicts:
@@ -279,11 +282,13 @@ def preview_batch(conn: sqlite3.Connection, limit: int = 3) -> dict:
             continue
     total_chars = sum(len(s) for s in samples)
     avg = total_chars // max(1, len(samples))
-    model, effort = runner.model_for("classification")
+    backend = runner.backend()
+    model, effort = runner.model_for("classification", backend)
     return {
         "pending": len(ids),
-        "backend": runner.EXTERNAL_BACKEND,
-        "model": f"{model} / {effort}",
+        "backend": backend,
+        "agent_name": runner.agent_name(backend),
+        "model": f"{runner.model_label(model, backend)} / {effort}",
         "estimated_chars": avg * len(ids),
         "samples": samples,
         "note": msg("classify.note"),
@@ -293,13 +298,15 @@ def preview_batch(conn: sqlite3.Connection, limit: int = 3) -> dict:
 def export_path() -> str:
     return os.path.join(os.path.expanduser("~"), ".atlas-topics.json")
 
-def merge_topics(conn: sqlite3.Connection, model: str = runner.DEFAULT_MODEL) -> dict:
+def merge_topics(conn: sqlite3.Connection, model: str | None = None, backend: str | None = None) -> dict:
     """A separate pass: the registry grows on its own, but synonyms in it need merging."""
     items = registry(conn, limit=200)
     if len(items) < 3:
         return {"merged": 0, "mapping": {}}
-    raw = runner.run_isolated(
-        prompts.merge().format(registry=_registry_text(items)), model=model)
+    backend = backend or runner.backend()
+    raw = runner.run_isolated(prompts.merge().format(registry=_registry_text(items)),
+                              model=model or runner.model_for("classification", backend)[0],
+                              backend_name=backend)
     match = re.search(r"\{.*\}", raw, re.S)
     if not match:
         raise ValueError(msg("classify.merge_no_json"))

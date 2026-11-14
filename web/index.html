@@ -75,6 +75,7 @@
       </div>
       <label class="auto" id="auto-classify-label"><input type="checkbox" id="auto-classify">
         <span data-i18n="search.autoClassifyLabel">hourly: new and changed</span></label>
+      <p class="hint" id="auto-classify-paused" hidden></p>
     </div>
   </aside>
 
@@ -88,7 +89,7 @@
 
 <dialog id="rename">
   <h3 data-i18n="card.renameTitle">Rename session</h3>
-  <p class="note" data-i18n="card.renameNote">The name is also saved in Claude Code itself — in the `claude --resume` list.</p>
+  <p class="note" id="rename-note" data-i18n="card.renameNote">The name is also saved in Claude Code itself — in the `claude --resume` list.</p>
   <input type="text" id="rename-input" autocomplete="off">
   <p class="note" id="rename-error"></p>
   <div class="actions">

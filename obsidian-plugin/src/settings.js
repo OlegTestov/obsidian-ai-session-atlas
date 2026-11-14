@@ -1,6 +1,6 @@
 // One set of row definitions drives both Obsidian's settings search and the older settings UI.
 import { PluginSettingTab, Setting } from "obsidian";
-import { renderStatus, catalogDefinitions, aiDefinitions, advancedDefinitions } from "./settings-server";
+import { renderStatus, catalogDefinitions, aiDefinitions, advancedDefinitions, codexHookDefinition } from "./settings-server";
 import { NOTICE_HOLDS, DEFAULT_NOTICE_HOLD } from "./notify";
 import { DEFAULT_FONT_SIZE } from "./constants";
 
@@ -61,6 +61,7 @@ class AtlasSettingTab extends PluginSettingTab {
               plugin.writeAgentArgs();
             }));
         })),
+        codexHookDefinition(this),
         this.toggleDefinition("loadAgentTabs", "settings.loadAgentTabs", "settings.loadAgentTabs.desc"),
         definition("settings.fontSize", null, setting => setting.addSlider(slider => slider.setLimits(9, 22, 1)
           .setValue(Number(plugin.settings.terminalFontSize) || DEFAULT_FONT_SIZE).setDynamicTooltip().onChange(async value => {

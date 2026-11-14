@@ -24,20 +24,28 @@ function agentShort(s) {
   return i18n(AtlasLogic.agentOf(s) === "codex" ? "agent.codexShort" : "agent.claudeShort");
 }
 
-// Controls only Claude Code understands: its slash commands with their argument pickers and the
-// plan-mode dialog. A Codex card keeps the reply field, Stop and the tab buttons.
+// Each agent's own slash commands and argument pickers (the server lists them per agent); the
+// plan-mode dialog is Claude Code's only.
 function agentControls(s) {
-  const claude = AtlasLogic.agentOf(s) === "claude";
-  return { commands: claude, plan: claude };
+  const agent = AtlasLogic.agentOf(s);
+  return { commands: true, plan: agent === "claude", agent };
 }
 
 // Codex writes no approval into its rollout, so the server sees a waiting Codex session as busy or
 // idle. The plugin reads the tab's screen: "waiting" there makes the card wait for you, like a
-// Claude dialog, and only then is the dialog read. The server's own row stays untouched.
+// Claude dialog, and only then is the dialog read. Messages queued in the terminal UI are on its
+// screen only. The server's own row stays untouched. screen: {state, queued} from the plugin.
 function withTabScreen(s, screen) {
-  if (AtlasLogic.agentOf(s) !== "codex" || screen !== "waiting") return s;
-  return Object.assign({}, s, { status: "waiting", activity: "waiting",
-                                waiting_for: s.waiting_for || "permission prompt" });
+  if (AtlasLogic.agentOf(s) !== "codex" || !screen) return s;
+  const extra = {};
+  if (screen.state === "waiting") {
+    Object.assign(extra, { status: "waiting", activity: "waiting",
+                           waiting_for: s.waiting_for || "permission prompt" });
+  }
+  if ((screen.queued || []).length && !(s.queued || []).length) {
+    extra.queued = screen.queued.map(text => ({ text, at: null }));
+  }
+  return Object.keys(extra).length ? Object.assign({}, s, extra) : s;
 }
 
 function agentBadge(s) {

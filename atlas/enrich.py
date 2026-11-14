@@ -7,7 +7,7 @@ import re
 import sqlite3
 from datetime import datetime, timezone
 
-from . import actions, db, prompts, runner
+from . import actions, codex_exec, db, prompts, runner
 from .messages import msg
 
 PROMPT_VERSION = 1
@@ -69,16 +69,18 @@ def _validate_handoff(text: str) -> str:
 
 
 def preview(conn: sqlite3.Connection, session_id: str, artifact_kind: str,
-            backend: str = runner.EXTERNAL_BACKEND, model: str | None = None) -> dict:
+            backend: str | None = None, model: str | None = None) -> dict:
     """First confirmation stage: show exactly what will be sent and where, before any call."""
-    default_model, effort = runner.model_for(artifact_kind)
+    backend = backend or runner.backend()
+    default_model, effort = runner.model_for(artifact_kind, backend)
     model = model or default_model
     payload = runner.preview_payload(conn, session_id, artifact_kind)
     return {
         "session_id": session_id,
         "artifact_kind": artifact_kind,
         "backend": backend,
-        "model": f"{model} / {effort}",
+        "agent_name": runner.agent_name(backend),
+        "model": f"{runner.model_label(model, backend)} / {effort}",
         "sections": payload["sections"],
         "totals": payload["totals"],
         "budget": payload["budget"],
@@ -99,9 +101,10 @@ def fill(template: str, text: str) -> str:
 
 
 def produce(conn: sqlite3.Connection, session_id: str, artifact_kind: str, job_id: str,
-            backend: str = runner.EXTERNAL_BACKEND, model: str | None = None) -> dict:
+            backend: str | None = None, model: str | None = None) -> dict:
     """Second stage: the model call. The send permission is checked right here."""
-    default_model, effort = runner.model_for(artifact_kind)
+    backend = backend or runner.backend()
+    default_model, effort = runner.model_for(artifact_kind, backend)
     model = model or default_model
     payload = runner.build_payload(conn, session_id, artifact_kind)
     runner.check_egress(conn, session_id, payload["content_hash"], artifact_kind, backend, model)
@@ -109,15 +112,16 @@ def produce(conn: sqlite3.Connection, session_id: str, artifact_kind: str, job_i
         raise RuntimeError(msg("enrich.cancelled"))
 
     template = prompts.summary() if artifact_kind == "catalog_summary" else prompts.handoff()
+    schema = codex_exec.SUMMARY_SCHEMA if artifact_kind == "catalog_summary" else None
     # A large handoff takes long: a million-token window is not read within a minute.
     try:
-        raw = runner.run_isolated(fill(template, payload["text"]), model=model,
-                                  effort=effort, timeout=2400)
+        raw = runner.run_isolated(fill(template, payload["text"]), model=model, effort=effort,
+                                  timeout=2400, backend_name=backend, schema=schema)
     except runner.PromptTooLong:
         # Characters per token depend on language and content, so there is one retry with a trimmed input.
         payload = runner.build_payload(conn, session_id, artifact_kind, scale=0.6)
-        raw = runner.run_isolated(fill(template, payload["text"]), model=model,
-                                  effort=effort, timeout=2400)
+        raw = runner.run_isolated(fill(template, payload["text"]), model=model, effort=effort,
+                                  timeout=2400, backend_name=backend, schema=schema)
 
     if artifact_kind == "catalog_summary":
         result = json.dumps(_parse_summary(raw), ensure_ascii=False)

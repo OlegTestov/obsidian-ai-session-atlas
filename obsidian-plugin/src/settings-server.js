@@ -8,6 +8,7 @@ const DEFAULT_MODELS = { classification: ["sonnet", "low"], catalog_summary: ["s
                          handoff: ["sonnet", "medium"] };
 
 const MIN_MACOS = 12;
+const AI_AGENTS = ["auto", "claude", "codex"];
 
 /** Environment checks: what is present, what is missing, and a button where it can be fixed. */
 async function renderStatus(tab, containerEl = tab.containerEl) {
@@ -143,7 +144,35 @@ function aiDefinitions(tab) {
       }) })),
     { name: plugin.t("ai.force1m"), desc: plugin.t("ai.force1m.desc"), render: setting => setting.addToggle(toggle =>
       toggle.setValue(!!cfg().force_1m).onChange(v => save({ force_1m: v }))) },
+    { name: plugin.t("ai.agent"), desc: plugin.t("ai.agent.desc"), render: setting => setting.addDropdown(dropdown => {
+      for (const choice of AI_AGENTS) dropdown.addOption(choice, plugin.t(`ai.agent.${choice}`));
+      dropdown.setValue(AI_AGENTS.includes(cfg().ai_agent) ? cfg().ai_agent : "auto")
+        .onChange(value => save({ ai_agent: value }));
+    }) },
+    { name: plugin.t("ai.codexModel"), desc: plugin.t("ai.codexModel.desc"), render: setting => setting.addText(text => {
+      text.setPlaceholder(plugin.t("ai.codexModel.placeholder")).setValue(F.modelToText(cfg().codex_model));
+      // Empty: Codex's own default model, with low effort for topics and summaries, medium for notes.
+      text.inputEl.addEventListener("blur", () => save({ codex_model: F.textToModel(text.getValue(), null) }));
+    }) },
   ] };
+}
+
+/** Opt-in: a Codex hook marks approval waits of Codex sessions outside tabs (codex-hook.js). */
+function codexHookDefinition(tab) {
+  const { plugin } = tab;
+  const t = (k, v) => plugin.t(k, v);
+  return { name: t("codexHook"), desc: t("codexHook.desc", { file: plugin.codexHooksPath() }), render: setting => {
+    const { state } = plugin.codexHookState();
+    if (state === "broken") setting.setDesc(t("codexHook.broken", { file: plugin.codexHooksPath() }));
+    setting.addToggle(toggle => toggle.setValue(state === "ours").setDisabled(state === "broken")
+      .onChange(async on => {
+        const res = await plugin.setCodexHook(on);
+        new Notice(res.ok ? t(on ? "codexHook.on" : res.inert ? "codexHook.inert" : "codexHook.off",
+                              { file: plugin.codexHooksPath() })
+          : t("codexHook.failed", { reason: res.reason }));
+        tab.refresh();
+      }));
+  } };
 }
 
 function advancedDefinitions(tab) {
@@ -158,4 +187,4 @@ function advancedDefinitions(tab) {
     })) };
 }
 
-export { renderStatus, catalogDefinitions, aiDefinitions, advancedDefinitions, DEFAULT_MODELS };
+export { renderStatus, catalogDefinitions, aiDefinitions, advancedDefinitions, codexHookDefinition, DEFAULT_MODELS };

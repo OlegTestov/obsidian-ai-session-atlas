@@ -114,13 +114,25 @@
     return "sending";
   }
 
+  // The agent's queue without the message just sent from the card: that one is already shown as
+  // "You … — queued" above, a second line for it would repeat it.
+  function queuedNotShown(s, sent) {
+    const queued = s.queued || [];
+    const head = sent && sent.sent ? (sent.text || "").trim().slice(0, 40) : "";
+    if (!head) return queued;
+    const i = queued.findIndex(q => (q.text || "").trim().startsWith(head));
+    return i < 0 ? queued : queued.filter((_, n) => n !== i);
+  }
+
   // Slash-command hints while "/word" is typed without a space. Prefix matches come first.
+  // "/" lists commands, "$" lists what is typed with "$" (Codex skills: sigil "$").
   function commandMatches(list, text) {
-    const m = /^\/([^\s]*)$/.exec(text || "");
+    const m = /^([/$])([^\s]*)$/.exec(text || "");
     if (!m) return [];
-    const q = m[1].toLowerCase();
-    const starts = list.filter(c => c.name.toLowerCase().startsWith(q));
-    const inside = q ? list.filter(c => !c.name.toLowerCase().startsWith(q)
+    const q = m[2].toLowerCase();
+    const mine = list.filter(c => (c.sigil || "/") === m[1]);
+    const starts = mine.filter(c => c.name.toLowerCase().startsWith(q));
+    const inside = q ? mine.filter(c => !c.name.toLowerCase().startsWith(q)
       && c.name.toLowerCase().includes(q)) : [];
     return starts.concat(inside);
   }
@@ -395,7 +407,7 @@
   }
 
   const api = { AGENTS, sizeMb, freeTextOption, freeAnswerText, agentOf, agentSelection, agentParam, agentPasses, toggleAgent, newSessionAgents,
-                newSessionAgent, cardHistory, applyFrozenOrder, pruneClosedNotes, CLOSED_NOTE_TTL_MS, pluralRu, tasksSummary, jumpMatches, durationText, stepPasses, relPath, terminalStatus, infoParts, shortTokens, arrangeSessions, contextLevel, limitsText, limitsAge, activeUrl, deliveryState, DELIVERY_WAIT_MS, commandMatches,
+                newSessionAgent, cardHistory, applyFrozenOrder, pruneClosedNotes, CLOSED_NOTE_TTL_MS, pluralRu, tasksSummary, jumpMatches, durationText, stepPasses, relPath, terminalStatus, infoParts, shortTokens, arrangeSessions, contextLevel, limitsText, limitsAge, activeUrl, deliveryState, DELIVERY_WAIT_MS, queuedNotShown, commandMatches,
                 historyStep, PERIODS, periodOf, valuesOf, passes, filterOptions, parseLayout,
                 backgroundReasons, unansweredPrompt, nextCard, costText };
   root.AtlasLogic = api;           // own namespace: active.js has wrappers

@@ -14,17 +14,25 @@ import re
 import sqlite3
 from urllib.parse import quote
 
-from . import activity
+from . import activity, codex_skills
 from .parse import SessionFacts, _add_seen, _harvest_all, _harvest_tickets, _turn, iter_complete_lines
 
 AGENT = "codex"
+PARSE_VERSION = 2     # 2: skills by Codex's own names, once a turn; a forked subagent's copied turns skipped
 ROLLOUT_ID = re.compile(r"^rollout-.*-([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
                         r"[0-9a-fA-F]{12})\.jsonl$")
 PATCH_FILE = re.compile(r"^\*\*\* (?:(?:Add|Update|Delete) File|Move to): *(.+?)\s*$", re.M)
 # `exec` runs model-written JavaScript; the shell command is the `cmd:` string inside it.
 JS_CMD = re.compile(r"""\bcmd\s*:\s*("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`[^`]*`)""")
 SHELL_CALLS = ("exec_command", "shell", "local_shell", "container.exec")
+# Statistics name skills and subagents as for Claude Code (atlas/activity.py): `Skill:x`, `Agent:y`.
+# Codex uses a skill by reading its SKILL.md, or gets it pasted in when you type `$name`.
+SKILL_MENTION = re.compile(rb'"role":\s*"user",\s*"content":\s*\[\{"type":\s*"input_text",\s*"text":\s*'
+                           rb'"<skill>\\n<name>([A-Za-z0-9_.:-]{1,100})</name>')
+JS_SPAWN = re.compile(r"\bspawn_agent\(\s*\{(.{0,2000}?)\}\s*\)", re.S)
+JS_AGENT_TYPE = re.compile(r"""\bagent_type\s*:\s*["'`]([A-Za-z0-9_.-]{1,60})["'`]""")
 TITLE_LIMIT = 200
+COPIED_EVENTS = ("user_message", "agent_message", "item_completed", "patch_apply_end")
 # Records never indexed, recognised from the line head without decoding it: message items carry
 # base64 images and outputs carry raw tool output, up to ~20 MB a line. Anything else is decoded.
 _SKIP_HEAD = re.compile(
@@ -90,6 +98,12 @@ class _Rollout:
     def __init__(self, facts: SessionFacts) -> None:
         self.facts = facts
         self.meta_seen = False
+        # A subagent spawned with its parent's context starts with a copy of the parent's turn: its
+        # calls, commands, skills and messages were already counted in the parent. Turns of the
+        # threads read before this one (the root, then its subagents) are skipped.
+        self.known_turns: frozenset = frozenset()
+        self.turn = None
+        self.turn_skills: set = set()
         self.model: str | None = None
         self.last_total: str | None = None
         self.tools: list[str] = []
@@ -112,6 +126,7 @@ class _Rollout:
         if not text or not self._first_copy("prompt", channel, text):
             return
         f = self.facts
+        self.turn_skills = set()              # rollouts without turn ids: a prompt starts the turn
         f.user_text.append(text)
         _turn(f, start_new=True)["user_text"].append(text)
         if f.first_user_text is None:
@@ -141,6 +156,14 @@ class _Rollout:
         if cmd:
             self.facts.commands.append(cmd)
             _turn(self.facts)["commands"].append(cmd)
+            self.skills(codex_skills.read_in(cmd))
+
+    def skills(self, names) -> None:
+        """A skill counts once a turn: reading SKILL.md in parts, or after `$name`, is the same use."""
+        for name in names:
+            if name not in self.turn_skills:
+                self.turn_skills.add(name)
+                self.tools.append("Skill:" + name)
 
     def patch_paths(self, text: str) -> None:
         for path in PATCH_FILE.findall(text or ""):
@@ -188,6 +211,11 @@ def _session_meta(r: _Rollout, p: dict) -> None:
     _add_seen(f.branches, git.get("branch"))
     source = p.get("source")
     f.spawned = p.get("thread_source") == "subagent" or (isinstance(source, dict) and "subagent" in source)
+    # `codex fork`, /fork and a Desktop fork name their source; subagent and review threads do too,
+    # but they are not copies the human made.
+    if p.get("forked_from_id") and not f.spawned:
+        f.forked_from = str(p["forked_from_id"]).lower()
+        f.forked_at = p.get("timestamp") if isinstance(p.get("timestamp"), str) else None
 
 
 def _event(r: _Rollout, p: dict, ts: str | None) -> None:
@@ -224,19 +252,22 @@ def _response_item(r: _Rollout, p: dict) -> None:
         return
     name = str(p.get("name") or "?")
     r.facts.machine_turns += 1
-    r.tools.append(name.replace(",", " "))
     if kind == "function_call":
         try:
             args = json.loads(p.get("arguments") or "{}")
         except (TypeError, ValueError):
             args = {}
         if not isinstance(args, dict):
-            return
+            args = {}
+        if name == "spawn_agent":
+            name = "Agent:" + str(args.get("agent_type") or "default")
+        r.tools.append(name.replace(",", " "))
         if name in SHELL_CALLS:
             r.command(_shell_command(args))
         elif name == "apply_patch":
             r.patch_paths(str(args.get("input") or ""))
         return
+    r.tools.append(name.replace(",", " "))
     text = str(p.get("input") or "")
     if name == "apply_patch":
         r.patch_paths(text)
@@ -244,6 +275,9 @@ def _response_item(r: _Rollout, p: dict) -> None:
         for literal in JS_CMD.findall(text):
             r.command(_js_string(literal))
         r.patch_paths(text)
+        for call in JS_SPAWN.findall(text):
+            kind_ = JS_AGENT_TYPE.search(call)
+            r.tools.append("Agent:" + (kind_.group(1) if kind_ else "default"))
 
 
 def _copied(facts: SessionFacts, ts: str | None) -> bool:
@@ -258,15 +292,24 @@ def _note_time(facts: SessionFacts, ts: str | None) -> None:
         facts.last_main_ts = ts
 
 
+def _turn_id(p: dict):
+    attribution = p.get("turn_attribution") if isinstance(p.get("turn_attribution"), dict) else {}
+    return attribution.get("turn_id") or p.get("turn_id")
+
+
 def parse_file(path: str, session_id: str | None = None, title: str | None = None,
-               continued_from: str | None = None, copied_until: str | None = None) -> SessionFacts:
+               continued_from: str | None = None, copied_until: str | None = None,
+               turns: set | None = None) -> SessionFacts:
     """Reads the whole rollout line by line: a file is never loaded into memory at once.
-    A rollout "Resume with…" wrote holds copies up to `copied_until`: only its session_meta counts."""
+    A rollout "Resume with…" wrote holds copies up to `copied_until`: only its session_meta counts.
+    `turns`: turn ids of the threads read before (a subagent's parent); their records here are a copy
+    of the parent's history and are skipped. This thread's own turn ids are added to it."""
     facts = SessionFacts(session_id=session_id or session_id_of(path) or "", source_path=path,
                          agent=AGENT, continued_from=continued_from, copied_until=copied_until)
     if title:
         facts.title, facts.title_source = title, "codex"
     r = _Rollout(facts)
+    r.known_turns = frozenset(turns or ())
     with open(path, "rb") as fh:
         for offset, raw in iter_complete_lines(fh):
             facts.complete_bytes = offset
@@ -276,8 +319,11 @@ def parse_file(path: str, session_id: str | None = None, title: str | None = Non
                 head_ts = head.group(1).decode() if head else None
                 if _copied(facts, head_ts):
                     facts.copied += 1
-                else:
-                    _note_time(facts, head_ts)
+                    continue
+                _note_time(facts, head_ts)
+                skill = None if r.turn in r.known_turns else SKILL_MENTION.search(raw, 0, 600)
+                if skill:
+                    r.skills([skill.group(1).decode()])
                 continue
             try:
                 rec = json.loads(raw)
@@ -295,6 +341,16 @@ def parse_file(path: str, session_id: str | None = None, title: str | None = Non
                 _note_time(facts, ts)
             elif kind != "session_meta":
                 facts.copied += 1
+                continue
+            if (kind == "event_msg" and p.get("type") == "task_started") or kind == "turn_context":
+                turn = _turn_id(p) or r.turn
+                if turn != r.turn or kind == "event_msg":
+                    r.turn_skills = set()          # a new turn: its skills count again
+                r.turn = turn
+                if turns is not None and r.turn:
+                    turns.add(r.turn)
+            if r.turn in r.known_turns and (
+                    kind == "response_item" or (kind == "event_msg" and p.get("type") in COPIED_EVENTS)):
                 continue
             if kind == "session_meta":
                 _session_meta(r, p)

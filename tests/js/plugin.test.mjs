@@ -1254,7 +1254,7 @@ describe("catalog command parsing", () => {
   for (const bad of [`cd /x && claude --resume ${ID}; rm -rf ~`, `cd /x && claude --resume ${ID} && rm x`,
                      `cd /x && claude --resume $(id)`, `cd x && claude --resume ${ID}`,
                      `cd /x && claude --resume 1`, `cd /x && claude --resume ${ID} --dangerously-skip-permissions`,
-                     `cd /x && codex resume ${ID} --yolo`, `cd /x && codex fork ${ID}`,
+                     `cd /x && codex resume ${ID} --yolo`, `cd /x && codex fork ${ID} --yolo`,
                      `cd /x && codex --resume ${ID}`, `cd /x '&&' claude --resume ${ID}`,
                      `cd '/x && claude --resume ${ID}`, `cd /x && claude --session-id ${ID} "a$b"`,
                      `cd /x;id && claude --resume ${ID}`, `cd /x|id && claude --resume ${ID}`]) {
@@ -2225,7 +2225,7 @@ describe("plugin reload keeps agents in background tabs", () => {
   });
 });
 
-// --- Codex in the plugin's own tabs: the screens are live codex-cli 0.160.0 snapshots ---
+// --- Codex in the plugin's own tabs: the screens are live codex-cli 0.160.0 and 0.167.0 snapshots ---
 
 const cx = readJson("codex_screens.json");
 const codexSrc = loadSrc("dialog-codex");
@@ -2234,7 +2234,7 @@ const CODEX_ID = "019a0000-0000-7000-8000-000000000001";
 
 describe("Codex screens", () => {
   const states = { idle: "idle", idle_draft: "idle", idle_after_turn: "idle", interrupted: "idle", esc_idle: "idle",
-                   status: "idle", busy: "busy", busy_queued: "busy", exec: "waiting", exec_moved: "waiting",
+                   status: "idle", busy: "busy", busy_queued: "busy", busy_queued_tab: "busy", exec: "waiting", exec_moved: "waiting",
                    exec_long: "waiting", edit: "waiting", question: "waiting", question_multi: "waiting",
                    plan_implement: "waiting", rate_limit: "waiting" };
   it("every captured screen is in the test", () => {
@@ -2304,11 +2304,24 @@ describe("Codex screens", () => {
   it("no footer, no dialog: the same options without the hint line are text", () => {
     assert.equal(P(cx.exec.map((l) => l.replace(/Press enter to confirm or esc to cancel/, ""))), null);
   });
+  it("queued messages: steered into the turn, or queued with Tab; a long one is one message", () => {
+    assert.deepEqual(codexSrc.codexQueued(cx.busy_queued), ["also check b.md"]);
+    assert.deepEqual(codexSrc.codexQueued(cx.busy_queued_tab), ["LIVE-CX-QUEUED after this"]);
+    assert.deepEqual(codexSrc.codexQueued(cx.busy), []);
+    assert.deepEqual(codexSrc.codexQueued(cx.idle_after_turn), []);
+    const tabbed = ["› LIVE-CX-SLOW think", "", "• Working (5s • esc to interrupt)", "",
+                    "• Queued follow-up inputs", "  ↳ queued with tab", "  ↳ a second message that is long",
+                    "    and wraps onto the next row", "    ⇧← edit last queued message", "",
+                    "› Ask Codex to do anything", "", "  gpt-5.1 default · /tmp/w"];
+    assert.deepEqual(codexSrc.codexQueued(tabbed), ["queued with tab",
+                                                    "a second message that is long and wraps onto the next row"]);
+  });
   it("composer text and /status output", () => {
     assert.equal(codexSrc.composerText(cx.idle_draft), "a draft I have not sent yet");
     const out = codexSrc.extractCodexCommandOutput(cx.status, "/status");
     assert.match(out.text, /^>_ OpenAI Codex/);
     assert.match(out.text, /Collaboration mode: {2}Default/);
+    assert.match(out.text, /Permissions: +Workspace \(Ask for approval\)/);
     assert.doesNotMatch(out.text, /›|Ask Codex/);
   });
   it("Claude Code screens are not Codex dialogs, and Codex screens are not Claude ones", () => {
@@ -2420,6 +2433,13 @@ describe("Codex tab: answers, reply, stop", () => {
   it("reply when idle: text, then Enter", async () =>
     expectReply(await on(cx.idle, () => send("send-text", { text: "list the files" }, 400)), null, true,
                 ["list the files", "\r"]));
+  it("reply with an image: the path pasted quoted, as Codex attaches it (the data folder has a space)", async () => {
+    const pic = path.join(plugin.dataDir(), "uploads", "codex reply.png");
+    fs.mkdirSync(path.dirname(pic), { recursive: true });
+    fs.writeFileSync(pic, "png");
+    expectReply(await on(cx.idle, () => send("send-text", { text: "what is this?", images: [pic] }, 700)), null, true,
+                ["\x1b[200~" + JSON.stringify(pic) + "\x1b[201~ ", "what is this?", "\r"]);
+  });
   it("reply while busy: Codex queues it", async () =>
     expectReply(await on(cx.busy, () => send("send-text", { text: "also check b.md" }, 400)), null, true,
                 ["also check b.md", "\r"]));
@@ -2462,6 +2482,15 @@ describe("Codex tab: answers, reply, stop", () => {
                                                             screen: "waiting" });
     assert.equal(tabs.find((t) => t.ptyPid === 6001).agent, undefined);
   });
+  it("tab list: messages queued on a Codex screen come with the tab", async () => {
+    cscreen = cx.busy_queued;
+    const before = replies.length;
+    plugin.handleMessage(msg({ type: "list-tabs" }));
+    await settle(300);
+    const tabs = replies.slice(before).find((x) => x.msg.type === "tabs").msg.tabs;
+    assert.deepEqual(tabs.find((t) => t.ptyPid === 6003), { ptyPid: 6003, title: "Codex", agent: "codex",
+                                                            screen: "busy", queued: ["also check b.md"] });
+  });
 
   it("notification: the server sees busy, the tab shows an approval", async () => {
     const codexSession = (activity) => ({ session_id: CODEX_ID, title: "Codex probe", agent: "codex",
@@ -2493,6 +2522,25 @@ describe("Codex resume from the catalog and after a restart", () => {
   it("parsed: codex resume <id>", () => {
     assert.deepEqual(agents.parseLaunch(`cd '/Users/u/Code/p' && codex resume ${ID}`),
                      { agent: "codex", cwd: "/Users/u/Code/p", mode: "resume", sessionId: ID, prompt: "" });
+  });
+  it("parsed: codex fork <id> is a copy start", () => {
+    assert.deepEqual(agents.parseLaunch(`cd '/Users/u/Code/p' && codex fork ${ID}`),
+                     { agent: "codex", cwd: "/Users/u/Code/p", mode: "resume-fork", sessionId: ID, prompt: "" });
+    for (const bad of [`cd /p && codex fork`, `cd /p && codex fork ${ID} x`, `cd /p && codex forks ${ID}`]) {
+      assert.equal(agents.parseLaunch(bad), null, bad);
+    }
+  });
+  it("opens a Codex tab with the copy start", async () => {
+    const p = new SessionAtlasPlugin();
+    const states = [];
+    p.agentScriptPath = () => SCRIPT;
+    p.app = { vault: { configDir: "c", adapter: { getBasePath: () => TMP } },
+              workspace: { getLeaf: () => ({ setViewState: async (st) => states.push(st) }), revealLeaf() {} } };
+    p.settings = { language: "en" };
+    await p.openCommandInTerminal(`cd '/Users/u/Code/p' && codex fork ${ID}`, "/Users/u/Code/p", "Probe");
+    const w = agents.shellWords(states[0].state.command);
+    assert.equal(states[0].state.kind, "codex");
+    assert.deepEqual(w.slice(2, 3).concat(w.slice(4)), ["codex", "resume-fork", ID]);
   });
   it("opens a Codex tab with the resume start", async () => {
     const p = new SessionAtlasPlugin();
@@ -2554,7 +2602,7 @@ describe("Codex new sessions from the catalog", () => {
                      "cd /x && codex '--yolo now'", "cd /x && codex -m o3 'do it'", "cd /x && codex 'a b' 'c d'",
                      "cd /x && codex 'do it' --yolo", "cd /x && codex ''", "cd /x && codex '   '",
                      "cd /x && codex 'a b'; id", "cd /x && codex \"a $(id)\"", "cd x && codex 'a b'",
-                     `cd /x && codex fork ${ID}`, `cd /x && codex resume ${ID} 'a b'`,
+                     `cd /x && codex fork ${ID} 'a b'`, `cd /x && codex resume ${ID} 'a b'`,
                      `cd /x && claude --session-id ${ID} update`, `cd /x && claude --session-id ${ID} '-v x'`,
                      `cd /x && claude 'a b'`, "cd /x && claude"]) {
     it(`rejects: ${bad}`, () => assert.equal(P(bad), null));

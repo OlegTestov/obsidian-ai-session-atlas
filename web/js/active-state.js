@@ -10,7 +10,7 @@ const ACTIVE_POLL_MS = 5000;
 const HOST_SOURCE = "session-atlas-host";
 let activeSessions = [];
 let activeRaw = [];             // sessions as the server sent them; activeSessions adds tab screens
-let hostScreens = new Map();    // PTY proxy PID → screen state of a Codex tab (waiting | busy | idle)
+let hostScreens = new Map();    // PTY proxy PID → a Codex tab's screen: {state: waiting | busy | idle, queued}
 let hostTabs = new Map();       // PTY proxy PID → terminal tab title
 let hostHeld = new Map();       // PTY proxy PID → title: the tab closed with the plugin, the process runs
 let hostBackground = new Map(); // PTY proxy PID → the Claude Code background job the tab shows
@@ -118,8 +118,7 @@ window.addEventListener("message", e => {
   if (!d || d.source !== HOST_SOURCE || d.type !== "tabs" || !Array.isArray(d.tabs)) return;
   hostTabs = new Map(d.tabs.filter(t => t && Number.isInteger(t.ptyPid))
     .map(t => [t.ptyPid, String(t.title || "")]));
-  hostScreens = new Map(d.tabs.filter(t => t && Number.isInteger(t.ptyPid) && t.agent === "codex")
-    .map(t => [t.ptyPid, typeof t.screen === "string" ? t.screen : null]));
+  hostScreens = tabScreens(d.tabs);
   hostBackground = new Map(d.tabs.filter(t => t && Number.isInteger(t.ptyPid) && /^[0-9a-f]{8}$/.test(t.background || ""))
     .map(t => [t.ptyPid, t.background]));
   hostHeld = new Map((Array.isArray(d.held) ? d.held : []).filter(t => t && Number.isInteger(t.ptyPid))
@@ -146,6 +145,13 @@ window.addEventListener("message", e => {
   renderRestoreBanner();                 // tabs closed with the plugin are offered back at once
   renderActive();
 });
+
+/** The plugin's tab list → PTY PID of each Codex tab → its screen: {state, queued}. */
+function tabScreens(tabs) {
+  return new Map(tabs.filter(t => t && Number.isInteger(t.ptyPid) && t.agent === "codex")
+    .map(t => [t.ptyPid, { state: typeof t.screen === "string" ? t.screen : null,
+                           queued: Array.isArray(t.queued) ? t.queued.filter(q => typeof q === "string") : [] }]));
+}
 
 // A Codex session whose tab shows a prompt waits for you: only the screen knows it. The tab's group comes along.
 function screenSessions() {

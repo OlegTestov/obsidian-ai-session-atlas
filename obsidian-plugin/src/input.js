@@ -77,14 +77,15 @@ class InputMethods {
     if (state.agent === "codex" && !state.status) return reply(false, this.t("input.codexScreen"));
     const stdin = await this.ptyInput(tab.leaf);
     if (!stdin) return reply(false, this.t("input.noInput"));
-    // An image path pasted on its own becomes an [Image #N] attachment in Claude Code.
-    for (const image of images) stdin.write(PASTE_START + image + PASTE_END + " ");
+    // An image path pasted on its own becomes an [Image #N] attachment. Codex takes it only quoted
+    // (the data folder has a space); Claude Code takes it either way (both checked on the live CLIs).
+    const codex = state.agent === "codex";
+    for (const image of images) stdin.write(PASTE_START + (codex ? JSON.stringify(image) : image) + PASTE_END + " ");
     if (text) stdin.write(text.includes("\n") ? PASTE_START + text + PASTE_END : text);
     window.setTimeout(() => stdin.write("\r"),
                       ENTER_DELAY_MS + IMAGE_ENTER_DELAY_MS * images.length);
     reply(true);
     const command = /^\/([a-z][a-z-]*)(\s|$)/.exec(text.trim());
-    const codex = state.agent === "codex";
     if (command && !images.length
         && (codex ? this.codexScreenCommand(command[1]) : SCREEN_COMMANDS.has(command[1]))) {
       window.setTimeout(() => {

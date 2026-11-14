@@ -149,10 +149,10 @@ def cmd_handoff(conn, args) -> int:
                                "hint": "rerun with --confirm to send"}))
         return EXIT_OK
     runner.grant_egress(conn, args.session_id, preview["content_hash"], kind,
-                        preview["backend"], runner.model_for(kind)[0])
+                        preview["backend"], runner.model_for(kind, preview["backend"])[0])
     job_id, _ = actions.claim_job(conn, args.session_id, kind, preview["content_hash"])
     try:
-        result = enrich.produce(conn, args.session_id, kind, job_id)
+        result = enrich.produce(conn, args.session_id, kind, job_id, backend=preview["backend"])
         actions.set_job_state(conn, job_id, "done")
     except Exception as exc:
         actions.set_job_state(conn, job_id, "failed", error=str(exc))

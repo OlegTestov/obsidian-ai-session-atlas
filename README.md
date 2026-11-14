@@ -24,9 +24,9 @@ server on `127.0.0.1`, and nothing is sent anywhere unless you turn on the optio
   - rename it (for Claude Code the name is also saved where `claude --resume` shows it);
   - delete it from the computer for good, after a confirmation that lists every file.
 
-  A copy made with **Copy session** (Claude Code only) that keeps its source's name shows as
-  "Name (2)", "(3)"…; its card links to the source ("Copy of …") and the source lists its copies
-  ("Copies: …").
+  A copy made with **Copy session** (`claude --fork-session` or `codex fork`, also /branch or /fork in
+  the agent) that keeps its source's name shows as "Name (2)", "(3)"…; its card links to the source
+  ("Copy of …") and the source lists its copies ("Copies: …").
 - **Active.** Every running Claude Code session and every interactive Codex session as a card: what
   it is doing, what it said last, whether it waits for you. For sessions running in an AI Session
   Atlas terminal tab you can also:
@@ -35,7 +35,7 @@ server on `127.0.0.1`, and nothing is sent anywhere unless you turn on the optio
     👁 shows another option's, and a note can go with the answer; several Claude Code questions at
     once come as tabs, as in the terminal, and go together with "Send the answers";
   - read and approve a Claude Code plan, or send it back with comments;
-  - type a reply (Claude Code replies can carry images), stop the agent, run slash commands.
+  - type a reply (it can carry images), stop the agent, run slash commands.
 
   A session that finished while you were away from its tab gets a dot before its title until you open
   the card, its feed or its tab; "N new" in the summary line marks the cards on screen as seen.
@@ -80,35 +80,66 @@ server on `127.0.0.1`, and nothing is sent anywhere unless you turn on the optio
 
 ### Codex support
 
-Search, Active, Statistics, terminal tabs and deletion work for Codex sessions too. Checked with
-codex-cli 0.160.0. Differences from Claude Code:
+Search, Active, Statistics, terminal tabs, Copy session and deletion work for Codex sessions too.
+Checked with codex-cli 0.167.0. Differences from Claude Code:
 
 - **Sessions.** The catalog reads Codex session files (rollouts) in `sessions/` and
   `archived_sessions/` of the Codex home. Codex's own thread titles are read from its state database
   (`state_*.sqlite`), opened read-only. Codex instructions, reasoning and tool output are not indexed.
-  `codex exec` runs and subagent threads count as automation, like Claude Code SDK runs.
-- **Rename** changes the name in the catalog only. Existing Codex session files are never written.
-- **Copy session** is Claude Code only.
+  `codex exec` runs count as automation, like Claude Code SDK runs. A subagent thread is part of the
+  session that started it, as a Claude Code subagent is: Search finds its text there, Statistics count
+  its replies and tokens there, and it is not listed by itself. A subagent thread whose parent session
+  file is gone is listed on its own, as automation.
+- **Rename** saves the name in the catalog and asks Codex to rename the thread with its own command
+  (`thread/name/set` through a short-lived `codex app-server`, as `/rename` does), so `codex resume`
+  and Codex's own list show it too. Codex's session files are never written. If Codex cannot do it
+  (not installed, too old), the name stays in the catalog and the page says why.
+- **Copy session** runs `codex fork <id>`. Codex gives the copy its own id and keeps the source's
+  history in the source's file, so Search finds the copy by its own turns. Codex names a thread by its
+  first prompt, so a copy is numbered "Name (2)" only while Codex keeps the source's name on it.
+  Subagent and review threads are not counted as copies.
 - **Continue in a new session** (a new session that starts from a session note) starts the source
   session's agent: a Codex session continues in Codex, with the same first prompt that names the
   session note file. Codex picks its own thread id when it starts, so each Codex launch writes its
   own session note file, and the catalog links the new thread to its source once a thread whose first prompt names that file is indexed.
 - **+ Session** in Active has an **Agent** choice (Claude Code or Codex; Claude Code by default, the
   last choice is remembered in this browser). Codex is offered only when it is turned on in
-  **Settings → AI Session Atlas → Agents**. A Codex tab records the new thread id once Codex writes
-  its session file, so the tab comes back to that thread after an Obsidian restart.
+  **Settings → AI Session Atlas → Agents**.
+- **Terminal tabs** follow the thread the tab's `codex` has open, also after `/new`, `/resume` or
+  `/fork` inside it, so after an Obsidian restart the tab comes back to the thread you were in. Codex
+  keeps every thread it opened in the tab open: the newest one counts, then the one written last, so
+  a thread switched back to with `/resume` counts once you send it something. Codex gets no hook.
 - **Folder** in **+ Session** is a text field: paste an absolute path, type `~/…`, or the vault name and
   a path inside it, or pick a suggestion (folders your sessions ran in, then the real subfolders of what
   is typed; buttons for the vault root and home). Delete the tail to go up a level; ↑/↓ and Enter pick,
   Tab goes into the highlighted folder, Esc closes the list. A path that is not an existing folder is
   refused with the reason.
 - **Active** shows interactive `codex` processes in a terminal, found with `ps` and `lsof`. `codex exec`
-  runs and the Codex app are not live cards; their sessions appear in Search.
+  runs and the Codex app are not live cards; their sessions appear in Search. As on a Claude Code
+  card, a Codex card shows the thread's active `/goal`, its running subagents (subagent session files
+  of this thread written in the last 90 seconds), the commands it left running in the background
+  (child processes of `codex` other than its MCP servers, matched by their exact command and arguments)
+  and the messages waiting to be sent. A Codex started outside an Atlas tab runs its commands in its
+  app-server daemon, so its card shows no background commands. The goal and messages queued through `codex app-server` come from Codex's
+  `goals_1.sqlite` and `queue_1.sqlite`, opened read-only; messages queued in a terminal tab (Tab or
+  Enter while Codex works) are read from the tab's screen.
 - **Waiting for you.** Codex writes no permission prompt into its files, so the plugin reads it from
-  the screen of its own terminal tab. A Codex session in another terminal app shows only busy or idle;
-  move it into a tab to answer from the card.
-- **Slash commands.** Command hints and argument pickers are Claude Code only. A command typed for
-  Codex is sent as is; the output of `/status` and `/mcp` is shown on the card.
+  the screen of its own terminal tab. For a Codex session in another terminal app, turn on
+  **Settings → Agents → Codex: "waiting for you" outside tabs** (off by default): it adds one hook to
+  Codex's `hooks.json`, and the card shows the wait. Codex asks you to trust a new hook: open `/hooks`
+  in Codex and allow it. Answer the prompt in that terminal, or move the session into a tab. Codex
+  remembers that trust by the hook's place in the file, so turning the switch off removes the hook
+  only while it is the last one; with your own hooks after it, it stays in place and does nothing.
+- **Slash commands.** "/" lists Codex's own commands, "$" the skills Codex itself offers, by its
+  names: the list Codex put into its newest session (nested skills such as `gstack/browse`, its own
+  `.system` skills and plugin skills such as `figma:figma-use` included); without one, the skills in
+  `$CODEX_HOME/skills` and `~/.agents/skills`. `/model` shows Codex's models from its own list
+  (`models_cache.json`), then that model's reasoning efforts; Codex keeps the choice for this session
+  only. The output of `/status` and `/mcp` is shown on the card.
+- **Statistics.** A skill counts once a turn when you mention it with `$name` or when Codex reads its
+  `SKILL.md` (reading it in parts is one use; editing it is none), under the name Codex gives it. A
+  subagent counts by its type (`spawn_agent`, "default" without one). A subagent started with its
+  parent's context begins with a copy of the parent's turn; that copy counts only in the parent.
 - **Limits.** Codex's 5-hour and weekly limits come from Codex itself, as its `/status` shows them:
   while Codex cards are shown in Active, the server runs `codex app-server`, asks it once for the
   account's usage (`account/rateLimits/read`) and exits it, at most every 5 minutes. No thread is
@@ -118,13 +149,16 @@ codex-cli 0.160.0. Differences from Claude Code:
 - **Cost.** Codex writes tokens but no cost. Statistics and live cards price Codex replies at OpenAI
   API prices from a table built into the plugin; a model the table does not know shows no cost.
   Prices can be fixed or added in `config.json` (see Usage).
-- **AI features** work on Codex sessions too, through your `claude` CLI.
+- **AI features** work on Codex sessions too. They run through Claude Code when it is installed, and
+  through Codex (`codex exec`) when only Codex is; **Settings → AI features → Run through** picks one.
+  A request goes only to the agent its preview named: if the settings now point elsewhere, the page
+  asks to open the preview again.
 
 ### Resume with another agent
 
 **Resume with…** on a Search card lists Claude Code and Codex. The session's own agent is the ordinary
 resume. The other agent gets a new session of its own, made from this conversation, and it opens in a
-terminal tab with that agent's ordinary resume. Checked with Claude Code 2.1.289 and codex-cli 0.160.0.
+terminal tab with that agent's ordinary resume. Checked with Claude Code 2.1.289 and codex-cli 0.167.0.
 
 - **What is copied:** the conversation since its last context compaction, with the compaction
   summary: your prompts and the agent's replies word for word, and tool calls as short text lines
@@ -169,7 +203,7 @@ terminal tab with that agent's ordinary resume. Checked with Claude Code 2.1.289
 | macOS | 12 Monterey or newer |
 | Obsidian | Desktop app, 1.8.7 or newer |
 | Python | `python3` 3.8 or newer whose SQLite supports FTS5 with the trigram tokenizer. The system `python3` comes with Xcode Command Line Tools |
-| Agents | Claude Code installed and signed in. Codex is optional; checked with codex-cli 0.160.0 |
+| Agents | Claude Code installed and signed in. Codex is optional; checked with codex-cli 0.167.0 |
 
 The plugin looks for `python3` in this order: the path set in **Settings → AI Session Atlas → Advanced → Custom
 python3**, `/usr/bin/python3` (only when Command Line Tools are installed, so the plugin never runs
@@ -223,10 +257,12 @@ many sessions the first index can take a few minutes.
     written in the same language.
   - *Agents:* turn Claude Code and Codex on or off; until you do, each is on when the plugin finds it
     at start-up, extra launch arguments for each (for example
-    `--chrome`), terminal font size, number of messages in a detailed Active card.
+    `--chrome`), the Codex "waiting for you" hook (off by default), terminal font size, number of
+    messages in a detailed Active card.
   - *Catalog:* note folders, project roots, categories, note areas mapped to categories, sensitive areas
     and projects, ticket prefixes. These live in `config.json` in the data folder.
-  - *AI features:* on/off, model and effort for each task, 1M-token window.
+  - *AI features:* on/off, model and effort for each task, 1M-token window, which agent runs them
+    (Auto, Claude Code, Codex) and the Codex model.
   - *Other:* notices and how long they stay, macOS notifications, file explorer clicks.
   - *Advanced:* custom `python3` path and terminal shell.
 - **Codex prices.** `openai_prices` in `config.json` fixes or adds the price of a Codex model, in US
@@ -247,7 +283,8 @@ developer policies.
 - The plugin and its server make no other network requests. There is no telemetry, no analytics, no
   update check, no ads and no account.
 - The optional AI features run your own `claude` CLI, which sends data to Anthropic under your
-  Claude Code account (see "AI features" below).
+  Claude Code account, or, when only Codex is installed or you pick it, your own `codex` CLI, which
+  sends data to OpenAI under your Codex login (see "AI features" below).
 - Claude Code and Codex running in terminal tabs connect to their providers as they always do. The
   plugin does not send anything to OpenAI itself.
 - While Codex cards are shown in Active, the server may run your `codex` as `codex app-server` to read
@@ -255,6 +292,8 @@ developer policies.
   its own login, as its `/status` does. No model is called and nothing from your sessions is sent;
   the plugin never reads Codex's login. OpenAI prices come from a table inside the plugin, not
   from the network.
+- When you rename or delete a Codex session, the server runs your `codex` (`codex app-server` for the
+  name, `codex delete` for deletion). Codex does that locally; no model is called.
 
 **Clipboard.** The plugin reads clipboard text only when you choose Paste in a terminal's context
 menu, and sends it to that terminal as typed input. Copy actions write the selected terminal text
@@ -279,8 +318,11 @@ never started.
 | `~/.claude/commands/`, `~/.claude/skills/`, `~/.claude/plugins/`, `~/.claude/settings.json` | read | The slash command list in Active |
 | `~/.codex/sessions/`, `~/.codex/archived_sessions/` | read | Codex session files: the catalog, Active and Statistics, and the session a terminal tab should resume |
 | `~/.codex/state_*.sqlite` | read only, opened in read-only mode | Codex's own thread titles |
+| `~/.codex/goals_1.sqlite`, `~/.codex/queue_1.sqlite` | read only, opened in read-only mode | A Codex card's `/goal` and queued messages in Active |
 | `~/.codex/history.jsonl` | read | How many input history lines a Codex session has, shown before deletion |
-| `~/.codex/config.toml` | read, only for **Resume with… → Codex** | The model provider a new Codex session names |
+| `~/.codex/skills/`, `~/.agents/skills/`, `~/.codex/models_cache.json` | read | The Codex command list and `/model` picker in Active |
+| `~/.codex/config.toml` | read | The model provider a new Codex session names (**Resume with… → Codex**); its MCP servers, which Active does not count as background commands |
+| `~/.codex/hooks.json` | write, only when you turn on **Codex: "waiting for you" outside tabs** | Adds the AI Session Atlas hook; a copy of an existing file is kept next to it (`hooks.json.session-atlas.bak`); turning it off removes only that hook, and only while it is the last one (otherwise it stays and does nothing) |
 | `~/Library/Application Support/session-atlas/` | read, write | The plugin's data folder: unpacked server, index, settings, logs (see "Privacy & data location") |
 | `~/.local/state/obsidian-agent-terminals/` (or `$XDG_STATE_HOME/obsidian-agent-terminals/`) | read, write | Which session each terminal tab holds, so the tab can resume it |
 | `~/.claude/settings.json` | write, on first install when it has no status line, or when you turn on **Subscription limits** | Adds the AI Session Atlas status line (see below) |
@@ -289,13 +331,18 @@ never started.
 | A new file in `~/.codex/sessions/YYYY/MM/DD/` | create, only when you use **Resume with… → Codex** | A new Codex session made from a Claude Code session |
 | A session's files in `~/.claude/` and its lines in `~/.claude/history.jsonl` | delete, only when you delete a session | See "Deleting a session" below |
 | A Codex session's files in `~/.codex/sessions/` and `~/.codex/archived_sessions/`, its lines in `~/.codex/history.jsonl` | delete, only when you delete a Codex session | See "Deleting a session" below |
+| `~/Library/Application Support/session-atlas/codex-waits/` | write, by the Codex hook, only while it is on | One small file per Codex session: when it started waiting for an approval |
+| `~/Library/Application Support/session-atlas/codex-hook-off` | write, by the plugin | The Codex hook is off but stays in `hooks.json` (your hooks follow it): while this file exists it does nothing |
 | `~/Desktop`, `~/Documents` or a project folder | write, only when you export a session note there | The exported session note file |
 
 If `CLAUDE_CONFIG_DIR` is set in Obsidian's environment, every `~/.claude` path above means that folder.
 If `CODEX_HOME` is set, every `~/.codex` path means that folder. The plugin never writes Codex's
-databases or settings and never writes into an existing Codex session file (`codex app-server`, run for
-the limits, keeps its own logs and databases there as any Codex run does). It creates a new session
-file only when you use **Resume with…** and deletes files only when you delete a session.
+databases or `config.toml` and never writes into an existing Codex session file. When you rename or
+delete a Codex session, Codex's own commands change Codex's records (`thread/name/set`, `codex delete`);
+`codex app-server`, run for the limits and the name, keeps its own logs and databases there as any
+Codex run does. Codex records its trust of the hook in `config.toml` itself, when you allow it in
+`/hooks`. The plugin creates a new session file only when you use **Resume with…** and deletes files
+only when you delete a session.
 
 **Resume with…** (Search card) creates a new session file of the other agent: in `~/.claude/projects/`
 for Claude Code or in `~/.codex/sessions/` for Codex. It happens only after a dialog that names the
@@ -320,7 +367,11 @@ Delete the new session like any other if you no longer need it.
   `ps` and `lsof` tell which Codex session a tab runs.
 - `sw_vers` and `xcode-select -p` for the installation check; `xcode-select --install` only when you
   press the install button.
-- `claude -p`, only when AI features are on (see below).
+- `claude -p` or `codex exec`, only when AI features are on (see below).
+- `codex app-server` (one request: the new name) and `codex delete --force <id>`, only when you rename
+  or delete a Codex session.
+- With the Codex hook on, Codex runs `python3 …/atlas/codex_hook.py` before it shows an approval
+  prompt; the script writes the wait time to the data folder and prints nothing.
 - When you choose **Move** on an Active card, the plugin sends `SIGTERM` to that Claude Code or Codex
   process in the other terminal app (it exits as on Ctrl+C) and resumes the session in an Obsidian
   tab (`claude --resume` or `codex resume`). It checks first that the process belongs to that
@@ -335,6 +386,14 @@ a model.
   account you signed in to Claude Code with and count against your subscription. The model is
   `sonnet` unless you change it. Before a request larger than 200,000 characters, a small test
   request checks that the call works.
+- **Through Codex** (**Run through**: Auto picks Claude Code when it is installed, Codex otherwise):
+  your own `codex exec` with `--ephemeral` (no saved session), `--ignore-user-config` (no
+  `config.toml`: its MCP servers, hooks and profiles are skipped), `--ignore-rules`, hooks disabled,
+  Codex's own tools off (no commands, file reads, web search, subagents, images or goals: a session's
+  text cannot make the model reach anything), no skill list in the request, and a read-only sandbox in an empty folder. A Codex too
+  old to know one of these switches refuses the call instead of running without it. It uses your Codex login and counts against your ChatGPT plan;
+  the model is Codex's default unless you set **Codex model**. A custom provider goes in
+  `codex_exec_config` in `config.json` (`-c key=value` lines). The preview names the agent.
 - **Session summary and session note:** you see a preview of exactly what will be sent and confirm
   it. A session note may send most of the session, as much as fits the model's context window. The full text of each
   preview is saved in the data folder (`payloads/`).
@@ -342,7 +401,9 @@ a model.
   sent as a short fact card: title, working folder and branch, projects, tickets, a few prompts and
   edited file paths.
 - **Hourly automatic mode**, if you turn it on, does the same for new and changed sessions without
-  asking each time, up to 8 sessions an hour.
+  asking each time, up to 8 sessions an hour, through the agent it was turned on with. If the settings
+  would later send them to another agent (Claude Code no longer found, another choice), it pauses and
+  says why under the switch; turn it off and on to go on with the new agent.
 - Sessions in areas or projects you mark as sensitive are never included in topic batches or the
   automatic mode.
 - Claude Code saves these runs as its own transcripts under `~/.claude/projects/`, in a folder the
@@ -365,9 +426,12 @@ and environment, as the window minus its 33k buffer; the `--autocompact` launch 
 item: the transcript and the session folder in `~/.claude/projects/`, its entries in
 `~/.claude/file-history/`, `~/.claude/session-env/`, `~/.claude/tasks/` and `~/.claude/todos/`, its
 lines in `~/.claude/history.jsonl` (the input history), its session notes and its catalog data. For a
-Codex session it removes its session files in `~/.codex/sessions/` and `~/.codex/archived_sessions/`,
-its lines in `~/.codex/history.jsonl`, its session notes and its catalog data. Codex's own databases are
-not changed, so Codex may list the thread for a while, until it notices the file is gone. Files are
+Codex session it first runs `codex delete --force <id>`, so Codex removes the thread from its own
+records and session files itself, its subagent threads included; then it removes whatever is left of
+its session files and its subagent threads' files in `~/.codex/sessions/` and
+`~/.codex/archived_sessions/`, its lines in `~/.codex/history.jsonl`, its session notes and its catalog
+data. If Codex cannot delete it (not installed, too old), the files are
+removed anyway and Codex may list the thread for a while, until it notices the file is gone. Files are
 deleted, not moved to the Trash. A running session cannot be deleted.
 
 ## Privacy & data location
@@ -402,7 +466,11 @@ Plugin settings (language, agents, notifications) are stored by Obsidian in
 5. Optionally delete `~/.claude/settings.json.session-atlas.bak` and, if you used the AI features,
    the folder of their runs in `~/.claude/projects/` whose name ends with `session-atlas-runner`.
 
-The plugin adds nothing to the Codex home, so there is nothing to remove there.
+If you turned on the Codex hook, turn it off first: this removes it from `~/.codex/hooks.json`. If the
+notice says it stayed (your own hooks follow it), delete its entry (the command with `codex_hook.py`)
+by hand; Codex then asks you to trust the hooks after it again.
+Alternatively, restore `~/.codex/hooks.json.session-atlas.bak` (or delete `hooks.json` if the plugin
+created it). Otherwise the plugin adds nothing to the Codex home.
 
 ## Troubleshooting
 

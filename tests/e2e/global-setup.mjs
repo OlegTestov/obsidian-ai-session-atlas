@@ -8,11 +8,25 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { IDS, writeCorpus } from "./corpus.mjs";
+import { IDS, PHRASES, writeCorpus } from "./corpus.mjs";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const PYTHON = process.env.E2E_PYTHON || "python3";
 const RESERVED = new Set([8787, 8788]);      // the real catalog and the dev install
+// argv: Codex home, thread id, goal, queued text. Schemas as codex-cli 0.167 creates them.
+const CODEX_STATE = `
+import json, os, sqlite3, sys
+home, tid, goal, text = sys.argv[1:5]
+g = sqlite3.connect(os.path.join(home, "goals_1.sqlite"))
+g.execute("CREATE TABLE thread_goals (thread_id TEXT PRIMARY KEY NOT NULL, goal_id TEXT NOT NULL, objective TEXT NOT NULL, status TEXT NOT NULL, token_budget INTEGER, tokens_used INTEGER NOT NULL DEFAULT 0, time_used_seconds INTEGER NOT NULL DEFAULT 0, created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL)")
+g.execute("INSERT INTO thread_goals VALUES (?, 'g1', ?, 'active', NULL, 0, 0, 1, 1)", (tid, goal))
+g.commit()
+q = sqlite3.connect(os.path.join(home, "queue_1.sqlite"))
+q.execute("CREATE TABLE queued_items (id TEXT PRIMARY KEY NOT NULL, thread_id TEXT NOT NULL, payload_json TEXT NOT NULL, queue_order INTEGER NOT NULL, created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL)")
+item = {"UserInput": {"content": [{"type": "text", "text": text, "text_elements": []}], "client_id": "e2e"}}
+q.execute("INSERT INTO queued_items VALUES ('q1', ?, ?, 0, 1, 1)", (tid, json.dumps(item)))
+q.commit()
+`;
 
 /**
  * Where the temp corpus goes. atlas/resolve.py folds /tmp into /private/tmp, as on macOS (the only
@@ -79,6 +93,16 @@ function writeCodexStandIn(root) {
     rateLimitsByLimitId: { codex: null } };
   fs.writeFileSync(bin, `#!${process.execPath}
 const fs = require("fs");
+const path = require("path");
+// \`codex delete --force <id>\`: Codex removes the thread's rollouts itself.
+if (process.argv[2] === "delete") {
+  fs.appendFileSync(${JSON.stringify(log + ".own")}, "delete " + process.argv.slice(3).join(" ") + "\\n");
+  const id = process.argv[process.argv.length - 1], home = process.env.CODEX_HOME;
+  const walk = d => fs.readdirSync(d, { withFileTypes: true }).flatMap(e =>
+    e.isDirectory() ? walk(path.join(d, e.name)) : [path.join(d, e.name)]);
+  for (const f of walk(home)) if (f.endsWith("-" + id + ".jsonl")) fs.rmSync(f);
+  process.exit(0);
+}
 let buf = "";
 const out = o => process.stdout.write(JSON.stringify(o) + "\\n");
 process.stdin.on("data", d => {
@@ -87,9 +111,14 @@ process.stdin.on("data", d => {
   while ((i = buf.indexOf("\\n")) >= 0) {
     const req = JSON.parse(buf.slice(0, i));
     buf = buf.slice(i + 1);
-    fs.appendFileSync(${JSON.stringify(log)}, req.method + "\\n");
+    // Rename goes to its own log: the limits check expects only the handshake and the usage read here.
+    if (req.method !== "thread/name/set") fs.appendFileSync(${JSON.stringify(log)}, req.method + "\\n");
     if (req.method === "initialize") out({ id: req.id, result: { userAgent: "standin" } });
     else if (req.method === "account/rateLimits/read") out({ id: req.id, result: ${JSON.stringify(result)} });
+    else if (req.method === "thread/name/set") {
+      fs.appendFileSync(${JSON.stringify(log + ".own")}, "name " + req.params.threadId + " " + req.params.name + "\\n");
+      out({ id: req.id, result: {} });
+    }
   }
 });
 `, { mode: 0o755 });
@@ -146,6 +175,9 @@ export default async function globalSetup() {
     cleanup.push(() => process.kill(-claudeProc.shell, "SIGKILL"));
     const codexProc = await startAgent("codex", corpus.files.codexLive);
     cleanup.push(() => process.kill(-codexProc.shell, "SIGKILL"));
+    // Its /goal and a message queued through the app server, in the tables codex-cli 0.167 writes.
+    execFileSync(PYTHON, ["-c", CODEX_STATE, corpus.codexHome, IDS.codexLive, PHRASES.codexGoal,
+                          PHRASES.codexQueued], { stdio: ["ignore", "ignore", "inherit"] });
     fs.writeFileSync(path.join(corpus.claudeDir, "sessions", `${claudeProc.pid}.json`), JSON.stringify({
       pid: claudeProc.pid, sessionId: IDS.claudeLive, cwd: corpus.cwds.demo,
       startedAt: Date.now() - 30 * 60e3, procStart: procStart(claudeProc.pid),

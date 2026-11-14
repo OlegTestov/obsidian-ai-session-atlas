@@ -2,7 +2,8 @@
 
 Touches only standard Claude Code locations (the ~/.claude folder), Codex rollouts and input history
 (the Codex home) and the catalog data folder. Codex's own databases (state_*.sqlite) are never
-written. A running session is not deleted: its process would immediately write the transcript again.
+written here: `codex delete` is asked to remove the thread first, so Codex updates them itself; if it
+cannot, the files go anyway. A running session is not deleted: its process would write the transcript again.
 """
 from __future__ import annotations
 
@@ -14,7 +15,7 @@ import shutil
 import sqlite3
 import tempfile
 
-from . import active, agents, codex_procs, db, index, search_rows, store
+from . import active, agents, codex_app, codex_parse, codex_procs, db, index, search_rows, store
 from .actions import valid_session_id
 from .messages import msg
 
@@ -116,8 +117,8 @@ def footprint(conn: sqlite3.Connection, session_id: str) -> dict:
     if not valid_session_id(session_id):
         raise DeleteError(msg("session_id.invalid"))
     codex = _is_codex(conn, session_id)
-    found = [("rollout", p) for p in codex_procs.all_rollouts(session_id)] if codex \
-        else _claude_paths(session_id)
+    found = [("rollout", p) for p in codex_procs.all_rollouts(session_id)] + \
+        [("rollout_subagent", p) for p in _codex_subagents(session_id)] if codex else _claude_paths(session_id)
     items = [{"kind": kind, "path": p, "bytes": _size(p), "files": _files_in(p)} for kind, p in found]
     items += [{"kind": "handoff", "path": p, "bytes": _size(p), "files": 1}
               for p in _handoffs(conn, session_id)]
@@ -132,9 +133,18 @@ def footprint(conn: sqlite3.Connection, session_id: str) -> dict:
         "history_lines": _history_lines(os.path.join(home, HISTORY), session_id),
         "indexed": row is not None,
         "running": _codex_running(session_id) if codex else is_running(session_id),
-        # Codex keeps its own thread list in a database that is never written here.
-        "notes": [msg("delete.codex_app_note")] if codex else [],
+        # Codex keeps its own thread list in a database: `codex delete` updates it, Atlas never writes it.
+        "notes": ([msg("delete.codex_by_codex") if codex_app.find_codex() else msg("delete.codex_app_note")]
+                  if codex else []),
     }
+
+
+def _codex_subagents(session_id: str) -> list[str]:
+    """The thread's subagent rollouts (theirs too): part of its session, so they go with it."""
+    paths = index.discover_codex(index.codex_home())
+    children = index.codex_subagents(paths)
+    return sorted({c for p in paths if codex_parse.session_id_of(p) == session_id.lower()
+                   for c in children.get(p, [])})
 
 
 def _codex_running(session_id: str, table: dict | None = None) -> bool:
@@ -179,8 +189,10 @@ def delete_session(conn: sqlite3.Connection, session_id: str) -> dict:
         parent = os.path.realpath(os.path.dirname(item["path"]))
         if not any(parent == r or parent.startswith(r + os.sep) for r in roots):
             raise DeleteError(msg("delete.outside_codex" if codex else "delete.outside", path=item["path"]))
+    asked = codex and codex_app.find_codex() is not None      # without Codex the preview already said so
+    codex_error = _delete_in_codex(home, session_id) if asked else None
     for item in plan["items"]:
-        _remove(item["path"])
+        _remove(item["path"])                      # what `codex delete` left, or all of it if it failed
     history = _drop_history(os.path.join(home, HISTORY), session_id)
     with index.writer_lock():            # the indexer cannot write the session back mid-deletion
         with search_rows.writing(conn):
@@ -190,5 +202,18 @@ def delete_session(conn: sqlite3.Connection, session_id: str) -> dict:
             conn.execute("DELETE FROM pending_launches WHERE new_session_id=? OR source_session_id=?",
                           (session_id, session_id))
         conn.commit()
-    return {"session_id": session_id, "removed": len(plan["items"]), "bytes": plan["bytes"],
-            "history_lines": history}
+    out = {"session_id": session_id, "removed": len(plan["items"]), "bytes": plan["bytes"],
+           "history_lines": history}
+    if codex:
+        out["codex_deleted"] = asked and codex_error is None
+        out["codex_error"] = codex_error
+    return out
+
+
+def _delete_in_codex(home: str, session_id: str) -> str | None:
+    """None when Codex deleted the thread itself; otherwise why not (the files are removed anyway)."""
+    try:
+        codex_app.delete_thread(home, session_id)
+    except codex_app.CodexError as exc:
+        return msg("delete.codex_failed", error=exc)
+    return None

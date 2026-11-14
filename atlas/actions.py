@@ -50,9 +50,7 @@ def resume_command(cwd: str | None, session_id: str, fork: bool = False,
     if not cwd or not valid_session_id(session_id):
         return None
     if agent == "codex":
-        if fork:
-            return None                      # no fork command for Codex threads yet
-        parts = ["codex", "resume", session_id]
+        parts = ["codex", "fork" if fork else "resume", session_id]
     else:
         parts = ["claude", "--resume", session_id] + (["--fork-session"] if fork else [])
     return f"cd {shlex.quote(cwd)} && " + " ".join(shlex.quote(p) for p in parts)
@@ -120,10 +118,11 @@ MAX_TITLE = 200
 
 def rename_session(conn: sqlite3.Connection, session_id: str, title: str,
                    write_to_transcript: bool = True) -> dict:
-    """Writes the title to the catalog and, optionally, to the transcript itself.
+    """Writes the title to the catalog and, optionally, to the agent itself.
 
-    The only place that touches the transcript file. Only an append of one line in the same
-    form Claude Code writes itself (`custom-title`): no rewriting and no truncation.
+    Claude Code: the only place that touches the transcript file — an append of one line in the
+    same form Claude Code writes itself (`custom-title`), no rewriting and no truncation.
+    Codex: Codex's own `thread/name/set` (`_rename_in_codex`).
     """
     title = " ".join((title or "").split())[:MAX_TITLE]
     if not title:
@@ -145,9 +144,10 @@ def rename_session(conn: sqlite3.Connection, session_id: str, title: str,
             "SELECT source_path, agent FROM sessions WHERE session_id=?", (session_id,)).fetchone()
         if row is None:
             error = msg("rename.no_transcript")
+        elif row["agent"] == "codex":
+            written, error = _rename_in_codex(session_id, title)
         elif row["agent"] != "claude":
-            # The custom-title line is Claude Code's format: a Codex rollout is never written to.
-            error = msg("rename.codex_transcript")
+            error = msg("rename.no_transcript")
         else:
             try:
                 line = json.dumps({"type": "custom-title", "customTitle": title,
@@ -160,6 +160,19 @@ def rename_session(conn: sqlite3.Connection, session_id: str, title: str,
             except OSError as exc:
                 error = msg("rename.append_failed", error=exc)
     return {"title": title, "written_to_transcript": written, "error": error}
+
+
+def _rename_in_codex(session_id: str, title: str) -> tuple[bool, str | None]:
+    """Codex renames its own thread (`thread/name/set`); its rollout is never written here.
+    Any failure keeps the catalog name and says why."""
+    from . import codex_app, index  # index imports actions: imported when used
+    try:
+        codex_app.set_thread_name(index.codex_home(), session_id, title)
+    except codex_app.CodexError as exc:
+        if exc.code == codex_app.METHOD_NOT_FOUND:
+            return False, msg("rename.codex_old")
+        return False, msg("rename.codex_failed", error=exc)
+    return True, None
 
 
 # --- job registry -----------------------------------------------------------

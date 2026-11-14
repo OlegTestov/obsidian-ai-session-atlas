@@ -7,6 +7,40 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.10.0] - 2026-11-14
+
+Codex gets what Claude Code has in Atlas. Checked with codex-cli 0.167.0.
+
+### Added
+
+- Copy session for Codex (`codex fork`), with numbered copies and links both ways, as for Claude Code.
+- A Codex tab follows the session it holds open, so after `/new`, `/resume` or `/fork` it comes back
+  on that session after an Obsidian restart.
+- Codex commands on the card: "/" lists Codex's own commands, "$" its skills, and `/model` picks a
+  model and then its reasoning level.
+- Codex cards show the goal, running subagents, background commands and queued messages. Subagents
+  of a Codex started outside Atlas tabs are found too; its background commands are not visible.
+- Codex subagent threads belong to the session that started them, as Claude Code subagents do.
+- Statistics counts Codex skills and subagents.
+- Rename and delete of a Codex session go through Codex's own commands (`thread/name/set`,
+  `codex delete`), so Codex shows the new name and forgets a deleted session. Atlas still never
+  writes Codex's databases; if Codex fails, the old catalog-only behaviour stays, with the reason.
+- AI features run through `codex exec` when Claude Code is not installed, with every Codex tool
+  turned off. Settings → AI features → "Run through": Auto, Claude Code or Codex.
+- An opt-in "waiting for you" mark for Codex sessions outside Atlas tabs: a hook in
+  `$CODEX_HOME/hooks.json`, off by default; Codex asks you to trust it in `/hooks`.
+
+### Changed
+
+- The preview names the agent the text goes to, and the server refuses a send to another agent.
+  Auto-classification keeps the agent it was turned on with and pauses, with the reason, if the
+  settings later resolve to another one.
+
+### Fixed
+
+- A message queued from a card no longer shows twice under the prompt, on Claude Code cards too.
+- An image pasted into a Codex tab from a card works when its path has a space.
+
 ## [2.9.2] - 2026-11-13
 
 ### Added

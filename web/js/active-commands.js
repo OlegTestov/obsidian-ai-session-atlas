@@ -14,8 +14,32 @@ const ARG_CHOICES = {
   "/model": [["opus", "Opus"], ["sonnet", "Sonnet"], ["haiku", "Haiku"], ["default", i18n("cmd.model.default")]],
 };
 
-function argChoices(text) {
-  return ARG_CHOICES[(text || "").trim()] || null;
+/**
+ * The picker for the field's text, or null: {cmd, label, items: [{text, label, hint}], optional}.
+ * Claude Code: /effort, /model. Codex: /model lists its models (its own cache), "/model <slug>"
+ * that model's efforts; the model alone may be sent as is (optional), Codex keeps it for the session.
+ */
+function argChoices(text, agent) {
+  const t = (text || "").trim();
+  if (agent !== "codex") {
+    const choices = ARG_CHOICES[t];
+    return choices ? { cmd: t, label: i18n(t === "/effort" ? "cmd.effort" : "cmd.model"),
+                       items: choices.map(([value, label]) => ({ text: `${t} ${value}`, label,
+                                                                 hint: i18n("cmd.choice.hint", { cmd: t, value }) })) }
+      : null;
+  }
+  const models = codexModels();
+  if (t === "/model" && models.length) {
+    return { cmd: t, label: i18n("cmd.model"),
+             items: models.map(m => ({ text: `/model ${m.slug}`, label: m.name, hint: i18n("cmd.codexModel.hint"),
+                                       next: m.efforts.length > 0 })) };
+  }
+  const m = /^\/model (\S+)$/.exec(t);
+  const model = m && models.find(x => x.slug === m[1]);
+  if (!model || !model.efforts.length) return null;
+  return { cmd: t, label: i18n("cmd.effort"), optional: true,
+           items: model.efforts.map(e => ({ text: `${t} --reasoning=${e}`, label: e,
+                                            hint: i18n("cmd.codexModel.hint") })) };
 }
 
 function handleCommandOutput(d) {
@@ -68,23 +92,27 @@ function commandOutputBlock(s, pid) {
   return box;
 }
 
-// Choice buttons for "/effort" and "/model"; show(text) rebuilds them for the field's current text.
-function argChooser(area, submit) {
+// Choice buttons for the agent's pickers; show(text) rebuilds them for the field's current text.
+// A choice with `next` fills the field and shows the next step (a Codex model, then its effort).
+function argChooser(area, submit, agent) {
   const row = el("div", "argpick hidden");
   const show = text => {
-    const choices = argChoices(text);
-    row.classList.toggle("hidden", !choices);
-    if (!choices) { row.replaceChildren(); return; }
-    const cmd = text.trim();
-    row.replaceChildren(el("span", "lbl", cmd === "/effort" ? i18n("cmd.effort") : i18n("cmd.model")),
-      ...choices.map(([value, label]) => {
-        const b = el("button", null, label);
-        b.type = "button";
-        b.title = i18n("cmd.choice.hint", { cmd, value });
-        b.addEventListener("mousedown", e => e.preventDefault());   // focus stays in the field
-        b.addEventListener("click", () => { area.value = `${cmd} ${value}`; row.classList.add("hidden"); submit(); });
-        return b;
-      }));
+    const pick = argChoices(text, agent);
+    row.classList.toggle("hidden", !pick);
+    if (!pick) { row.replaceChildren(); return; }
+    row.replaceChildren(el("span", "lbl", pick.label), ...pick.items.map(item => {
+      const b = el("button", null, item.label);
+      b.type = "button";
+      b.title = item.hint;
+      b.addEventListener("mousedown", e => e.preventDefault());   // focus stays in the field
+      b.addEventListener("click", () => {
+        area.value = item.text;
+        if (item.next) { show(item.text); return; }
+        row.classList.add("hidden");
+        submit();
+      });
+      return b;
+    }));
   };
   return { row, show };
 }

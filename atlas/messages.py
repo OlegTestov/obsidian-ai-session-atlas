@@ -46,6 +46,17 @@ MESSAGES: dict[str, dict] = {
     "server.unknown_artifact": {
         "en": "unknown result type",
         "ru": "неизвестный тип результата"},
+    "server.agent_changed": {
+        "en": "The settings now send this to {agent}, not to the agent in the preview. Open the preview again.",
+        "ru": "По настройкам это теперь уйдёт в {agent}, а не в агента из предпросмотра. Открой предпросмотр снова."},
+    "server.page_outdated": {
+        "en": "This page is from before an update. Reload the page, then try again.",
+        "ru": "Эта страница открыта до обновления. Обнови страницу и попробуй снова."},
+    "auto.paused": {
+        "en": "Paused: it was turned on for {was}, and AI features now go to {now}. "
+              "Turn it off and on to go on with {now}.",
+        "ru": "Приостановлено: её включили для {was}, а ИИ-функции теперь идут в {now}. "
+              "Выключи и включи снова, чтобы продолжить с {now}."},
     "server.need_confirm": {
         "en": "confirm in the preview first",
         "ru": "сначала подтверди в предпросмотре"},
@@ -73,6 +84,14 @@ MESSAGES: dict[str, dict] = {
     "delete.codex_app_note": {
         "en": "Codex itself may still list this session for a while, until it notices the file is gone",
         "ru": "Сам Codex может ещё какое-то время показывать эту сессию в списке, пока не заметит, что файла нет"},
+    "delete.codex_by_codex": {
+        "en": "Codex deletes the session with its own command (codex delete), so its session list updates too",
+        "ru": "Codex удалит сессию своей командой (codex delete), и его список сессий тоже обновится"},
+    "delete.codex_failed": {
+        "en": "Codex could not delete it itself ({error}); the files were removed, and Codex may still list "
+              "the session for a while",
+        "ru": "Codex не смог удалить её сам ({error}); файлы удалены, но Codex может ещё какое-то время "
+              "показывать сессию в списке"},
     "session_id.invalid": {
         "en": "invalid session id",
         "ru": "неверный id сессии"},
@@ -92,9 +111,12 @@ MESSAGES: dict[str, dict] = {
     "rename.no_transcript": {
         "en": "history file not found in the catalog",
         "ru": "файл истории не найден в каталоге"},
-    "rename.codex_transcript": {
-        "en": "the Codex session was renamed in the catalog only; Codex itself keeps the old name",
-        "ru": "сессия Codex переименована только в каталоге: в самом Codex имя прежнее"},
+    "rename.codex_failed": {
+        "en": "renamed in the catalog only: Codex could not rename it ({error})",
+        "ru": "переименовано только в каталоге: Codex не смог переименовать ({error})"},
+    "rename.codex_old": {
+        "en": "renamed in the catalog only: this Codex version cannot rename sessions — update Codex",
+        "ru": "переименовано только в каталоге: эта версия Codex не умеет переименовывать — обнови Codex"},
     "rename.append_failed": {
         "en": "the name was saved in the catalog but not in the history file: {error}",
         "ru": "имя сохранено в каталоге, но не в файле истории: {error}"},
@@ -272,6 +294,10 @@ MESSAGES: dict[str, dict] = {
         "en": "the pre-call check failed: {detail}",
         "ru": "проверка перед вызовом не прошла: {detail}"},
     "runner.cli_error": {"en": "claude -p returned an error", "ru": "claude -p вернул ошибку"},
+    "runner.no_codex": {"en": "codex not found — install Codex or pick Claude Code for AI features in the settings",
+                        "ru": "codex не найден — установи Codex или выбери Claude Code для ИИ-функций в настройках"},
+    "runner.codex_error": {"en": "codex exec returned an error", "ru": "codex exec вернул ошибку"},
+    "runner.codex_default_model": {"en": "default", "ru": "по умолчанию"},
 
     # --- enrich.py ---
     "enrich.no_json": {"en": "the model did not return JSON", "ru": "модель не вернула JSON"},

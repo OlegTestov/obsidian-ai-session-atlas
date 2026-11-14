@@ -43,6 +43,10 @@ DEFAULTS = {
     # per 1M tokens; adds a model or fixes a built-in price (atlas/openai_costs.py), null = unpriced.
     "openai_prices": {},
     "force_1m": False,                # [1m] suffix for models without a native 1M window (not on every plan)
+    # Which agent runs the AI features: auto (Claude Code if installed, else Codex) | claude | codex.
+    "ai_agent": "auto",
+    "codex_model": None,              # ["gpt-5.5", "medium"] for codex exec; empty model = Codex's default
+    "codex_exec_config": [],          # extra `-c key=value` for codex exec (it skips config.toml)
     "claude_bin": None,               # path to claude; the plugin finds it via the login shell
     "codex_bin": None,                # path to codex, the same way; reads Codex's usage limits
     "service_label": "io.github.session-atlas",

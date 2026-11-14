@@ -55,6 +55,19 @@ def _created(st) -> str | None:
     return datetime.fromtimestamp(born, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
+def _write_fork(conn, session_id: str, st, facts: SessionFacts) -> None:
+    source = fork_source(facts)
+    if source:
+        # When the copy was made is set once: the copy's own records can keep the source's id for
+        # days (/branch), so their last timestamp moves on with every reply. A Codex copy says when.
+        made = facts.forked_at if facts.agent == "codex" else None
+        conn.execute("INSERT INTO session_forks VALUES (?,?,?) "
+                     "ON CONFLICT(session_id) DO UPDATE SET parent_id=excluded.parent_id",
+                     (session_id, source, made or _created(st) or facts.forked_at))
+    else:
+        conn.execute("DELETE FROM session_forks WHERE session_id=?", (session_id,))
+
+
 def _write_meta(conn, session_id: str, path: str, st, sig: str, facts: SessionFacts,
                 resolved_files: list[tuple[str, str]]) -> str:
     """Everything except texts: small tables are easier to rewrite than to merge."""
@@ -86,15 +99,7 @@ def _write_meta(conn, session_id: str, path: str, st, sig: str, facts: SessionFa
     )
     conn.executemany("INSERT INTO session_continuations VALUES (?,?,?)",
                      [(session_id, child, at) for child, at in facts.continuations])
-    source = fork_source(facts)
-    if source:
-        # When the copy was made is set once: the copy's own records can keep the source's id for
-        # days (/branch), so their last timestamp moves on with every reply.
-        conn.execute("INSERT INTO session_forks VALUES (?,?,?) "
-                     "ON CONFLICT(session_id) DO UPDATE SET parent_id=excluded.parent_id",
-                     (session_id, source, _created(st) or facts.forked_at))
-    else:
-        conn.execute("DELETE FROM session_forks WHERE session_id=?", (session_id,))
+    _write_fork(conn, session_id, st, facts)
     conn.executemany("INSERT OR IGNORE INTO session_projects VALUES (?,?,?)",
                      [(session_id, pid, role) for pid, role in projects])
     conn.executemany("INSERT OR IGNORE INTO session_domains VALUES (?,?)",
@@ -201,17 +206,12 @@ def _converted(conn, session_id: str, facts: SessionFacts) -> None:
         facts.title, facts.title_source = row["title"], "converted"
 
 
-def store_full(conn, path: str, st, sig: str, subagents: list[str], sub_sig: str) -> str:
-    session_id = os.path.splitext(os.path.basename(path))[0]
-    parent, handed_over = continuation_of(conn, session_id)
-    facts = parse_file(path, session_id, continued_from=parent, copied_until=handed_over)
-    _converted(conn, session_id, facts)
+def _merge_subagents(facts: SessionFacts, subs: list) -> tuple[list[str], list[str], dict]:
+    """Subagents are part of the parent session: their commands, files and text are merged here."""
     sub_commands: list[str] = []
     sub_paths: list[str] = []
     sub_rows: dict = {}
-    # Subagents are part of the parent session: their commands, files and text are merged here.
-    for sub_path in subagents:
-        sub = parse_file(sub_path, session_id)
+    for sub in subs:
         facts.subagent_turns += sub.machine_turns + sub.subagent_turns
         facts.subagent_text.extend(sub.assistant_text + sub.subagent_text + sub.user_text)
         sub_commands.extend(sub.commands)
@@ -219,6 +219,25 @@ def store_full(conn, path: str, st, sig: str, subagents: list[str], sub_sig: str
         facts.raw_files.extend(p for p in sub.raw_files if p not in facts.raw_files)
         facts.tickets |= sub.tickets
         sub_rows.update(sub.activity)
+    return sub_commands, sub_paths, sub_rows
+
+
+def _write_subagent_row(conn, session_id: str, facts: SessionFacts, sub_commands: list[str],
+                        sub_paths: list[str]) -> None:
+    if facts.subagent_text or sub_commands or sub_paths:
+        _insert_row(conn, session_id, SUBAGENT_TURN, subagent_text="\n".join(facts.subagent_text),
+                    commands="\n".join(sub_commands), paths="\n".join(sub_paths))
+        if sub_commands or sub_paths:
+            _insert_paths(conn, session_id, SUBAGENT_TURN, "\n".join(sub_paths + sub_commands))
+
+
+def store_full(conn, path: str, st, sig: str, subagents: list[str], sub_sig: str) -> str:
+    session_id = os.path.splitext(os.path.basename(path))[0]
+    parent, handed_over = continuation_of(conn, session_id)
+    facts = parse_file(path, session_id, continued_from=parent, copied_until=handed_over)
+    _converted(conn, session_id, facts)
+    sub_commands, sub_paths, sub_rows = _merge_subagents(
+        facts, [parse_file(sub_path, session_id) for sub_path in subagents])
     resolved = _resolved(facts)
     with search_rows.writing(conn):
         purge(conn, session_id)
@@ -226,31 +245,35 @@ def store_full(conn, path: str, st, sig: str, subagents: list[str], sub_sig: str
         activity.store(conn, session_id, sub_rows, sub=True)
         title = _write_meta(conn, session_id, path, st, sig, facts, resolved)
         _write_meta_row(conn, session_id, title, facts, resolved)
-        if facts.subagent_text or sub_commands or sub_paths:
-            _insert_row(conn, session_id, SUBAGENT_TURN, subagent_text="\n".join(facts.subagent_text),
-                        commands="\n".join(sub_commands), paths="\n".join(sub_paths))
-            if sub_commands or sub_paths:
-                _insert_paths(conn, session_id, SUBAGENT_TURN, "\n".join(sub_paths + sub_commands))
+        _write_subagent_row(conn, session_id, facts, sub_commands, sub_paths)
         _write_turns(conn, session_id, facts)
         _save_state(conn, session_id, path, st, sub_sig, facts)
         _record_source(conn, path, session_id, st, sig, facts)
         return session_id
 
 
-def store_codex(conn, path: str, st, sig: str, title: str | None = None) -> str:
-    """A Codex rollout is reread in full on any change: the largest is ~25 MB, a pass is ~0.2 s."""
+def store_codex(conn, path: str, st, sig: str, title: str | None = None,
+                subagents: list[str] | None = None) -> str:
+    """A Codex rollout is reread in full on any change: the largest is ~25 MB, a pass is ~0.2 s.
+    Its subagents' rollouts (index.codex_subagents) are part of it, as Claude Code's subagents are."""
     parent, converted_at = continuation_of(conn, codex_parse.session_id_of(path) or "")
-    facts = codex_parse.parse_file(path, title=title, continued_from=parent, copied_until=converted_at)
+    turns: set = set()             # a subagent's copy of its parent's turns is counted once, there
+    facts = codex_parse.parse_file(path, title=title, continued_from=parent, copied_until=converted_at,
+                                   turns=turns)
     session_id = facts.session_id
     _converted(conn, session_id, facts)
     if not session_id:
         raise ValueError("no thread id in the rollout name or its session_meta")
+    subs = [codex_parse.parse_file(p, turns=turns) for p in subagents or []]
+    sub_commands, sub_paths, sub_rows = _merge_subagents(facts, subs)
     resolved = _resolved(facts)
     with search_rows.writing(conn):
         purge(conn, session_id)
         activity.store(conn, session_id, facts.activity)
+        activity.store(conn, session_id, sub_rows, sub=True)
         title = _write_meta(conn, session_id, path, st, sig, facts, resolved)
         _write_meta_row(conn, session_id, title, facts, resolved)
+        _write_subagent_row(conn, session_id, facts, sub_commands, sub_paths)
         _write_turns(conn, session_id, facts)
         _record_source(conn, path, session_id, st, sig, facts)
         # "Continue fresh" for Codex: the thread's id is known only now (atlas/actions.py).

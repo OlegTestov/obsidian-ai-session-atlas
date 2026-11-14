@@ -46,6 +46,18 @@ test("both live sessions show by default with badges and statuses", async ({ pag
   expect([...asked].sort()).toEqual(["account/rateLimits/read", "initialize", "initialized"]);
 });
 
+test("a Codex card shows its /goal and the message queued for after the turn", async ({ page, open }) => {
+  await open("active");
+  await page.locator("#active-filters .mode button[data-mode=full]").click();   // replies and the queue
+  const codex = card(page, ids.codexLive);
+  // goals_1.sqlite and queue_1.sqlite of the Codex home (global setup); the turn has no reply yet.
+  await expect(codex.locator(".reply.mine").last()).toContainText("Run the full test suite");
+  const goal = codex.locator(".tags .pill.acc", { hasText: "goal" });
+  await expect(goal).toHaveAttribute("title", new RegExp(PHRASES.codexGoal));
+  await expect(codex.locator(".queued")).toContainText(PHRASES.codexQueued);
+  await expect(codex.locator(".queued")).toHaveAttribute("title", PHRASES.codexQueued);
+});
+
 test("the Agent filter hides and shows each agent's cards", async ({ page, open }) => {
   await open("active");
   await expect(card(page, ids.codexLive)).toBeVisible();
@@ -144,35 +156,88 @@ window.addEventListener("message", e => {
 </script></body></html>`;
 }
 
-test("Claude-only controls are hidden on the Codex card; replies reach the right tab", async ({ page, lang }) => {
+test("the Codex card offers Codex's own commands, skills and models; replies reach the right tab", async ({ page, lang }) => {
   await page.route(`${run.base}/e2e-host.html`, route =>
     route.fulfill({ contentType: "text/html; charset=utf-8", body: hostPage(lang) }));
   await page.goto(`${run.base}/e2e-host.html`);
   const frame = page.frameLocator("#atlas");
-  const claudeArea = frame.locator(`.acard[data-id="${ids.claudeLive}"] .answer textarea`);
-  const codexArea = frame.locator(`.acard[data-id="${ids.codexLive}"] .answer textarea`);
+  const claudeCard = frame.locator(`.acard[data-id="${ids.claudeLive}"]`);
+  const codexCard = frame.locator(`.acard[data-id="${ids.codexLive}"]`);
+  const claudeArea = claudeCard.locator(".answer textarea");
+  const codexArea = codexCard.locator(".answer textarea");
   await expect(claudeArea).toBeEnabled();
   await expect(codexArea).toBeEnabled();
 
-  // Claude Code's slash commands: hints and the /effort picker on the Claude card only.
+  // Claude Code's slash commands: hints and the /effort picker on the Claude card.
   await claudeArea.fill("/comp");
-  await expect(frame.locator(`.acard[data-id="${ids.claudeLive}"] .suggest`)).toBeVisible();
-  await expect(frame.locator(`.acard[data-id="${ids.claudeLive}"] .suggest`)).toContainText("/compact");
+  await expect(claudeCard.locator(".suggest")).toContainText("/compact");
   await claudeArea.fill("/effort");
-  await expect(frame.locator(`.acard[data-id="${ids.claudeLive}"] .argpick`)).toBeVisible();
+  await expect(claudeCard.locator(".argpick")).toBeVisible();
+  await claudeArea.fill("$rel");
+  await expect(claudeCard.locator(".suggest")).toBeHidden();
   await claudeArea.fill("");
 
+  // Codex: its own list, its skills after "$", no Claude Code-only command.
   await codexArea.fill("/comp");
-  await page.waitForTimeout(500);                      // the hint list loads asynchronously on Claude cards
-  await expect(frame.locator(`.acard[data-id="${ids.codexLive}"] .suggest`)).toBeHidden();
+  await expect(codexCard.locator(".suggest")).toContainText("/compact");
+  await codexArea.fill("/effo");
+  await page.waitForTimeout(300);
+  await expect(codexCard.locator(".suggest")).toBeHidden();
+  await codexArea.fill("$rel");
+  await expect(codexCard.locator(".suggest")).toContainText("$release-notes");
+  await expect(codexCard.locator(".suggest")).toContainText("Draft release notes from the git log");
   await codexArea.fill("/effort");
-  await expect(frame.locator(`.acard[data-id="${ids.codexLive}"] .argpick`)).toBeHidden();
+  await expect(codexCard.locator(".argpick")).toBeHidden();
+
+  // /model: the models Codex lists (not the hidden ones), then the chosen model's efforts.
+  await codexArea.fill("/model");
+  const pick = codexCard.locator(".argpick");
+  await expect(pick.locator("button")).toHaveText(["GPT-6-Luna"]);
+  await pick.locator("button", { hasText: "GPT-6-Luna" }).click();
+  await expect(codexArea).toHaveValue("/model gpt-6-luna");
+  await expect(pick.locator("button")).toHaveText(["medium", "xhigh"]);
+  await pick.locator("button", { hasText: "xhigh" }).click();
+  await expect.poll(() => page.evaluate(() => window.sent.filter(m => m.type === "send-text"))).toEqual([
+    expect.objectContaining({ ptyPid: run.pids.codex.shell, sessionId: ids.codexLive,
+                              text: "/model gpt-6-luna --reasoning=xhigh" })]);
 
   await codexArea.fill("please also check the rounding");
   await codexArea.press("Enter");
-  await expect.poll(() => page.evaluate(() => window.sent.filter(m => m.type === "send-text"))).toEqual([
+  await expect.poll(() => page.evaluate(() => window.sent.filter(m => m.type === "send-text").at(-1))).toEqual(
     expect.objectContaining({ ptyPid: run.pids.codex.shell, sessionId: ids.codexLive,
-                              text: "please also check the rounding" })]);
+                              text: "please also check the rounding" }));
+});
+
+// A message sent from the card while the agent works waits in the agent's queue: the card shows it once,
+// as yours ("queued"), and the queued line lists only the other waiting messages.
+test("a message sent while the agent works is not shown twice", async ({ page, lang }) => {
+  const mine = "LIVE-QUEUE please also check the rounding";
+  let queue = [];
+  await page.route(/\/api\/active(\?|$)/, async route => {
+    const res = await route.fetch();
+    const data = await res.json();
+    (data.sessions || []).forEach(s => {
+      if (s.session_id === ids.claudeLive && queue.length) Object.assign(s, { status: "busy", activity: "busy", queued: queue });
+    });
+    await route.fulfill({ response: res, json: data });
+  });
+  await page.route(`${run.base}/e2e-host.html`, route =>
+    route.fulfill({ contentType: "text/html; charset=utf-8", body: hostPage(lang) }));
+  await page.goto(`${run.base}/e2e-host.html`);
+  const claude = page.frameLocator("#atlas").locator(`.acard[data-id="${ids.claudeLive}"]`);
+  const area = claude.locator(".answer textarea");
+  await expect(area).toBeEnabled();
+  queue = [{ text: mine, at: new Date().toISOString() }];
+  await area.fill(mine);
+  await area.press("Enter");
+  const ru = lang === "ru";
+  await expect(claude.locator(".reply.mine .who").last()).toContainText(ru ? "в очереди" : "queued");
+  await expect(claude.locator(".reply.mine").last()).toContainText(mine);
+  await expect(claude.locator(".queued")).toHaveCount(0);                 // only that one waits: no second line
+  queue = [queue[0], { text: "and update the README", at: new Date().toISOString() }];
+  await expect(claude.locator(".queued")).toHaveCount(1, { timeout: 15000 });
+  await expect(claude.locator(".queued")).toContainText("and update the README");
+  await expect(claude.locator(".queued")).not.toContainText("LIVE-QUEUE");
 });
 
 // A long "now" line of a working session: in the detailed chat it is shown in full. Capped at a few

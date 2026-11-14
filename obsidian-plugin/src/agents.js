@@ -80,6 +80,7 @@ function plainPrompt(text) {
  *   cd '<folder>' && claude --session-id <id> ['<first prompt>']
  *   cd '<folder>' && claude attach <job id>          (a session running in a background job)
  *   cd '<folder>' && codex resume <id>
+ *   cd '<folder>' && codex fork <id>               (a copy: Codex picks the copy's id itself)
  *   cd '<folder>' && codex ['<first prompt>']      (Codex picks the thread id itself)
  * {agent, cwd, mode: resume | resume-fork | new | attach, sessionId (the job id for attach), prompt} or null.
  */
@@ -92,7 +93,9 @@ function parseLaunch(command) {
   if (w[3] === "codex") {
     if (args.length === 0) return start("new", "");
     if (args.length === 1 && plainPrompt(args[0])) return start("new", "", args[0]);
-    return args.length === 2 && args[0] === "resume" && SESSION_ID.test(args[1]) ? start("resume", args[1]) : null;
+    if (args.length !== 2 || !SESSION_ID.test(args[1])) return null;
+    if (args[0] === "resume") return start("resume", args[1]);
+    return args[0] === "fork" ? start("resume-fork", args[1]) : null;
   }
   const [flag, id, ...rest] = args;
   if (flag === "attach") return rest.length === 0 && JOB_ID.test(id || "") ? start("attach", id) : null;

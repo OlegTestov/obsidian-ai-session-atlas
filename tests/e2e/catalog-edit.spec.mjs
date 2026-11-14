@@ -29,16 +29,23 @@ async function openDelete(page, id, t) {
   await expect(page.locator("#modal")).toBeVisible();
 }
 
-test("renaming a Codex session keeps the name in the catalog, not in the rollout", async ({ page, open, lang }) => {
+// Codex's own commands (rename, delete) as the stand-in codex received them.
+const standInLog = () => fs.existsSync(run.codexStandInLog + ".own") ? fs.readFileSync(run.codexStandInLog + ".own", "utf8") : "";
+
+test("renaming a Codex session asks Codex to rename it and leaves the rollout alone", async ({ page, open, lang, t }) => {
   const id = lang === "en" ? ids.codexRenameEn : ids.codexRenameRu;
   const file = run.corpus.files[lang === "en" ? "codexRenameEn" : "codexRenameRu"];
   const before = sha(file);
   const title = lang === "en" ? "SDK bump, renamed" : "Обновление SDK, переименовано";
   await open();
+  await row(page, id).click();
+  await page.locator("#card .sub button.ghost").click();
+  await expect(page.locator("#rename-note")).toHaveText(t.renameNoteCodex);
+  await page.locator("#rename-cancel").click();
   await rename(page, id, title);
-  // The custom-title line is Claude Code's format: the page says the rollout itself was left alone.
-  await expect(page.locator("#modal")).toBeVisible();
-  await page.locator("#m-close").click();
+  // Codex's own thread/name/set did the rename: no "catalog only" notice.
+  await expect(page.locator("#modal")).toBeHidden();
+  expect(standInLog()).toContain(`name ${id} ${title}\n`);
   await expect(page.locator("#card h3")).toHaveText(title);
   await expect(row(page, id).locator(".t")).toContainText(title);
   await page.reload();
@@ -47,11 +54,15 @@ test("renaming a Codex session keeps the name in the catalog, not in the rollout
   expect(sha(file)).toBe(before);
 });
 
-test("renaming a Claude session writes it to the catalog and to the transcript", async ({ page, open, lang }) => {
+test("renaming a Claude session writes it to the catalog and to the transcript", async ({ page, open, lang, t }) => {
   const id = lang === "en" ? ids.claudeRenameEn : ids.claudeRenameRu;
   const file = run.corpus.files[lang === "en" ? "claudeRenameEn" : "claudeRenameRu"];
   const title = lang === "en" ? "Changelog tidy-up" : "Уборка в ченджлоге";
   await open();
+  await row(page, id).click();
+  await page.locator("#card .sub button.ghost").click();
+  await expect(page.locator("#rename-note")).toHaveText(t.renameNote);
+  await page.locator("#rename-cancel").click();
   await rename(page, id, title);
   await expect(page.locator("#modal")).toBeHidden();
   await expect(page.locator("#card h3")).toHaveText(title);
@@ -81,6 +92,7 @@ test("deleting a Codex session: the preview lists what goes, then the files are 
   await expect(page.locator("#card")).toContainText(t.deleted);
   await expect(row(page, id)).toHaveCount(0);
   expect(fs.existsSync(file)).toBe(false);
+  expect(standInLog()).toContain(`delete --force ${id}\n`);         // Codex deleted its own thread
   expect(historyIds()).toEqual(othersBefore);            // only this thread's prompts left the history
   await page.reload();
   await expect(page.locator("#list .row").first()).toBeVisible();

@@ -8,7 +8,7 @@ import sqlite3
 import subprocess
 from datetime import datetime, timezone
 
-from . import agents, config, db, prompts
+from . import agents, codex_app, codex_exec, config, db, prompts
 from .messages import msg
 
 EXTRACTOR_VERSION = 1
@@ -16,7 +16,9 @@ EXTRACTOR_VERSION = 1
 # Only an explicitly listed backend counts as local. litellm alone does not mean local:
 # it routes on to an external provider.
 LOCAL_BACKENDS = {"ollama", "lmstudio", "llamacpp"}
-EXTERNAL_BACKEND = "claude-cli"
+EXTERNAL_BACKEND = CLAUDE_BACKEND = "claude-cli"
+CODEX_BACKEND = "codex-cli"
+AGENT_NAMES = {CLAUDE_BACKEND: "Claude Code", CODEX_BACKEND: "Codex"}
 
 DEFAULT_MODEL = "sonnet"
 DEFAULT_EFFORT = "medium"
@@ -66,9 +68,39 @@ PREVIEW_HEAD = 6_000
 PREVIEW_TAIL = 2_000
 
 
-def model_for(artifact_kind: str) -> tuple[str, str]:
+def model_label(model: str, backend_name: str) -> str:
+    """How the preview names the model: Codex's default has no name of its own."""
+    return codex_exec.model_label(model) if backend_name == CODEX_BACKEND else model
+
+
+def agent_name(backend_name: str) -> str:
+    return AGENT_NAMES.get(backend_name, backend_name)
+
+
+def has_claude() -> bool:
+    try:
+        find_claude()
+    except RuntimeError:
+        return False
+    return True
+
+
+def backend() -> str:
+    """Which agent runs the AI features: `ai_agent` in config.json (auto | claude | codex).
+    Auto: Claude Code when it is installed, else Codex when it is, else Claude Code (its error says why)."""
+    choice = config.get("ai_agent") or "auto"
+    if choice == "codex":
+        return CODEX_BACKEND
+    if choice == "claude" or has_claude():
+        return CLAUDE_BACKEND
+    return CODEX_BACKEND if codex_app.find_codex() else CLAUDE_BACKEND
+
+
+def model_for(artifact_kind: str, backend_name: str | None = None) -> tuple[str, str]:
     """With force_1m set, models without a native 1M window get the [1m] suffix. Not every plan
-    has it, so it is off by default."""
+    has it, so it is off by default. Codex has its own setting (`codex_exec.model_for`)."""
+    if (backend_name or backend()) == CODEX_BACKEND:
+        return codex_exec.model_for(artifact_kind)
     model, effort = _models().get(artifact_kind, (DEFAULT_MODEL, DEFAULT_EFFORT))
     if config.get("force_1m") and not has_1m_window(model):
         model += "[1m]"
@@ -309,10 +341,16 @@ def preflight(model: str = "claude-haiku-4-5-20251001", effort: str = "low") -> 
 
 
 def run_isolated(prompt: str, model: str = DEFAULT_MODEL, effort: str = DEFAULT_EFFORT,
-                 timeout: int = 900) -> str:
+                 timeout: int = 900, backend_name: str | None = None, schema: dict | None = None) -> str:
     """`claude -p` without settings, hooks, plugins, MCP and tools: otherwise the compressor loads
-    your environment and creates transcripts of its own."""
+    your environment and creates transcripts of its own. The Codex backend: `codex_exec.run`, where
+    `schema` (JSON Schema of the answer) is enforced; `claude -p` follows the prompt alone."""
     require_llm()                  # last line of defense: every model call passes through here
+    if (backend_name or backend()) == CODEX_BACKEND:
+        try:
+            return codex_exec.run(prompt, runner_cwd(), model, effort, timeout, schema)
+        except codex_exec.TooLong as exc:
+            raise PromptTooLong(str(exc)) from exc
     binary = find_claude()
     if len(prompt) > PREFLIGHT_ABOVE:
         preflight(effort=effort)

@@ -1,7 +1,7 @@
 """Hourly: topic, description line and "What was done" for new and changed sessions.
 
-Off until explicitly enabled: every session goes to Claude (batch classification and
-"What was done" one by one) and uses the same weekly subscription quota as interactive work.
+Off until explicitly enabled: every session goes to the agent it was turned on for (batch
+classification and "What was done" one by one) and uses the same subscription quota as interactive work.
 
 "Changed" means new messages appeared since the last pass: the "human turns : agent records"
 signature from the index is compared with the one stored in `auto_marks`. Already classified
@@ -22,6 +22,7 @@ from . import actions, classify, db, enrich, messages, runner
 
 KEY_ENABLED = "auto_classify"
 KEY_LAST = "auto_classify_last"
+KEY_BACKEND = "auto_classify_backend"   # the agent it was turned on for: it never switches on its own
 INTERVAL_SECONDS = 3600
 MIN_AGE_SECONDS = 1800
 MAX_PER_RUN = 8               # sessions per pass, fully: topic and "What was done"
@@ -43,15 +44,35 @@ def enabled(conn: sqlite3.Connection) -> bool:
 
 def set_enabled(conn: sqlite3.Connection, on: bool) -> dict:
     _set_meta(conn, KEY_ENABLED, "1" if on else "0")
+    _set_meta(conn, KEY_BACKEND, runner.backend() if on else "")
     return status(conn)
+
+
+def _agent(conn: sqlite3.Connection) -> tuple[str, str | None]:
+    """(the agent it runs with, why it is paused or None). Turned on for one agent, it pauses when the
+    settings would now send the sessions to another one (Claude Code no longer found, a changed choice)
+    instead of sending them there unasked. An entry from before the agent was recorded is recorded now."""
+    current = runner.backend()
+    recorded = _meta(conn, KEY_BACKEND)
+    if not recorded:
+        if enabled(conn):
+            _set_meta(conn, KEY_BACKEND, current)
+        return current, None
+    if recorded != current:
+        return recorded, messages.msg("auto.paused", was=runner.agent_name(recorded),
+                                      now=runner.agent_name(current))
+    return recorded, None
 
 
 def status(conn: sqlite3.Connection, now: float | None = None) -> dict:
     last = _meta(conn, KEY_LAST)
     last_at = float(last) if last else None
     on = enabled(conn)
+    backend, paused = _agent(conn)
     return {
         "enabled": on,
+        "agent": runner.agent_name(backend),
+        "paused": paused if on else None,
         "last_run": _iso(last_at),
         "next_run": _iso(max(last_at + INTERVAL_SECONDS, now or time.time())
                          if last_at else (now or time.time())) if on else None,
@@ -104,13 +125,12 @@ def candidates(conn: sqlite3.Connection, now: float | None = None) -> list[tuple
     return out[:MAX_PER_RUN]
 
 
-def summarize(conn: sqlite3.Connection, session_id: str, job_id: str) -> None:
+def summarize(conn: sqlite3.Connection, session_id: str, job_id: str, backend: str) -> None:
     """Builds "What was done" the same way as the button: grant for this session state, then call."""
-    model, _ = runner.model_for(SUMMARY_KIND)
+    model, _ = runner.model_for(SUMMARY_KIND, backend)
     payload = runner.build_payload(conn, session_id, SUMMARY_KIND)
-    runner.grant_egress(conn, session_id, payload["content_hash"], SUMMARY_KIND,
-                        runner.EXTERNAL_BACKEND, model)
-    enrich.produce(conn, session_id, SUMMARY_KIND, job_id)
+    runner.grant_egress(conn, session_id, payload["content_hash"], SUMMARY_KIND, backend, model)
+    enrich.produce(conn, session_id, SUMMARY_KIND, job_id, backend=backend, model=model)
 
 
 def _job_running(conn: sqlite3.Connection) -> bool:
@@ -122,6 +142,9 @@ def tick(conn: sqlite3.Connection, now: float | None = None, run=None, summary=N
     """One scheduler step. None means not now (disabled, too early, or a classification is running)."""
     now = now or time.time()
     if not enabled(conn) or not runner.llm_enabled() or _job_running(conn):
+        return None
+    backend, paused = _agent(conn)
+    if paused:
         return None
     last = _meta(conn, KEY_LAST)
     if last and now - float(last) < INTERVAL_SECONDS:
@@ -138,7 +161,7 @@ def tick(conn: sqlite3.Connection, now: float | None = None, run=None, summary=N
     summary = summary or summarize
     actions.set_job_state(conn, job_id, "running")
     try:
-        result = run(conn, ids, job_id=job_id)
+        result = run(conn, ids, job_id=job_id, backend=backend)
     except Exception as exc:
         actions.set_job_state(conn, job_id, "failed", error=f"{type(exc).__name__}: {exc}")
         return {"classified": 0, "summaries": 0, "candidates": len(ids), "error": str(exc)}
@@ -147,7 +170,7 @@ def tick(conn: sqlite3.Connection, now: float | None = None, run=None, summary=N
         if actions.is_cancelled(conn, job_id):
             break
         try:
-            summary(conn, sid, job_id)
+            summary(conn, sid, job_id, backend)
             done += 1
         except Exception as exc:
             errors.append(messages.msg("auto.summary_failed", sid=sid[:8],

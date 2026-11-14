@@ -1,6 +1,6 @@
 // Session actions (restore, handoff, description) and help.
 // Classic script: shares one global scope with the other page files.
-/* exported showResume, startArtifact, buildHelp, deleteSession, closeAfterHandOff -- used by other page scripts */
+/* exported showResume, startArtifact, egressTarget, buildHelp, deleteSession, closeAfterHandOff -- used by other page scripts */
 // --- actions ---------------------------------------------------------------
 
 function modal(title, note, body, okLabel, onOk) {
@@ -49,13 +49,17 @@ function showResume(s, fork) {
   if (!a.can_open_terminal) $("#m-ok").disabled = true;
 }
 
+/** Where a preview's text goes: the agent that runs the AI features and its model (server's choice). */
+function egressTarget(prev) {
+  return i18n("actions.externalModel", { agent: prev.agent_name || "Claude Code", model: prev.model });
+}
+
 // Two stages: first show exactly what leaves the machine, only then call the model.
 async function startArtifact(id, kind, thenLaunch) {
   let prev;
   try { prev = await api("/api/preview", { session_id:id, artifact_kind:kind }); }
   catch (e) { modal(i18n("common.errorTitle"), e.message, ""); return; }
-  const where = prev.is_local_backend ? i18n("actions.localModel")
-    : i18n("actions.externalModel", { model: prev.model });
+  const where = prev.is_local_backend ? i18n("actions.localModel") : egressTarget(prev);
   const mb = AtlasLogic.sizeMb(prev.text);
   const parts = (prev.sections || [])
     .map(x => `${x.title}: ${x.items}`).join(" · ");
@@ -68,7 +72,7 @@ async function startArtifact(id, kind, thenLaunch) {
       $("#m-ok").disabled = true;
       $("#m-note").textContent = i18n("actions.modelWorking");
       try {
-        const job = await api("/api/job", { session_id:id, artifact_kind:kind, confirmed:true });
+        const job = await api("/api/job", { session_id:id, artifact_kind:kind, confirmed:true, backend:prev.backend });
         await poll(job.job_id, id, kind, thenLaunch);
       } catch (e) {
         $("#m-note").textContent = i18n("common.error", { msg: e.message });
@@ -181,6 +185,7 @@ function buildHelp() {
 const DELETE_KINDS = [["transcript", "delete.kind.transcript"], ["subagents", "delete.kind.subagents"],
   ["file_history", "delete.kind.file_history"], ["session_env", "delete.kind.session_env"],
   ["tasks", "delete.kind.tasks"], ["todos", "delete.kind.todos"], ["rollout", "delete.kind.rollout"],
+  ["rollout_subagent", "delete.kind.rollout_subagent"],
   ["handoff", "delete.kind.handoff"]];
 
 function sizeText(bytes) {
@@ -209,8 +214,9 @@ async function deleteSession(s) {
   modal(title, i18n("delete.note", { size: sizeText(plan.bytes) }), lines.join("\n"),
     i18n("delete.confirm"), async () => {
       $("#m-ok").disabled = true;
+      let done;
       try {
-        await api("/api/delete", { session_id: s.session_id, confirmed: true });
+        done = await api("/api/delete", { session_id: s.session_id, confirmed: true });
       } catch (e) {
         $("#m-note").textContent = i18n("common.error", { msg: e.message });
         $("#m-ok").disabled = false;
@@ -226,6 +232,8 @@ async function deleteSession(s) {
         $("#card").replaceChildren(body);
       }
       loadList(true);
+      // Codex could not delete the thread itself: the files are gone, its own list may lag.
+      if (done && done.codex_error) modal(i18n("delete.done"), done.codex_error, "");
     });
   $("#m-ok").classList.add("danger");
   $("#m-copy").classList.add("hidden");

@@ -1,6 +1,8 @@
 // Codex screens in the terminal tab: approvals, questions and other choices, busy or idle.
 // Codex writes no approval into its rollout while it waits, so the screen is the only source, as
-// for Claude Code. Checked against live codex-cli 0.160.0 screens (tools/fixtures/codex_screens.json).
+// for Claude Code. Checked against live screens in tools/fixtures/codex_screens.json: codex-cli 0.167.0
+// for /status, the plan question, questions, the rate-limit choice and the Tab queue (live scenarios
+// codexScreens, codexBackground), 0.160.0 for the rest; approvals on 0.167.0 (codexApproval).
 
 // The selection views end with one of these hints; without it a numbered list is just text.
 const FOOTER = /^\s*(Press enter to confirm or esc to cancel|enter select · esc back|enter\/esc confirm|tab to add notes \| enter to submit)/;
@@ -12,6 +14,9 @@ const QUESTION = /^\s*Question (\d+)\/(\d+)\b/;
 const FEEDBACK = /^No, and tell Codex what to do differently/;
 const WORKING = /esc to interrupt\)/;           // "• Working (5s • esc to interrupt)"
 const COMPOSER = /^› /;
+// Messages typed while a turn runs: Enter steers the turn, Tab queues a follow-up (codex-cli 0.167).
+const QUEUE_HEAD = /^\s*• (Queued follow-up inputs|Messages to be submitted after next tool call)\b/;
+const QUEUED = /^(\s*)↳ (.*)$/;
 const MAX_DETAIL_LINES = 12;
 const MAX_OUTPUT_LINES = 60;
 
@@ -149,6 +154,30 @@ function codexScreenState(lines) {
   return composerRow(rows) >= 0 ? "idle" : null;
 }
 
+/** Messages waiting on screen to be sent after the turn (or its next tool call), in order. */
+function codexQueued(lines) {
+  const rows = clean(lines);
+  const at = composerRow(rows);
+  const out = [];
+  let open = false;
+  let indent = -1;
+  for (const row of rows.slice(Math.max(0, (at < 0 ? rows.length : at) - 30), at < 0 ? rows.length : at)) {
+    if (QUEUE_HEAD.test(row)) { open = true; continue; }
+    if (!open) continue;
+    const m = QUEUED.exec(row);
+    if (m) {
+      out.push(m[2].trim());
+      indent = m[1].length + 2;
+    } else if (out.length && row.trim() && row.match(/^ */)[0].length >= indent && !/^\s*⇧/.test(row)) {
+      out[out.length - 1] += " " + row.trim();          // a long message wraps under its first line
+    } else if (!/^\s*⇧/.test(row)) {
+      open = /^\s*• (Queued|Messages)/.test(row);
+      indent = -1;
+    }
+  }
+  return out.filter(Boolean);
+}
+
 /** What a slash command printed: the rows between its echo and the composer. {text, panel} or null. */
 function extractCodexCommandOutput(lines, command) {
   const rows = clean(lines);
@@ -167,4 +196,4 @@ function extractCodexCommandOutput(lines, command) {
   return { text: body.map((l) => l.slice(indent)).join("\n"), panel: false };
 }
 
-export { parseCodexDialog, codexScreenState, composerText, extractCodexCommandOutput };
+export { parseCodexDialog, codexScreenState, composerText, extractCodexCommandOutput, codexQueued };

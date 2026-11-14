@@ -79,8 +79,12 @@ Codex test data is made up as well:
   `write_rollout` fixture saves them as a rollout in the temporary Codex home, and
   `write_codex_state` creates a minimal `state_5.sqlite`.
 - `tools/fixtures/codex_screens.json` holds Codex terminal screens (approvals, questions, busy and
-  idle states) captured from codex-cli 0.160.0; the plugin's screen parser is tested against them,
-  as `command_screens.json` and `dialog_screens.json` do for Claude Code. Capture new screens with a
+  idle states) captured from codex-cli 0.167.0 (/status, the plan question, questions, the rate-limit
+  choice, a Tab-queued message) and 0.160.0 (the rest); the plugin's screen parser is tested against
+  them, as `command_screens.json` and `dialog_screens.json` do for Claude Code. The live scenarios
+  `codexApproval`, `codexScreens` and `codexBackground` check these screens on the installed
+  codex-cli; the last two save what they saw to `codex-screens.json` in the kept world
+  (`--keep`). Capture new screens with a
   harmless prompt in a temporary folder and check that they contain no personal paths or text.
 
 ## Both languages for every UI string

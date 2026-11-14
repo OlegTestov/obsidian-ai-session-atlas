@@ -138,7 +138,7 @@ function actionBar(s) {
     item(i18n("card.handoffOnly"), () => startArtifact(s.session_id, "handoff", false));
     item(i18n("card.detailedSummary"), () => startArtifact(s.session_id, "catalog_summary", false));
   }
-  // Only agents that can fork a session exactly (Claude Code) get the item.
+  // An agent that can fork a session exactly gets the item (Claude Code --fork-session, codex fork).
   if (s.actions && s.actions.fork_command) item(i18n("card.exactFork"), () => showResume(s, true));
   item(i18n("delete.menu"), () => deleteSession(s));
   menu.lastChild.classList.add("danger");
@@ -227,7 +227,8 @@ async function openCard(id) {
   card.replaceChildren(body, actionBar(s));
 }
 
-// The title goes both to the catalog and to the transcript itself: Claude Code reads the same record.
+// The title goes both to the catalog and to the agent itself: Claude Code reads an appended record,
+// Codex is asked to rename its thread.
 // An own dialog, not prompt(): in Obsidian the page lives in Electron, where prompt is unsupported
 // and a click silently does nothing.
 function renameSession(s) {
@@ -235,6 +236,8 @@ function renameSession(s) {
   const error = $("#rename-error");
   input.value = s.title || "";
   error.textContent = "";
+  // Codex renames its own thread (Codex's own command); Claude Code reads the appended record.
+  $("#rename-note").textContent = i18n(s.agent === "codex" ? "card.renameNoteCodex" : "card.renameNote");
   $("#rename").showModal();
   input.focus();
   input.select();

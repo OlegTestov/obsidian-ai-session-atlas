@@ -196,8 +196,11 @@ function bindAutoClassify(auto) {
   const when = iso => (iso ? fmtDateTime(iso) : i18n("search.autoNever"));
   $("#auto-classify-label").title = auto.enabled
     ? i18n("search.autoOnTitle", { max: auto.max_per_run, last: when(auto.last_run),
-                                   next: when(auto.next_run) })
-    : i18n("search.autoOffTitle", { interval: auto.interval_minutes, max: auto.max_per_run });
+                                   next: when(auto.next_run), agent: auto.agent })
+    : i18n("search.autoOffTitle", { interval: auto.interval_minutes, max: auto.max_per_run, agent: auto.agent });
+  const paused = $("#auto-classify-paused");      // the agent changed since it was turned on: says why
+  paused.textContent = auto.paused || "";
+  paused.hidden = !auto.paused;
 }
 
 $("#auto-classify").addEventListener("change", async e => {
@@ -311,12 +314,13 @@ $("#classify").addEventListener("click", async () => {
   if (!prev.pending) { modal(i18n("search.classifyTitle"), i18n("search.nothingToClassify"), ""); return; }
   modal(i18n("search.classifySessions"),
     i18nN("search.classifyNote", prev.pending,
-          { chars: prev.estimated_chars, model: prev.model, note: prev.note }),
+          { chars: prev.estimated_chars, note: prev.note,
+            model: egressTarget(prev) }),
     prev.samples.join("\n\n— — —\n\n"),
     i18n("search.confirmRun"), async () => {
       $("#m-ok").disabled = true;
       try {
-        const job = await api("/api/classify", { confirmed:true });
+        const job = await api("/api/classify", { confirmed:true, backend:prev.backend });
         $("#modal").close();                  // the work runs on the server, no need to wait for it
         setClassifyRunning(prev.pending);
         watchClassify(job.job_id);

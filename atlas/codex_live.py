@@ -2,16 +2,18 @@
 
 The process table gives interactive `codex` processes, `lsof` the rollout each one holds open
 (`codex_procs`), the rollout tail the turn state and the last messages (`codex_tail`). A permission
-prompt is not in the rollout: the plugin reads it from the terminal screen, as for Claude Code.
+prompt is not in the rollout: the plugin reads it from the terminal screen, as for Claude Code, and the
+opt-in Codex hook marks it for sessions outside tabs (`codex_waits`).
 """
 from __future__ import annotations
 
 import glob
 import os
 import sqlite3
+import time
 from datetime import datetime, timezone
 
-from . import active, codex_procs, codex_tail, codex_usage, index, openai_costs, search
+from . import active, codex_procs, codex_state, codex_tail, codex_usage, codex_waits, index, openai_costs, search
 
 AGENT = "codex"
 TITLE_CHARS = 80
@@ -45,7 +47,23 @@ def _title(info: dict, tail: dict, sid: str) -> str:
     return (text[:TITLE_CHARS - 1] + "…" if len(text) > TITLE_CHARS else text) or sid[:8]
 
 
-def card(conn: sqlite3.Connection, pid: int, path: str, table: dict) -> dict | None:
+def live_subagents(pid: int, table: dict, sid: str, now: float | None = None, home: str | None = None) -> int:
+    """Subagent threads writing right now, as for Claude Code: a finished one stays open, unwritten.
+    Those the process holds open, and those on disk (a daemon-run Codex holds them elsewhere)."""
+    now = time.time() if now is None else now
+    fresh = 0
+    held = codex_procs.subagent_rollouts(pid, table, sid)
+    for path in {os.path.realpath(p) for p in held + codex_procs.subagents_on_disk(sid, home, now)}:
+        try:
+            fresh += now - os.stat(path).st_mtime < active.AGENT_FRESH_SECONDS
+        except OSError:
+            continue
+    return fresh
+
+
+def card(conn: sqlite3.Connection, pid: int, path: str, table: dict, state: dict | None = None,
+         home: str | None = None) -> dict | None:
+    """state: {"goals": {sid: objective}, "queued": {sid: [...]}} read once for every live thread."""
     from .relocate import host_app  # relocate itself depends on active
     meta = codex_procs.session_meta(path)
     sid = codex_procs.thread_id(path)
@@ -54,19 +72,24 @@ def card(conn: sqlite3.Connection, pid: int, path: str, table: dict) -> dict | N
     info = search._load_session(conn, sid) or {}
     t = codex_tail.read(path)
     reply = t["reply"] or ""
-    background = {"shells": 0, "agents": 0, "wake_at": None, "crons": 0, "goal": None}
+    state = state or {}
+    background = {"shells": codex_state.background_commands(pid, table, home),
+                  "agents": live_subagents(pid, table, sid, home=home), "wake_at": None, "crons": 0,
+                  "goal": (state.get("goals") or {}).get(sid)}
     context = codex_tail.context_tokens(t["usage"])
     started = _iso_lstart(table.get(pid, (0, ""))[1])
+    waited = codex_waits.waiting(sid, path, t["status"])
+    status = "waiting" if waited else t["status"]
     return {
         "session_id": sid,
         "agent": AGENT,
         "pid": pid,
         "ancestors": active.ancestors(pid, table),
         "host_app": host_app(pid, table),
-        "status": t["status"],
-        "activity": active.activity(t["status"], background),
+        "status": status,
+        "activity": active.activity(status, background),
         "background": background,
-        "waiting_for": None,              # a permission prompt is read from the screen by the plugin
+        "waiting_for": "permission prompt" if waited else None,   # else the plugin reads the tab's screen
         "job_session_id": None,
         "transcript_session_id": sid,
         "cwd": t["cwd"] or meta.get("cwd"),
@@ -90,7 +113,7 @@ def card(conn: sqlite3.Connection, pid: int, path: str, table: dict) -> dict | N
         "started_at": info.get("started_at") or meta.get("timestamp") or started,
         "process_started_at": started,
         "last_message_at": t["last_at"],
-        "status_at": None,            # Codex keeps no status time; its dialogs are read from the screen
+        "status_at": waited,          # the hook's time; Codex itself keeps no status time
         "reply_tail": active.markdown_tail(reply),
         "reply_len": len(reply),
         "reply_at": t["reply_at"],
@@ -99,7 +122,7 @@ def card(conn: sqlite3.Connection, pid: int, path: str, table: dict) -> dict | N
         "prompt_at": t["prompt_at"],
         "prompt_images": t["prompt_images"],
         "interrupted_at": t["interrupted_at"],
-        "queued": [],
+        "queued": (state.get("queued") or {}).get(sid, []),
         "tasks": codex_tail.plan_progress(t["plan"]),
         "progress_at": None,
     }
@@ -109,9 +132,11 @@ def list_live(conn: sqlite3.Connection, table: dict, run=None,
               home: str | None = None) -> list[dict]:
     """Cards of live interactive Codex threads; one per thread even if two processes hold it."""
     paths = codex_procs.rollouts_for(table, run=run, home=home)
+    ids = sorted({sid for sid in map(codex_procs.thread_id, paths.values()) if sid})
+    state = {"goals": codex_state.goals(ids, home), "queued": codex_state.queued(ids, home)}
     out, seen = [], set()
     for pid, path in sorted(paths.items()):
-        made = card(conn, pid, path, table)
+        made = card(conn, pid, path, table, state, home)
         if made and made["session_id"] not in seen:
             seen.add(made["session_id"])
             out.append(made)

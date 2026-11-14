@@ -247,6 +247,12 @@ describe("unanswered prompt and delivery", () => {
   test("delivery: queued, matched by text", () => {
     assert.equal(L.deliveryState({ queued: [{ text: "  проверь тесты и почини, а потом" }] }, msg, t0 + 20000), "queued");
   });
+  test("queued line: the message just sent is shown once, as yours, not again as queued", () => {
+    const queue = { queued: [{ text: "проверь тесты и почини" }, { text: "и обнови README" }] };
+    assert.deepEqual(L.queuedNotShown(queue, { ...msg, sent: true }).map(q => q.text), ["и обнови README"]);
+    assert.equal(L.queuedNotShown(queue, null).length, 2);                         // nothing shown: all of it
+    assert.equal(L.queuedNotShown(queue, { text: "проверь тесты и почини" }).length, 2);  // from the transcript
+  });
   test("delivery: 15 s without a trace is lost", () => {
     assert.equal(L.deliveryState({ queued: [] }, msg, t0 + 16000), "lost");
   });
@@ -269,6 +275,14 @@ describe("command hints and history", () => {
   test("hints: prefix matches first", () => assert.equal(names("/lo"), "log-x,obsidian-log"));
   test("hints: case does not matter", () => assert.equal(names("/COMP"), "compact"));
   test("hints: none after a space", () => assert.ok(names("/goal сделай") === "" && names("привет /g") === ""));
+  test("hints: \"$\" lists the Codex skills, \"/\" its commands", () => {
+    const codex = [{ name: "model" }, { name: "page-design", sigil: "$" }, { name: "qa", sigil: "$" }];
+    const of = (t) => L.commandMatches(codex, t).map((c) => c.name).join(",");
+    assert.equal(of("/"), "model");
+    assert.equal(of("$"), "page-design,qa");
+    assert.equal(of("$q"), "qa");
+    assert.equal(of("$qa now"), "");
+  });
   test("hints: all matches, no truncation", () => {
     assert.equal(L.commandMatches(Array.from({ length: 200 }, (_, i) => ({ name: "c" + i })), "/c").length, 200);
   });

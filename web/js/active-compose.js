@@ -1,11 +1,11 @@
 // Active: the reply field with slash-command hints, sent history and drafts.
 // Classic script: shares one global scope with the other page files.
-/* exported rememberSent, enhanceComposer -- used by other page scripts */
+/* exported rememberSent, enhanceComposer, ensureCommands, codexModels -- used by other page scripts */
 // localStorage here is a single-browser convenience: losing it is harmless, so everything is in try.
 const DRAFTS_KEY = "atlas.drafts";
 const HISTORY_KEY = "atlas.sentHistory";
 const HISTORY_MAX = 50;
-let commandList = null;
+const commandLists = {};              // agent → {commands, models}
 
 // Drafts survive a reload of the page and of the Obsidian tab.
 (function restoreDrafts() {
@@ -28,11 +28,20 @@ function rememberSent(text) {
   store(HISTORY_KEY, history.slice(-HISTORY_MAX));
 }
 
-async function ensureCommands() {
-  if (commandList) return commandList;
-  try { commandList = (await api("/api/commands")).commands || []; }
-  catch { commandList = []; }
-  return commandList;
+async function ensureCommands(agent) {
+  const key = agent === "codex" ? "codex" : "claude";
+  if (!commandLists[key]) {
+    try {
+      const r = await api(key === "codex" ? "/api/commands?agent=codex" : "/api/commands");
+      commandLists[key] = { commands: r.commands || [], models: r.models || [] };
+    } catch { commandLists[key] = { commands: [], models: [] }; }
+  }
+  return commandLists[key].commands;
+}
+
+// Codex models for the /model picker, once the agent's list has loaded.
+function codexModels() {
+  return (commandLists.codex && commandLists.codex.models) || [];
 }
 
 // The arrow walks the history only when the caret is at the text edge: otherwise it is for editing.
@@ -44,10 +53,11 @@ function onEdge(area, dir) {
 
 /**
  * Reply field behaviour. Returns the hint dropdown, which the caller places next to the field.
- * opts.commands === false: no slash-command hints (the list is Claude Code's).
+ * opts.commands === false: no slash-command hints; opts.agent picks whose commands are listed.
  */
 function enhanceComposer(area, sid, submit, opts) {
   const hints = !opts || opts.commands !== false;
+  const agent = opts && opts.agent;
   const pop = el("div", "suggest hidden");
   pop.setAttribute("role", "listbox");
   let items = [];
@@ -60,7 +70,7 @@ function enhanceComposer(area, sid, submit, opts) {
     pop.replaceChildren(...items.map((c, i) => {
       const row = el("div", "sug" + (i === active ? " on" : ""));
       row.setAttribute("role", "option");
-      row.append(el("b", null, "/" + c.name), el("span", null, c.description || ""));
+      row.append(el("b", null, (c.sigil || "/") + c.name), el("span", null, c.description || ""));
       // mousedown, not click: otherwise the field loses focus before the choice.
       row.addEventListener("mousedown", e => { e.preventDefault(); pick(i); });
       return row;
@@ -70,7 +80,7 @@ function enhanceComposer(area, sid, submit, opts) {
     if (on) on.scrollIntoView({ block: "nearest" });   // with the arrows, follow the selected row
   };
   const pick = i => {
-    area.value = "/" + items[i].name + " ";
+    area.value = (items[i].sigil || "/") + items[i].name + " ";
     drafts.set(sid, area.value);
     saveDrafts();
     close();
@@ -81,7 +91,7 @@ function enhanceComposer(area, sid, submit, opts) {
   const suggest = async () => {
     if (!hints) return;
     const text = area.value;
-    const list = await ensureCommands();
+    const list = await ensureCommands(agent);
     if (area.value !== text) return;           // typing continued while the list loaded
     items = AtlasLogic.commandMatches(list, text);
     active = Math.min(active, Math.max(0, items.length - 1));

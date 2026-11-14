@@ -80,7 +80,7 @@ def test_resume_command_per_agent(both):
     codex = actions.actions_for(conn, TID)
     assert codex["resume_command"].endswith(f"&& codex resume {TID}")
     assert codex["resume_command"].startswith("cd ") and "'\"'\"'" in codex["resume_command"]
-    assert codex["fork_command"] is None
+    assert codex["fork_command"] == codex["resume_command"].replace(" resume ", " fork ")
     claude = actions.actions_for(conn, CLAUDE_ID)
     assert claude["resume_command"].endswith(f"&& claude --resume {CLAUDE_ID}")
     assert actions.resume_command(cwd, TID, agent="codex") == codex["resume_command"]

@@ -202,6 +202,7 @@
       "cmd.effort": "reasoning effort:",
       "cmd.model": "model:",
       "cmd.choice.hint": "{cmd} {value} — Claude Code will remember this for new sessions too",
+      "cmd.codexModel.hint": "Codex uses this for this session only",
 
       // --- Jump ⌘K (jump.js) ---
       "jump.label": "Go to session",
@@ -433,6 +434,7 @@
       "cmd.effort": "глубина рассуждений:",
       "cmd.model": "модель:",
       "cmd.choice.hint": "{cmd} {value} — Claude Code запомнит это и для новых сессий",
+      "cmd.codexModel.hint": "Codex применит это только к этой сессии",
 
       // --- Jump ⌘K (jump.js) ---
       "jump.label": "Перейти к сессии",

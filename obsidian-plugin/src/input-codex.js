@@ -25,8 +25,9 @@ class CodexInputMethods {
   }
 
   /**
-   * A digit picks the option at once, no Enter (checked on codex-cli 0.160.0: approvals, questions
-   * and choices alike). The option under the digit is compared with what the person saw first.
+   * A digit picks the option at once, no Enter (checked on codex-cli 0.167.0: approvals, the plan
+   * question, questions and the rate-limit choice, live scenarios codexApproval and codexScreens).
+   * The option under the digit is compared with what the person saw first.
    */
   async codexAnswer(tab, data, reply) {
     const dialog = this.codexDialog(tab);

@@ -67,14 +67,15 @@ def standin(requests: list, tool_use=None, text_for=None, respond=None) -> Threa
             call = tool_use(body) if tool_use and self.path.startswith("/v1/messages") else None
             text = (text_for(body) if text_for else None) or "PROBE-OK"
             if call:
+                call_id = f"toolu_probe_{len(requests)}"
                 usage = {"input_tokens": 10, "output_tokens": 1}
                 return self._send(sse([
-                    {"type": "message_start", "message": {"id": "msg_probe_tool", "type": "message",
+                    {"type": "message_start", "message": {"id": f"msg_{call_id}", "type": "message",
                                                           "role": "assistant", "model": body.get("model"),
                                                           "content": [], "usage": usage,
                                                           "stop_reason": None, "stop_sequence": None}},
                     {"type": "content_block_start", "index": 0,
-                     "content_block": {"type": "tool_use", "id": "toolu_probe_1", "name": call["name"], "input": {}}},
+                     "content_block": {"type": "tool_use", "id": call_id, "name": call["name"], "input": {}}},
                     {"type": "content_block_delta", "index": 0,
                      "delta": {"type": "input_json_delta", "partial_json": json.dumps(call["input"])}},
                     {"type": "content_block_stop", "index": 0},

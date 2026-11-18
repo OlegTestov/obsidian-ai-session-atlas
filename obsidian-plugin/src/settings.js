@@ -1,11 +1,13 @@
 // One set of row definitions drives both Obsidian's settings search and the older settings UI.
-import { PluginSettingTab, Setting } from "obsidian";
+import { Notice, PluginSettingTab, Setting } from "obsidian";
 import { renderStatus, catalogDefinitions, aiDefinitions, advancedDefinitions, codexHookDefinition } from "./settings-server";
 import { NOTICE_HOLDS, DEFAULT_NOTICE_HOLD } from "./notify";
 import { DEFAULT_FONT_SIZE } from "./constants";
+import { mailSetupDefinition } from "./mail-setup";
+import { normalizeCodexHome } from "./codex-hook";
 
 const DEFAULT_SETTINGS = { notify: true, systemNotify: true, explorerClicks: false, language: "auto",
-                           agents: {}, agentArgs: { claude: "", codex: "" }, terminalFontSize: DEFAULT_FONT_SIZE,
+                           wakeOnMail: false, agentMailRoot: "", agentMailScript: "", codexHome: "", agents: {}, agentArgs: { claude: "", codex: "" }, terminalFontSize: DEFAULT_FONT_SIZE,
                            cardMessages: 10, noticeHold: DEFAULT_NOTICE_HOLD, loadAgentTabs: true, showWhatsNew: true };
 
 class AtlasSettingTab extends PluginSettingTab {
@@ -62,6 +64,33 @@ class AtlasSettingTab extends PluginSettingTab {
             }));
         })),
         codexHookDefinition(this),
+        definition("codexHook.home", "codexHook.home.desc", setting => setting.addText(text => {
+          text.setPlaceholder("~/.codex").setValue(plugin.settings.codexHome);
+          text.inputEl.addEventListener("blur", async () => {
+            const value = text.getValue().trim();
+            if (value === plugin.settings.codexHome) return;
+            if (value && !normalizeCodexHome(value)) {
+              text.setValue(plugin.settings.codexHome);
+              new Notice(t("codexHook.home.invalid"));
+              return;
+            }
+            plugin.settings.codexHome = value;
+            await this.save();
+            this.refresh();
+          });
+        })),
+        this.toggleDefinition("wakeOnMail", "mail.wake", "mail.wake.desc"),
+        mailSetupDefinition(this),
+        definition("mail.root", "mail.root.desc", setting => setting.addText(text =>
+          text.setPlaceholder("~/.agent-mail").setValue(plugin.settings.agentMailRoot).onChange(async value => {
+            plugin.settings.agentMailRoot = value;
+            await this.save();
+          }))),
+        definition("mail.script", "mail.script.desc", setting => setting.addText(text =>
+          text.setValue(plugin.settings.agentMailScript).onChange(async value => {
+            plugin.settings.agentMailScript = value;
+            await this.save();
+          }))),
         this.toggleDefinition("loadAgentTabs", "settings.loadAgentTabs", "settings.loadAgentTabs.desc"),
         definition("settings.fontSize", null, setting => setting.addSlider(slider => slider.setLimits(9, 22, 1)
           .setValue(Number(plugin.settings.terminalFontSize) || DEFAULT_FONT_SIZE).setDynamicTooltip().onChange(async value => {

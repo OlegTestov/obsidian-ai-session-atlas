@@ -16,6 +16,8 @@ import { registry, keepHeldTabs, holdForReclaim } from "./held";
 import { selectWithModifier, isCopyKey, copySelection, pasteClipboard, menuItems, copyTarget, writeClipboard } from "./term-copy";
 import { pathLinkProvider, pathClicks, localTarget } from "./term-links";
 import { resolvePath } from "./open-path";
+import { shellQuote } from "./agents";
+import { normalizeCodexHome } from "./codex-hook";
 
 import { pasteImageEvent } from "./term-paste";
 import { saveClipboardImage } from "./term-image";
@@ -175,7 +177,9 @@ class AgentTerminalView extends ItemView {
       const env = Object.assign({}, process.env, { TERM: "xterm-256color", COLORTERM: "truecolor",
         OBS_AGENT_TERMINAL_ARGS_DIR: path.join(this.plugin.dataDir(), "agent-args") });
       if (!env.LANG) env.LANG = "en_US.UTF-8";      // launched from the Dock, Obsidian has no locale
-      pty = spawnPty({ file: shell, args: ["-l", "-i", "-c", this.state.command],
+      const codexHome = this.state.kind === "codex" && normalizeCodexHome(settings.codexHome);
+      const command = codexHome ? `export CODEX_HOME=${shellQuote(codexHome)}; ${this.state.command}` : this.state.command;
+      pty = spawnPty({ file: shell, args: ["-l", "-i", "-c", command],
                        cwd: this.state.cwd || os.homedir(), env, cols: term.cols, rows: term.rows });
     }
     // A tab without an id is listed too, under its PTY: quitting Obsidian must end its process as well.

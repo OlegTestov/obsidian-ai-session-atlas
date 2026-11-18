@@ -272,6 +272,18 @@ many sessions the first index can take a few minutes.
   in Statistics without a reindex. All costs are estimates at API prices, not what a subscription
   costs.
 
+### Agent Mail
+
+Claude Code and Codex can write to each other by the title of an open Atlas terminal tab.
+
+1. In **Settings → AI Session Atlas → Agents**, enable **Wake agents on new mail**.
+2. Under **Connect Agent Mail**, copy each setup command and run it in a regular terminal. These commands use the MCP server bundled with Atlas and the same local mail folder. If you already use a compatible Agent Mail server, keep it and make sure both clients use that folder.
+3. Resume the agent sessions so they load the MCP. Then ask one agent to “Write to the session titled ‘Review the report’ and ask it to check the draft.”
+
+Only one matching title is required to send. If several open sessions have that title, choose the recipient before sending. An open recipient tab is prompted once it is ready for input. Each agent's tool approval settings still apply.
+
+Atlas reads the Codex home folder from the login shell. If your Codex uses a different folder, set **Codex home folder** in the same settings section and reload Atlas. Use `/hooks` in Codex to trust the optional hook for approval notifications outside Atlas.
+
 ## Disclosures
 
 This section lists everything the plugin does outside Obsidian, as required by the Obsidian

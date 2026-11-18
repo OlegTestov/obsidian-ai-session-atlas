@@ -105,6 +105,37 @@ class TerminalMethods {
     }
   }
 
+  emptyAgentPrompt(leaf, agent) {
+    try {
+      const terminal = leaf.view.emulator.terminal;
+      const buffer = terminal.buffer.active;
+      if (buffer.viewportY !== buffer.baseY) return false;
+      const lines = this.screenLines(leaf);
+      const y = buffer.cursorY;
+      const row = lines[y] || "";
+      const marker = agent === "codex" ? "›" : "❯";
+      if (buffer.cursorX !== 2 || !row.startsWith(marker)) return false;
+      if (agent === "claude") {
+        // Claude puts the session name in the upper rule after /rename.
+        const topRule = /^─{5,}(?: .+ ─+)?$/;
+        if (!topRule.test(lines[y - 1]?.trim()) || !/^─{5,}$/.test(lines[y + 1]?.trim())) return false;
+      } else if (agent === "codex") {
+        if (codexScreenState(lines) !== "idle" || lines[y + 1]?.trim() !== "") return false;
+      } else return false;
+      if (!row.slice(1).trim()) return true;
+      if (row[1] !== " " && row[1] !== "\u00a0") return false;
+      // Both TUIs show hints in dim cells while their empty composer has the cursor at its start.
+      const line = buffer.getLine(buffer.baseY + y);
+      for (let x = 2; x < row.length && x < terminal.cols; x++) {
+        const cell = line?.getCell(x);
+        if (!cell || (cell.getChars().trim() && !cell.isDim())) return false;
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async ptyInput(leaf) {
     try {
       const emulator = leaf.view.emulator;

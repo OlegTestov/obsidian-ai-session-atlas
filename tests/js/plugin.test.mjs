@@ -30,6 +30,7 @@ after(() => fs.rmSync(TMP, { recursive: true, force: true }));
 // Stand-ins for what the plugin takes from Obsidian.
 const views = {};
 const intervals = [];
+after(() => intervals.forEach(id => clearInterval(id)));
 class FakeBase {
   constructor() {}
   registerView(type, factory) { views[type] = factory; }

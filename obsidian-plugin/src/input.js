@@ -58,7 +58,7 @@ class InputMethods {
    * Types text into the terminal tab as if a person typed it. Refuses while the session waits for a
    * dialog decision: Enter there would pick an option, up to allowing a command.
    */
-  async sendText(target, data) {
+  async sendText(target, data, idleGuard) {
     const reply = (ok, reason) => this.answerPage(target, { type: "sent", ok, reason: reason || null,
                                                    ptyPid: data.ptyPid, nonce: data.nonce });
     if (typeof data.text !== "string") return reply(false, this.t("input.badRequest"));
@@ -77,6 +77,14 @@ class InputMethods {
     if (state.agent === "codex" && !state.status) return reply(false, this.t("input.codexScreen"));
     const stdin = await this.ptyInput(tab.leaf);
     if (!stdin) return reply(false, this.t("input.noInput"));
+    if (idleGuard) {
+      const current = this.readAgentState(data.claudePid, tab.leaf);
+      if (current?.status !== "idle" || !current.sessionIds.includes(data.sessionId)
+          || !this.emptyAgentPrompt(tab.leaf, current.agent) || !idleGuard()) return false;
+      // Keep the paste and Enter in one write so there is no timer that could submit user input.
+      stdin.write(PASTE_START + text + PASTE_END + "\r");
+      return true;
+    }
     // An image path pasted on its own becomes an [Image #N] attachment. Codex takes it only quoted
     // (the data folder has a space); Claude Code takes it either way (both checked on the live CLIs).
     const codex = state.agent === "codex";

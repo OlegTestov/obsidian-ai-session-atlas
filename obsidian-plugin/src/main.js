@@ -40,6 +40,7 @@ import { GroupNavigationMethods } from "./groups-navigation";
 import { GroupMethods } from "./groups";
 import { GroupStripMethods } from "./groups-strip";
 import { AtlasSettingTab, DEFAULT_SETTINGS } from "./settings";
+import { MailNudger } from "./mail-nudge";
 
 /** A port written into the dev marker (a live test Obsidian next to the test vault), else none. */
 function markerPort(file) {
@@ -110,6 +111,7 @@ class SessionAtlasPlugin extends PluginData {
     );
     // Polling starts after layout: at Obsidian start-up the terminal tabs are not restored yet.
     this.app.workspace.onLayoutReady(() => this.startWatch());
+    this.app.workspace.onLayoutReady(() => new MailNudger(this).start());
     this.app.workspace.onLayoutReady(() => this.startBackgroundMarks());
   }
 

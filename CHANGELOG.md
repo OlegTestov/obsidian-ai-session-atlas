@@ -7,6 +7,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.11.0] - 2026-11-18
+
+- Claude Code and Codex can send local messages to open Atlas terminal tabs by title, including non-English titles.
+  If a title matches several sessions, Agent Mail returns the choices without sending.
+- Atlas wakes the recipient once its prompt is empty and it is ready for a request.
+- Agent Mail is bundled. Settings can copy the MCP setup commands for both agents.
+- Atlas discovers `CODEX_HOME` in the login shell and has an explicit Codex home setting.
+
 ## [2.10.0] - 2026-11-14
 
 Codex gets what Claude Code has in Atlas. Checked with codex-cli 0.167.0.

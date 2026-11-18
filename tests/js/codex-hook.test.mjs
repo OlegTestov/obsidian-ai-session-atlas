@@ -148,3 +148,14 @@ describe("Codex hook in hooks.json", () => {
     }
   });
 });
+
+it("uses the login shell Codex home and lets an explicit path take precedence", () => {
+  const p = makePlugin();
+  delete p.codexDirOverride;
+  p.shellInfo = { CODEX_HOME: path.join(tmp, "Codex from shell") };
+  assert.equal(p.codexHooksPath(), path.join(p.shellInfo.CODEX_HOME, "hooks.json"));
+  p.settings = { codexHome: path.join(tmp, "User's Codex home") };
+  assert.equal(p.codexHooksPath(), path.join(p.settings.codexHome, "hooks.json"));
+  assert.equal(H.normalizeCodexHome("relative"), null);
+  assert.equal(H.normalizeCodexHome("~/other-codex"), path.join(os.homedir(), "other-codex"));
+});

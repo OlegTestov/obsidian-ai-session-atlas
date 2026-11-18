@@ -59,10 +59,21 @@ function withOurHook(data, command) {
   return out;
 }
 
+function normalizeCodexHome(value) {
+  const dir = String(value || "").trim();
+  if (dir.startsWith("~/")) return path.join(os.homedir(), dir.slice(2));
+  return path.isAbsolute(dir) ? path.normalize(dir) : null;
+}
+
 class CodexHookMethods {
+  codexHome() {
+    return normalizeCodexHome(this.codexDirOverride || this.settings?.codexHome)
+      || normalizeCodexHome(this.shellInfo?.CODEX_HOME) || normalizeCodexHome(process.env.CODEX_HOME)
+      || path.join(os.homedir(), ".codex");
+  }
+
   codexHooksPath() {
-    const dir = this.codexDirOverride || process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
-    return path.join(dir, "hooks.json");
+    return path.join(this.codexHome(), "hooks.json");
   }
 
   codexHookOffFlag() {
@@ -88,6 +99,7 @@ class CodexHookMethods {
 
   /** Adds or removes Atlas's hook. An unreadable file is left alone: {ok, reason}. */
   async setCodexHook(on) {
+    await this.shellProbe?.();
     const { state, present } = this.codexHookState();
     if (state === "broken") return { ok: false, reason: "broken" };
     const flag = this.codexHookOffFlag();
@@ -131,4 +143,4 @@ class CodexHookMethods {
   }
 }
 
-export { CodexHookMethods, OFF_FLAG, isOurCodexHook, codexHookCommand, removableHook, withOurHook, withoutOurHook };
+export { CodexHookMethods, normalizeCodexHome, OFF_FLAG, isOurCodexHook, codexHookCommand, removableHook, withOurHook, withoutOurHook };

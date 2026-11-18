@@ -3,6 +3,7 @@ import * as path from "path";
 import * as os from "os";
 import { Notice } from "obsidian";
 import { DIRECTORY, ROUTE, MailRoutes, tabRoutes } from "./mail-routes";
+import { MailLimits } from "./mail-limits";
 
 const NAME = /^[a-z0-9][a-z0-9._-]{0,39}$/;
 const FILE = /^\d{13}-[0-9a-f]{12}\.json$/;
@@ -76,6 +77,7 @@ class MailNudger {
     this.now = now;
     this.sent = new Map();
     this.routes = new MailRoutes();
+    this.limits = new MailLimits();
   }
 
   start() {
@@ -128,7 +130,11 @@ class MailNudger {
       const sessions = Array.isArray(active?.sessions) ? active.sessions : [];
       const tabs = sessions.length ? await this.plugin.terminalTabs() : [];
       if (this.closed || root !== this.currentRoot()) return;
-      const routes = tabRoutes(sessions, tabs);
+      const now = this.now();
+      const routes = tabRoutes(sessions, tabs, (id, agent, tab) =>
+        this.limits.forTab(id, agent, this.plugin.screenLines(tab.leaf), now));
+      const limited = new Set([...routes.values()].filter(route => route.usage_limit).map(route => route.id));
+      this.limits.retain(new Set([...routes.values()].map(route => route.id)));
       try {
         this.routes.publish(root, routes);
       } catch (error) {
@@ -140,6 +146,7 @@ class MailNudger {
       });
       for (const batch of pending) {
         if (this.closed || root !== this.currentRoot()) break;
+        if (limited.has(batch.id)) continue;
         const matches = sessions.filter(s => s?.session_id === batch.id && s.status === "idle"
           && (!batch.agent || s.agent === batch.agent));
         if (matches.length !== 1) continue;

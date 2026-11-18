@@ -14,6 +14,7 @@ Run as an MCP stdio server (no arguments) or as a CLI:
 Standard library only; Python 3.8+.
 """
 
+import datetime
 import json
 import os
 import re
@@ -206,6 +207,52 @@ def mailbox_for_title(title, agent=None):
     return matches[0]["mailbox"]
 
 
+def _limit_time(value):
+    if not isinstance(value, str) or not re.fullmatch(r"20\d{2}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z", value):
+        return None
+    try:
+        return datetime.datetime.fromisoformat(value[:-1] + "+00:00").timestamp()
+    except ValueError:
+        return None
+
+
+def _visible_limit(tab):
+    raw = tab.get("usage_limit")
+    if not isinstance(raw, dict):
+        return None
+    expiry = _limit_time(raw.get("expires_at"))
+    if expiry is None or not 0 < expiry - time.time() <= 8 * 86400:
+        return None
+    reset = _limit_time(raw.get("reset_at"))
+    label = raw.get("reset_text")
+    if not isinstance(label, str) or not re.fullmatch(r"[A-Za-z0-9 _+:()/\-]{1,80}", label):
+        label = None
+    return {"kind": "usage_limit", "reset_at": raw["reset_at"] if reset == expiry else None, "reset_text": label}
+
+
+def recipient_limit(mailbox):
+    tabs = open_tabs()
+    target = next((tab for tab in tabs if tab["mailbox"] == mailbox), None)
+    if target is None:
+        try:
+            with open(os.path.join(HOME, _name(mailbox), "session"), encoding="utf-8") as binding:
+                sid = binding.read(128).strip()
+        except (OSError, UnicodeError):
+            return None
+        matches = [tab for tab in tabs if tab["id"] == sid]
+        if len(matches) == 1:
+            target = matches[0]
+    return _visible_limit(target) if target else None
+
+
+def _limit_notice(limit):
+    if not limit:
+        return ""
+    when = limit["reset_text"] or limit["reset_at"]
+    reset = f" Reported reset: {when}." if when else " No reset time was shown."
+    return f" Recipient has reached a usage limit.{reset} The letter is queued; wait rather than resending."
+
+
 def peers():
     rows = []
     if os.path.isdir(HOME):
@@ -231,13 +278,21 @@ def peers():
                 }
             )
     by_name = {row["name"]: row for row in rows}
-    for tab in open_tabs():
+    tabs = open_tabs()
+    limits_by_session = {tab["id"]: limit for tab in tabs if (limit := _visible_limit(tab))}
+    for row in rows:
+        limit = limits_by_session.get(row.get("session"))
+        if limit:
+            row["status"] = limit
+    for tab in tabs:
         name = tab["mailbox"]
         row = by_name.get(name)
         if row is None:
             row = {"name": name, "unread": 0, "last_seen": None}
             rows.append(row)
         row.update(session=tab["id"], title=tab["title"], agent=tab["agent"])
+        if limit := _visible_limit(tab):
+            row["status"] = limit
     return sorted(rows, key=lambda row: row["name"])
 
 
@@ -258,7 +313,8 @@ TOOLS = [
         "name": "mail_send",
         "description": "Send mail to another local agent. If the user gives a terminal tab title, "
         "copy the title into to_title (including non-English text). Use to only for a known mailbox name. "
-        "For multiple matching tabs, ask the user which session to use; never guess.",
+        "For multiple matching tabs, ask the user which session to use; never guess. "
+        "If a reply is delayed, call mail_peers to check the recipient's usage limit before resending.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -307,7 +363,8 @@ TOOLS = [
     },
     {
         "name": "mail_peers",
-        "description": "List mailboxes with unread counts and open Session Atlas terminal tab titles and agent types.",
+        "description": "List mailboxes and open tab titles. Check a recipient here if a reply is delayed. "
+        "A status of usage_limit means to wait for the reported reset before expecting a reply.",
         "inputSchema": {"type": "object", "properties": {}},
     },
 ]
@@ -327,7 +384,11 @@ def _call(name, args):
             raise ValueError("use either to for a mailbox or to_title with optional to_agent")
         recipient = to if to is not None else mailbox_for_title(title, args.get("to_agent"))
         m = send(_me(args), recipient, args.get("text"), args.get("thread"))
-        return f"Sent to {m['to']} at {m['at_text']} (id {m['id']})."
+        status = _limit_notice(recipient_limit(m["to"]))
+        return (
+            f"Sent to {m['to']} at {m['at_text']} (id {m['id']})."
+            + (status or " If the recipient is slow to reply, check their status with mail_peers.")
+        )
     if name == "mail_inbox":
         return _fmt(inbox(_me(args), args.get("wait", 0), bool(args.get("peek"))))
     if name == "mail_register":
@@ -378,11 +439,16 @@ def main(argv):
         return serve()
     cmd, rest = argv[0], argv[1:]
     if cmd == "send" and len(rest) >= 3:
-        print(send(rest[0], rest[1], " ".join(rest[2:]))["id"])
+        message = send(rest[0], rest[1], " ".join(rest[2:]))
+        print(message["id"])
+        if notice := _limit_notice(recipient_limit(message["to"])):
+            print(notice.strip(), file=sys.stderr)
     elif cmd == "send-title" and len(rest) >= 3:
         try:
             recipient = mailbox_for_title(rest[1])
             print(send(rest[0], recipient, " ".join(rest[2:]))["id"])
+            if notice := _limit_notice(recipient_limit(recipient)):
+                print(notice.strip(), file=sys.stderr)
         except ValueError as error:
             print(f"Error: {error}", file=sys.stderr)
             return 2

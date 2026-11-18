@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.11.1] - 2026-11-18
+
+### Added
+
+- Agent Mail reports a Claude Code or Codex usage limit and its reset time when shown in the recipient tab.
+  Check `mail_peers` if the recipient hits a limit after the letter was sent.
+
 ## [2.11.0] - 2026-11-18
 
 - Claude Code and Codex can send local messages to open Atlas terminal tabs by title, including non-English titles.
@@ -59,7 +66,7 @@ Codex gets what Claude Code has in Atlas. Checked with codex-cli 0.167.0.
 
 ### Changed
 
-- Action names say what happens: Resume (RU «Продолжить»), Continue in a new session, Create session
+- Action names say what happens: Resume, Continue in a new session, Create session
   note, Summarize session and Copy session replace Continue fresh, Session note, Detailed summary and
   Branch session.
 - One word for one thing across the plugin and the page: context compaction, category (was domain),

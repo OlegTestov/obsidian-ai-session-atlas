@@ -282,6 +282,8 @@ Claude Code and Codex can write to each other by the title of an open Atlas term
 
 Only one matching title is required to send. If several open sessions have that title, choose the recipient before sending. An open recipient tab is prompted once it is ready for input. Each agent's tool approval settings still apply.
 
+If a tab reports a usage limit, Agent Mail shows the reset time when available. If the limit appears after sending, check the recipient with `mail_peers`. The letter stays queued.
+
 Atlas reads the Codex home folder from the login shell. If your Codex uses a different folder, set **Codex home folder** in the same settings section and reload Atlas. Use `/hooks` in Codex to trust the optional hook for approval notifications outside Atlas.
 
 ## Disclosures

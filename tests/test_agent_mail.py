@@ -1,5 +1,6 @@
 """Tests for agent-mail: library, CLI and the MCP stdio protocol. Run: python3 -m unittest test_agent_mail.py"""
 
+import datetime
 import json
 import os
 import subprocess
@@ -222,6 +223,53 @@ class Mcp(Base):
         (result,) = self.calls([("mail_send", {"to_title": "New", "text": "closed"})])
         self.assertTrue(result["isError"])
         self.assertFalse((Path(self.tmp) / old["mailbox"]).exists())
+
+    def test_mcp_reports_usage_limit_on_send_and_on_later_status_check(self):
+        claude = self.tab("claude", "Review", "1")
+        codex = self.tab("codex", "Build", "2")
+        self.snapshot([claude, codex])
+        (sent,) = self.calls([("mail_send", {"to_title": "Review", "text": "request"})])
+        self.assertIn("Sent to ", sent["content"][0]["text"])
+        now = datetime.datetime.now(datetime.timezone.utc)
+
+        def iso(dt):
+            return dt.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+        next_hour = iso(now + datetime.timedelta(hours=1))
+        claude["usage_limit"] = {
+            "reset_text": "8:50 PM (Europe/Madrid)",
+            "reset_at": next_hour,
+            "expires_at": next_hour,
+        }
+        codex["usage_limit"] = dict(claude["usage_limit"], reset_text="9:30 PM")
+        self.snapshot([claude, codex])
+        peers, sent = self.calls(
+            [
+                ("mail_peers", {}),
+                ("mail_send", {"to_title": "Build", "text": "reverse direction", "as": "claude"}),
+            ]
+        )
+        rows = {row["name"]: row for row in json.loads(peers["content"][0]["text"])}
+        self.assertEqual(
+            rows[claude["mailbox"]]["status"],
+            {
+                "kind": "usage_limit",
+                "reset_text": "8:50 PM (Europe/Madrid)",
+                "reset_at": next_hour,
+            },
+        )
+        self.assertEqual(rows[claude["mailbox"]]["unread"], 1)
+        status = sent["content"][0]["text"]
+        self.assertIn("Recipient has reached a usage limit", status)
+        self.assertIn("9:30 PM", status)
+        self.assertEqual(self.m.inbox(codex["mailbox"])[0]["text"], "reverse direction")
+        self.m.register("review-agent", claude["id"])
+        self.assertEqual(self.m.recipient_limit("review-agent")["reset_at"], next_hour)
+
+        expired = iso(now - datetime.timedelta(seconds=1))
+        claude["usage_limit"]["expires_at"] = expired
+        self.snapshot([claude, codex])
+        self.assertIsNone(self.m.recipient_limit(claude["mailbox"]))
 
     def test_send_title_cli(self):
         tab = self.tab("codex", "Сверка заметок", "2")

@@ -8,7 +8,7 @@ const UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/;
 const ROUTE = /^atlas-[cx]-[0-9a-f]{32}$/;
 const PREFIX = { claude: "c", codex: "x" };
 
-function tabRoutes(sessions, tabs) {
+function tabRoutes(sessions, tabs, limitForTab = () => null) {
   const routes = new Map();
   for (const session of sessions) {
     const id = session?.session_id;
@@ -19,7 +19,8 @@ function tabRoutes(sessions, tabs) {
     const title = tab?.title?.trim();
     if (!title || title.length > 1000) continue;
     const mailbox = `atlas-${PREFIX[agent]}-${id.replaceAll("-", "")}`;
-    routes.set(mailbox, { mailbox, title, id, agent });
+    const usageLimit = limitForTab(id, agent, tab);
+    routes.set(mailbox, { mailbox, title, id, agent, ...(usageLimit && { usage_limit: usageLimit }) });
   }
   return routes;
 }

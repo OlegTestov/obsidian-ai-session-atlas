@@ -437,3 +437,50 @@ test("a renamed Claude Code session still needs an empty prompt", async t => {
   await r.poll();
   assert.deepEqual(r.claude.writes, [LINE(1, "codex", "claude")]);
 });
+
+test("a fresh Claude or Codex limit is visible to Agent Mail and keeps mail queued", async t => {
+  const r = rig(t);
+  const claudeId = "10000000-0000-0000-0000-000000000001";
+  const codexId = "10000000-0000-0000-0000-000000000002";
+  const claudeBox = "atlas-c-" + claudeId.replaceAll("-", "");
+  const codexBox = "atlas-x-" + codexId.replaceAll("-", "");
+  r.claude.title = "Review";
+  r.codex.title = "Build";
+  r.claude.sessionIds = [claudeId];
+  r.codex.sessionIds = [codexId];
+  r.clock.now = Date.now();
+  const future = new Date(r.clock.now + 30 * 60 * 1000).toISOString().slice(11, 16);
+  r.plugin.fetchActive = async () => ({ sessions: [
+    { session_id: claudeId, agent: "claude", status: "idle", pid: 11, ancestors: [10] },
+    { session_id: codexId, agent: "codex", status: "idle", pid: 21, ancestors: [20] },
+  ] });
+  const script = path.join(ROOT, "atlas", "agent_mail.py");
+  const cli = (...args) => execFileSync("python3", [script, ...args], {
+    encoding: "utf8", env: { ...process.env, AGENT_MAIL_HOME: r.root },
+  });
+  await r.poll();
+  const claudeRequest = cli("send-title", "codex", "Review", "test request").trim();
+  await r.poll();
+  assert.equal(r.claude.writes.length, 1);
+  // Claude only reported the limit after Atlas prompted it to read the mail.
+  r.claude.rows = ["You've hit your 5-hour limit · resets " + future + " (UTC)",
+    "────────", "❯", "────────", "⏺ Usage limit reached · esc to cancel"];
+  r.codex.rows = ["■ You’ve hit your usage limit. Try again at " + future + " (UTC).",
+    "", "› Ask Codex to do anything", ""];
+  await r.poll();
+  for (const name of [claudeBox, codexBox]) {
+    const peer = JSON.parse(cli("peers")).find(row => row.name === name);
+    assert.equal(peer.status.kind, "usage_limit");
+    assert.equal(peer.status.reset_text, future + " (UTC)");
+  }
+  assert.ok(fs.readdirSync(path.join(r.root, claudeBox, "inbox")).some(file => file.includes(claudeRequest)));
+  const codexRequest = cli("send-title", "claude", "Build", "test reply").trim();
+  await r.poll();
+  assert.equal(r.claude.writes.length, 1);
+  assert.ok(fs.readdirSync(path.join(r.root, codexBox, "inbox")).some(file => file.includes(codexRequest)));
+  assert.deepEqual(r.codex.writes, []);
+  r.codex.rows = null;
+  await r.poll();
+  assert.equal(r.codex.writes.length, 1);
+  assert.equal(JSON.parse(cli("peers")).find(row => row.name === codexBox).status, undefined);
+});

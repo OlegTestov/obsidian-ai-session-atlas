@@ -368,10 +368,12 @@ def peers():
 
 
 NO_REPLY = "(no reply needed)"
-REPLY_HINT = "The sender can't see your screen: answer via mail_send (to: {addr}{thread})."
+REPLY_HINT = ("The sender can't see your screen: answer via mail_send (to: {addr}{thread}). "
+              f"End your answer with {NO_REPLY!r} unless you need a reply to it.")
 REPLY_RULE = (
     "After reading a letter, answer its sender with mail_send at the address the letter names, "
-    f"unless the letter ends with {NO_REPLY!r}. End a letter with {NO_REPLY!r} when you need no answer."
+    f"unless the letter ends with {NO_REPLY!r}. End a letter, an answer included, with {NO_REPLY!r} "
+    "when you need no answer to it; otherwise two agents keep thanking each other."
 )
 
 
@@ -440,7 +442,8 @@ TOOLS = [
     {
         "name": "mail_inbox",
         "description": "Read and mark as read new messages for this agent. "
-        f"The sender can't see your screen: answer each letter with mail_send unless it ends with {NO_REPLY!r}. "
+        f"The sender can't see your screen: answer each letter with mail_send unless it ends with {NO_REPLY!r}, "
+        f"and end your answer with {NO_REPLY!r} unless you need a reply to it. "
         "Set wait (seconds, max 50) to wait for a message if none is there yet.",
         "inputSchema": {
             "type": "object",

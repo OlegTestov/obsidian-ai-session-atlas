@@ -254,6 +254,11 @@ class ReplyHint(Base):
         self._letter("alpha", "done (No reply needed)  \n")
         self.assertNotIn("can't see your screen", self.m._fmt(self.m.inbox("b")))
 
+    def test_the_reply_line_asks_to_mark_an_answer_that_needs_none(self):
+        self._letter("alpha", "4")
+        line = self.m._fmt(self.m.inbox("b")).splitlines()[-1]
+        self.assertIn(f"End your answer with {self.m.NO_REPLY!r}", line)
+
     def test_the_rule_is_in_the_tool_descriptions(self):
         tools = {t["name"]: t["description"] for t in self.m.TOOLS}
         for name in ("mail_send", "mail_inbox"):

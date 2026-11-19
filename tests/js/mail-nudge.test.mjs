@@ -190,7 +190,7 @@ function rig(t, { tabless = false } = {}) {
   return { root, claude, codex, active, plugin, clock, nudger, box, mail, poll: () => nudger.poll() };
 }
 
-const LINE = (n, from, name) => PASTE_START + `You have ${n} new ${n === 1 ? "message" : "messages"}${from ? " from " + from : ""}. Read with mail_inbox (as: ${name}), then reply to the sender.` + PASTE_END + "\r";
+const LINE = (n, from, name) => PASTE_START + `You have ${n} new ${n === 1 ? "message" : "messages"}${from ? " from " + from : ""}. Read with mail_inbox (as: ${name}), then reply to the sender unless the letter ends with "(no reply needed)".` + PASTE_END + "\r";
 
 test("the notice names the mailbox and stays 4 s", async t => {
   const r = rig(t);

@@ -1377,7 +1377,9 @@ MUT = [
 ]
 JS_MUT = [
  ("mail: the tab nudge does not ask for a reply", "obsidian-plugin/src/mail-nudge.js",
-  "${fallback}, then reply to the sender.`", "${fallback}`"),
+  "${fallback}, then reply to the sender unless", "${fallback}, then stop unless"),
+ ("mail: the tab nudge forgets the no-reply exception", "obsidian-plugin/src/mail-nudge.js",
+  " unless the letter ends with \"(no reply needed)\".`", ".`"),
  ("codex hook: off moves the user's later hooks", "obsidian-plugin/src/codex-hook.js",
   "if (!on && !removableHook(data)) {", "if (false) {"),
  ("codex hook: on again appends a second entry", "obsidian-plugin/src/codex-hook.js",

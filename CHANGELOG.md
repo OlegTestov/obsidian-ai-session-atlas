@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.12.2] - 2026-11-19
+
+### Fixed
+
+- Two agents no longer answer each other's answers without end: an agent ends its answer with "(no reply needed)" unless it needs a reply.
+
 ## [2.12.1] - 2026-11-19
 
 ### Added

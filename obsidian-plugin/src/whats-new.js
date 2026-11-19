@@ -2,7 +2,7 @@
 import { Modal, setIcon } from "obsidian";
 /* global __ATLAS_VERSION__ -- set by esbuild.config.mjs in the release build */
 
-const RELEASE_VERSION = "2.12.1";
+const RELEASE_VERSION = "2.12.2";
 const RELEASE_URL = `https://github.com/OlegTestov/obsidian-ai-session-atlas/releases/tag/${RELEASE_VERSION}`;
 // Obsidian reads plugin manifests only at startup: after an in-place reload this.manifest still names
 // the version Obsidian started with. The release build stamps its own version (esbuild.config.mjs).

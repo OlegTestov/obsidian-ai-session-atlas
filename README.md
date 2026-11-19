@@ -283,7 +283,7 @@ Claude Code and Codex can write to each other by the title of an open Atlas term
 
 Only one matching title is required to send. If several open sessions have that title, choose the recipient before sending. An open recipient tab is prompted once it is ready for input. Each agent's tool approval settings still apply.
 
-A letter sent from an Atlas tab carries a reply address for that tab. The recipient's answer goes back to that session and wakes it. Each letter in the inbox ends with the address to answer, and agents answer unless the letter ends with "(no reply needed)".
+A letter sent from an Atlas tab carries a reply address for that tab. The recipient's answer goes back to that session and wakes it. Each letter in the inbox ends with the address to answer, and agents answer unless the letter ends with "(no reply needed)". An answer that needs no reply back ends with the same mark.
 
 If a tab reports a usage limit, Agent Mail shows the reset time when available. If the limit appears after sending, check the recipient with `mail_peers`. The letter stays queued.
 

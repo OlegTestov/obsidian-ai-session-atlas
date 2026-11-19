@@ -22,6 +22,7 @@ const SCREEN_WAIT_MS = 1500;
 const MAX_FEEDBACK_CHARS = 4000;
 const pause = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
 const DOWN = "\x1b[B";
+const NUDGE_QUIET_MS = 1500;
 const STOPPABLE = new Set(["busy", "shell", "waiting"]);
 
 class InputMethods {
@@ -58,7 +59,7 @@ class InputMethods {
    * Types text into the terminal tab as if a person typed it. Refuses while the session waits for a
    * dialog decision: Enter there would pick an option, up to allowing a command.
    */
-  async sendText(target, data, idleGuard) {
+  async sendText(target, data) {
     const reply = (ok, reason) => this.answerPage(target, { type: "sent", ok, reason: reason || null,
                                                    ptyPid: data.ptyPid, nonce: data.nonce });
     if (typeof data.text !== "string") return reply(false, this.t("input.badRequest"));
@@ -77,21 +78,18 @@ class InputMethods {
     if (state.agent === "codex" && !state.status) return reply(false, this.t("input.codexScreen"));
     const stdin = await this.ptyInput(tab.leaf);
     if (!stdin) return reply(false, this.t("input.noInput"));
-    if (idleGuard) {
-      const current = this.readAgentState(data.claudePid, tab.leaf);
-      if (current?.status !== "idle" || !current.sessionIds.includes(data.sessionId)
-          || !this.emptyAgentPrompt(tab.leaf, current.agent) || !idleGuard()) return false;
-      // Keep the paste and Enter in one write so there is no timer that could submit user input.
-      stdin.write(PASTE_START + text + PASTE_END + "\r");
-      return true;
-    }
     // An image path pasted on its own becomes an [Image #N] attachment. Codex takes it only quoted
     // (the data folder has a space); Claude Code takes it either way (both checked on the live CLIs).
     const codex = state.agent === "codex";
     for (const image of images) stdin.write(PASTE_START + (codex ? JSON.stringify(image) : image) + PASTE_END + " ");
     if (text) stdin.write(text.includes("\n") ? PASTE_START + text + PASTE_END : text);
-    window.setTimeout(() => stdin.write("\r"),
-                      ENTER_DELAY_MS + IMAGE_ENTER_DELAY_MS * images.length);
+    const view = tab.leaf.view;
+    view.pendingEnters = (view.pendingEnters || 0) + 1;
+    window.setTimeout(() => {
+      view.pendingEnters--;
+      this.touchInput(tab.leaf);
+      stdin.write("\r");
+    }, ENTER_DELAY_MS + IMAGE_ENTER_DELAY_MS * images.length);
     reply(true);
     const command = /^\/([a-z][a-z-]*)(\s|$)/.exec(text.trim());
     if (command && !images.length
@@ -103,6 +101,37 @@ class InputMethods {
                          command: text.trim(), text: out ? out.text : "", panel: !!(out && out.panel) });
       }, ENTER_DELAY_MS + COMMAND_OUTPUT_MS);
     }
+  }
+
+  /** Remembers when this tab last got input, from the person or from Atlas. */
+  touchInput(leaf) {
+    if (leaf?.view) leaf.view.lastInputAt = Date.now();
+  }
+
+  /** Input is in flight: a delayed Enter or card input waiting for its check is pending, or the last keys came less than a moment ago. */
+  recentInput(leaf) {
+    const view = leaf?.view;
+    return !!view && (view.pendingEnters > 0 || view.pendingMirrorInput > 0
+      || (typeof view.lastInputAt === "number" && Date.now() - view.lastInputAt < NUDGE_QUIET_MS));
+  }
+
+  /**
+   * Types a notification line and Enter, only into an idle session with an empty prompt and no
+   * input in flight. Strictly true when it was typed. The paste and Enter go in one write, so no
+   * timer could submit what the person types meanwhile.
+   */
+  async typeNudge(data, guard) {
+    const text = typeof data.text === "string" ? cleanInput(data.text) : "";
+    if (!text.trim() || text.length > MAX_SEND_CHARS) return false;
+    const { error, tab, state } = await this.checkTarget(data);
+    if (error || state.status === "waiting" || (state.agent === "codex" && !state.status)) return false;
+    const stdin = await this.ptyInput(tab.leaf);
+    if (!stdin) return false;
+    const current = this.readAgentState(data.claudePid, tab.leaf);
+    if (current?.status !== "idle" || !current.sessionIds.includes(data.sessionId)
+        || !this.emptyAgentPrompt(tab.leaf, current.agent) || this.recentInput(tab.leaf) || !guard()) return false;
+    stdin.write(PASTE_START + text + PASTE_END + "\r");
+    return true;
   }
 
   /** The dialog on the tab's screen, parsed, so the card can show the question and options. */

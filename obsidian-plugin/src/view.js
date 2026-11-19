@@ -6,13 +6,12 @@ import {
   HOST_SOURCE,
 } from "./constants";
 
-const DEFAULT_CARD_MESSAGES = 10;
-
 class AtlasView extends ItemView {
   constructor(leaf, plugin) {
     super(leaf);
     this.plugin = plugin;
     this.hash = "";
+    this.terminalMirrors = new Set();
   }
 
   getViewType() { return VIEW_TYPE; }
@@ -66,6 +65,7 @@ class AtlasView extends ItemView {
 
   async onClose() {
     if (this.visibility) this.visibility.disconnect();
+    this.terminalMirrors.forEach(close => close());
   }
 
   async render() {
@@ -80,6 +80,7 @@ class AtlasView extends ItemView {
 
   async renderOnce() {
     const container = this.contentEl;
+    this.terminalMirrors.forEach(close => close());
     container.empty();
     // The catalog scrolls inside the page; an outer scrollbar would only get in the way.
     container.addClass("session-atlas-view");
@@ -96,8 +97,7 @@ class AtlasView extends ItemView {
 
     this.frame = container.createEl("iframe", { cls: "session-atlas-frame" });
     // The page language matches the plugin: Obsidian's language or the one chosen in settings.
-    const messages = Number(this.plugin.settings && this.plugin.settings.cardMessages) || DEFAULT_CARD_MESSAGES;
-    this.frame.src = this.plugin.atlasOrigin() + "/?lang=" + this.plugin.lang() + "&msgs=" + messages + (this.hash || "");
+    this.frame.src = this.plugin.atlasOrigin() + "/?lang=" + this.plugin.lang() + (this.hash || "");
   }
 }
 

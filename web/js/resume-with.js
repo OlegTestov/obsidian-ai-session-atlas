@@ -167,12 +167,22 @@ async function confirmResumeWith(s, agent) {
         return;
       }
       $("#m-body").textContent = r.command;
+      const warning = r.title_warning ? " " + i18n("rw.titleWarning", { msg: r.title_warning }) : "";
       if (EMBEDDED) {
-        tellHost("resume", { session_id: r.session_id, cwd: r.cwd, command: r.command,
-                             title: r.title || s.title || r.session_id });
-        closeAfterHandOff();
+        const openCopy = () => {
+          tellHost("resume", { session_id: r.session_id, cwd: r.cwd, command: r.command,
+                               title: r.title || s.title || r.session_id });
+          closeAfterHandOff();
+        };
+        if (warning) {
+          $("#m-note").textContent = i18n("rw.created") + warning;
+          const ok = $("#m-ok");
+          ok.textContent = i18n("actions.openInObsidian");
+          ok.onclick = openCopy;
+          ok.disabled = false;
+        } else openCopy();
       } else {
-        $("#m-note").textContent = i18n("rw.createdOutside", { agent: name });
+        $("#m-note").textContent = i18n("rw.createdOutside", { agent: name }) + warning;
         $("#m-ok").classList.add("hidden");
       }
       window.setTimeout(() => loadList(true), 1500);       // the copy joins the list, linked to this one

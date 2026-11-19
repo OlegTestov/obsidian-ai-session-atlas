@@ -10,7 +10,7 @@ const KEYS_HELP = [
   [i18n("keys.help.arrows"), i18n("keys.help.select")],
   ["Enter", i18n("keys.help.answer")],
   ["g", i18n("keys.help.go")],
-  ["f", i18n("keys.help.feed")],
+  ["f", i18n("feed.mode")],
   ["p / h", i18n("keys.help.pinHide")],
   ["Esc", i18n("keys.help.esc")],
   ["⌘K", i18n("keys.help.jump")],
@@ -46,14 +46,18 @@ function focusAnswer(id) {
     const full = document.querySelector('.mode button[data-mode="full"]');
     if (full) full.click();
   }
-  const area = find();
-  if (area && !area.disabled) area.focus();
+  if (cardViewMode(id) === "terminal") cardPanels.get(id)?.focus?.();
+  else {
+    const area = find();
+    if (area && !area.disabled) area.focus();
+  }
   seeCard(id);
 }
 
 document.addEventListener("keydown", e => {
   if (state.view !== "active" || e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
   const target = e.target;
+  if (target?.closest?.(".card-terminal")) return;
   if (target && target.tagName === "TEXTAREA" && e.key === "Escape") {
     // From the field back to the cards; the selection stays on this one.
     selectedCard = target.dataset.id || selectedCard;
@@ -84,9 +88,12 @@ document.addEventListener("keydown", e => {
     if (s) { e.preventDefault(); hideCard(s); }
   } else if (e.key === "f" && selectedCard) {
     e.preventDefault();
-    if (feedSid === selectedCard) closeFeed(); else openFeed(selectedCard);
-  } else if (e.key === "Escape" && feedSid) {
-    closeFeed();                          // the feed closes first, then the selection clears
+    if (activeMode !== "full") document.querySelector('.mode button[data-mode="full"]')?.click();
+    const picker = cardEls().find(card => card.dataset.id === selectedCard)?.querySelector(".card-view-picker");
+    if (picker) {
+      picker.focus();
+      try { picker.showPicker?.(); } catch { /* Cross-origin iframe: focus still opens with Space. */ }
+    }
   } else if (e.key === "Escape" && selectedCard) {
     selectedCard = null;
     applySelection();

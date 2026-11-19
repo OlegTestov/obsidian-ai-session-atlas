@@ -50,6 +50,7 @@ HOST, PORT = "127.0.0.1", 8787
 UPLOAD_BODY_LIMIT = 15 * 1024 * 1024   # 10 MB image in base64 plus headroom
 STATIC_NAME = re.compile(r"[a-z][a-z0-9-]*\.(js|css)")
 STATIC_TYPES = {"js": "text/javascript; charset=utf-8", "css": "text/css; charset=utf-8"}
+TURN_ID = re.compile(r"[A-Za-z0-9_.:+#-]{1,80}")
 TIMESTAMP = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]{5,15}(?:Z|[+-][0-9:]{4,5})?")
 # Paths that call the model: they answer 403 when AI features are off.
 LLM_PATHS = {"/api/job", "/api/classify", "/api/auto-classify"}
@@ -382,12 +383,6 @@ class Handler(BaseHTTPRequestHandler):
                     picked = agents.parse_filter(query.get("agent"))
                     sessions = [s for s in active_sessions(conn)
                                 if not picked or s.get("agent", agents.CLAUDE) in picked]
-                    msgs = (query.get("msgs") or ["1"])[0]
-                    msgs = min(feed.HISTORY_MAX, int(msgs)) if msgs.isdigit() else 1
-                    if msgs > 1:          # detailed card's chat tail; cached list untouched
-                        sessions = [dict(s, history=feed.messages_tail(active._transcript(
-                            conn, s.get("transcript_session_id") or s["session_id"],
-                            index.PROJECTS_ROOT), msgs)) for s in sessions]
                     background = (background_sessions(conn)
                                   if not picked or agents.CLAUDE in picked else [])
                     return self._json(200, {"count": len(sessions), "sessions": sessions,
@@ -415,9 +410,13 @@ class Handler(BaseHTTPRequestHandler):
                     def stamp(name: str) -> str | None:
                         return next((v for v in query.get(name) or [] if TIMESTAMP.fullmatch(v)), None)
 
+                    def turn_id(name: str) -> str | None:
+                        return next((v for v in query.get(name) or [] if TURN_ID.fullmatch(v)), None)
+
                     page = feed.feed_page(path, int(turns) if turns.isdigit() else feed.DEFAULT_TURNS,
                                           with_events=(query.get("view") or [""])[0] == "steps",
-                                          before=stamp("before"), since=stamp("since"))
+                                          before=stamp("before"), since=stamp("since"),
+                                          before_id=turn_id("before_id"), since_id=turn_id("since_id"))
                     return self._json(200, dict(page, session_id=sid))
                 if url.path.startswith("/api/active/plan/"):
                     sid = url.path.rsplit("/", 1)[-1]
@@ -426,12 +425,6 @@ class Handler(BaseHTTPRequestHandler):
                     found = plans.plan_text(active.live_transcript(conn, sid, index.PROJECTS_ROOT),
                                             (query.get("path") or [None])[0])
                     return self._json(200 if found else 404, found or {"error": msg("server.plan_not_found")})
-                if url.path.startswith("/api/active/reply/"):
-                    sid = url.path.rsplit("/", 1)[-1]
-                    if not actions.valid_session_id(sid):
-                        return self._json(400, {"error": msg("server.bad_session_id")})
-                    found = active.last_reply(conn, sid)
-                    return self._json(200 if found else 404, found or {"error": msg("server.no_session")})
                 if url.path == "/api/workdirs":
                     return self._json(200, {"workdirs": [dict(w, text=folders.field_text(w["path"]))
                                                          for w in launch.workdirs(conn)],
@@ -504,6 +497,13 @@ class Handler(BaseHTTPRequestHandler):
         nonce = secrets.token_urlsafe(16)
         with open(os.path.join(WEB_DIR, "index.html"), encoding="utf-8") as fh:
             html = fh.read()
+        terminal_assets = ""
+        if os.path.isfile(os.path.join(WEB_DIR, "js", "card-terminal-renderer.js")):
+            terminal_assets = (
+                '<link rel="stylesheet" nonce="__NONCE__" href="/static/card-terminal-renderer.css">'
+                '<script nonce="__NONCE__" src="/static/card-terminal-renderer.js"></script>'
+            )
+        html = html.replace("__TERMINAL_ASSETS__", terminal_assets)
         html = html.replace("__NONCE__", nonce).replace("__TOKEN__", csrf_token())
         self._send(200, html.encode(), "text/html; charset=utf-8", nonce=nonce)
 

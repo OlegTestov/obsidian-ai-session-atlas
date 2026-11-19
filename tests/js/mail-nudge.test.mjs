@@ -12,6 +12,7 @@ const notices = [];
 Module._load = (name, ...args) => name === "obsidian"
   ? { Notice: class { constructor(...a) { notices.push(a); } } } : realLoad(name, ...args);
 const { MailNudger, scanMail } = loadSrc("mail-nudge");
+const { tabRoutes } = loadSrc("mail-routes");
 const { TerminalMethods } = loadSrc("terminal");
 const { InputMethods } = loadSrc("input");
 const { PASTE_START, PASTE_END } = loadSrc("constants");
@@ -29,7 +30,7 @@ function fakeTab(agent, pid) {
     return ["──────", tab.draft ? "❯ draft" : "❯ Try something", "──────", ""];
   };
   const buffer = {
-    baseY: 0, viewportY: 0, get cursorX() { return tab.cursorX ?? 2; },
+    baseY: 0, get viewportY() { return tab.scrolled ? -3 : 0; }, get cursorX() { return tab.cursorX ?? 2; },
     get cursorY() { return visible().findLastIndex(row => row.startsWith(agent === "codex" ? "›" : "❯")); },
     getLine(y) {
       const row = visible()[y] || "";
@@ -103,7 +104,7 @@ test("mail delivery wakes both kinds of tab through the plugin input path", asyn
     },
     answerPage: () => {},
     checkTarget: input.checkTarget,
-    sendText: input.sendText,
+    sendText: input.sendText, typeNudge: input.typeNudge, recentInput: input.recentInput, touchInput: input.touchInput,
   };
   let now = 0;
   const nudger = new MailNudger(plugin, () => now);
@@ -168,6 +169,7 @@ function rig(t, { tabless = false } = {}) {
       return { agent, sessionIds: tab.sessionIds || [SID[agent]], status: tab.dialog ? "waiting" : tab.status };
     },
     answerPage: () => {}, checkTarget: input.checkTarget, sendText: input.sendText,
+    typeNudge: input.typeNudge, recentInput: input.recentInput, touchInput: input.touchInput,
   };
   const clock = { now: 1e6 };
   const nudger = new MailNudger(plugin, () => clock.now);
@@ -404,7 +406,7 @@ test("open tab titles create session-specific routes without registration", asyn
   const directory = path.join(r.root, ".atlas-tabs");
   const file = path.join(directory, fs.readdirSync(directory)[0]);
   const routes = () => JSON.parse(fs.readFileSync(file, "utf8"));
-  assert.deepEqual(routes(), [{ mailbox: automatic, title: r.codex.title, id: sid, agent: "codex" }]);
+  assert.deepEqual(routes(), [{ mailbox: automatic, title: r.codex.title, id: sid, agent: "codex", pid: 21 }]);
   r.box(automatic);
   r.mail(automatic, "claude");
   await r.poll();
@@ -483,4 +485,251 @@ test("a fresh Claude or Codex limit is visible to Agent Mail and keeps mail queu
   await r.poll();
   assert.equal(r.codex.writes.length, 1);
   assert.equal(JSON.parse(cli("peers")).find(row => row.name === codexBox).status, undefined);
+});
+
+test("two mailboxes bound to one idle session get one nudge per poll, the other on a later poll", async t => {
+  const r = rig(t);
+  r.box("second", SID.claude);
+  r.mail("claude", "codex");
+  r.mail("second", "codex");
+  await r.poll();
+  assert.deepEqual(r.claude.writes, [LINE(1, "codex", "claude")]);
+  await r.poll();
+  assert.deepEqual(r.claude.writes, [LINE(1, "codex", "claude"), LINE(1, "codex", "second")]);
+  await r.poll();
+  assert.equal(r.claude.writes.length, 2);
+});
+
+async function openCodexRoute(r) {
+  const sid = "10000000-0000-0000-0000-000000000001";
+  r.codex.title = "T";
+  r.codex.sessionIds = [sid];
+  r.plugin.fetchActive = async () => ({ sessions: [{ session_id: sid, agent: "codex", status: "idle", pid: 21, ancestors: [20] }] });
+}
+
+test("a custom mail folder is created only inside an existing folder", async t => {
+  const r = rig(t);
+  await openCodexRoute(r);
+  const deep = path.join(r.root, "missing-parent", "mail");
+  r.plugin.settings.agentMailRoot = deep;
+  await r.poll();
+  assert.equal(fs.existsSync(path.dirname(deep)), false);
+  const custom = path.join(r.root, "custom-mail");
+  r.plugin.settings.agentMailRoot = custom;
+  await r.poll();
+  assert.deepEqual(fs.readdirSync(custom), [".atlas-tabs"]);
+});
+
+test("the default mail folder is still created for the routes", async t => {
+  const r = rig(t);
+  await openCodexRoute(r);
+  const home = path.join(r.root, "default-home");
+  const before = process.env.AGENT_MAIL_HOME;
+  process.env.AGENT_MAIL_HOME = home;
+  t.after(() => { if (before === undefined) delete process.env.AGENT_MAIL_HOME; else process.env.AGENT_MAIL_HOME = before; });
+  r.plugin.settings.agentMailRoot = "";
+  await r.poll();
+  assert.deepEqual(fs.readdirSync(home), [".atlas-tabs"]);
+});
+
+test("a route carries the agent pid only when it is an integer above 1", () => {
+  const id = "10000000-0000-0000-0000-000000000001";
+  const route = pid => [...tabRoutes([{ session_id: id, agent: "claude", pid, ancestors: [10] }],
+    [{ pid: 10, title: "T" }]).values()][0];
+  assert.equal(route(4242).pid, 4242);
+  for (const bad of [undefined, null, 1, 0, -5, "4242", 4242.5]) assert.equal("pid" in route(bad), false, String(bad));
+});
+
+test("a nudge waits for 1.5 s of quiet after the last input in the tab", async t => {
+  const r = rig(t);
+  r.mail("codex", "claude");
+  r.codex.leaf.view.lastInputAt = Date.now() - 1000;
+  await r.poll();
+  assert.deepEqual(r.codex.writes, []);
+  r.codex.leaf.view.lastInputAt = Date.now() - 2000;
+  await r.poll();
+  assert.deepEqual(r.codex.writes, [LINE(1, "claude", "codex")]);
+});
+
+test("a nudge waits while the card's input is queued for its check", async t => {
+  const r = rig(t);
+  r.mail("codex", "claude");
+  r.codex.leaf.view.pendingMirrorInput = 1;
+  r.codex.leaf.view.lastInputAt = Date.now() - 5000;
+  await r.poll();
+  assert.deepEqual(r.codex.writes, []);
+  r.codex.leaf.view.pendingMirrorInput = 0;
+  await r.poll();
+  assert.deepEqual(r.codex.writes, [LINE(1, "claude", "codex")]);
+});
+
+test("a nudge waits while a quick reply's delayed Enter is pending, then for the quiet time", async t => {
+  const r = rig(t);
+  const timers = [];
+  const realWindow = globalThis.window;
+  globalThis.window = { setTimeout: fn => timers.push(fn) };
+  t.after(() => { globalThis.window = realWindow; });
+  await r.plugin.sendText(null, { text: "yes", ptyPid: 20, claudePid: 21, sessionId: SID.codex });
+  assert.deepEqual(r.codex.writes, ["yes"]);
+  r.mail("codex", "claude");
+  await r.poll();
+  assert.deepEqual(r.codex.writes, ["yes"]);
+  r.codex.leaf.view.lastInputAt = Date.now() - 2000;
+  timers.shift()();
+  assert.deepEqual(r.codex.writes, ["yes", "\r"]);
+  await r.poll();
+  assert.equal(r.codex.writes.length, 2);
+  r.codex.leaf.view.lastInputAt = Date.now() - 2000;
+  await r.poll();
+  assert.deepEqual(r.codex.writes.slice(2), [LINE(1, "claude", "codex")]);
+});
+
+test("typeNudge refuses text that is not a clean string and reports a strict boolean", async t => {
+  const r = rig(t);
+  const ok = { ptyPid: 20, claudePid: 21, sessionId: SID.codex };
+  assert.strictEqual(await r.plugin.typeNudge({ ...ok, text: 5 }, () => true), false);
+  assert.strictEqual(await r.plugin.typeNudge({ ...ok, text: "  " }, () => true), false);
+  assert.strictEqual(await r.plugin.typeNudge({ ...ok, text: "x" }, () => false), false);
+  assert.strictEqual(await r.plugin.typeNudge({ ...ok, text: "x" }, () => true), true);
+  assert.deepEqual(r.codex.writes, [PASTE_START + "x" + PASTE_END + "\r"]);
+});
+
+test("the guard re-reads the session file of an unrouted mailbox right before typing", async t => {
+  const r = rig(t);
+  r.mail("codex", "claude");
+  const open = r.plugin.ptyInput;
+  r.plugin.ptyInput = async leaf => {
+    const stdin = await open.call(r.plugin, leaf);
+    fs.writeFileSync(path.join(r.root, "codex", "session"), "another-session\n");
+    return stdin;
+  };
+  await r.poll();
+  assert.deepEqual(r.codex.writes, []);
+});
+
+test("the guard fails when the mailbox folder or its newest letter vanishes before typing", async t => {
+  const r = rig(t);
+  r.mail("codex", "claude");
+  const open = r.plugin.ptyInput;
+  r.plugin.ptyInput = async leaf => {
+    const stdin = await open.call(r.plugin, leaf);
+    for (const file of fs.readdirSync(path.join(r.root, "codex", "inbox"))) fs.unlinkSync(path.join(r.root, "codex", "inbox", file));
+    return stdin;
+  };
+  await r.poll();
+  assert.deepEqual(r.codex.writes, []);
+});
+
+test("watch events under the route folder do not trigger a poll, others do", async t => {
+  const r = rig(t);
+  const real = fs.watch;
+  const calls = [];
+  fs.watch = (...args) => { calls.push(args); return { close() {}, on() {} }; };
+  t.after(() => { fs.watch = real; });
+  await r.poll();
+  let polls = 0;
+  r.nudger.poll = async () => { polls++; };
+  const event = calls[0][2];
+  event("change", ".atlas-tabs");
+  event("change", path.join(".atlas-tabs", "abc.json"));
+  assert.equal(polls, 0);
+  event("change", path.join("codex", "inbox", "x.json"));
+  event("change", ".atlas-tabs-other");
+  event("change");
+  assert.equal(polls, 3);
+});
+
+test("a tab scrolled back is not typed into", async t => {
+  const r = rig(t);
+  r.mail("codex", "claude");
+  r.codex.scrolled = true;
+  await r.poll();
+  assert.deepEqual(r.codex.writes, []);
+  r.codex.scrolled = false;
+  await r.poll();
+  assert.equal(r.codex.writes.length, 1);
+});
+
+test("a route mailbox whose tab is closed is skipped even with a session file", async t => {
+  const r = rig(t);
+  const sid = "10000000-0000-0000-0000-000000000001";
+  const route = "atlas-x-" + sid.replaceAll("-", "");
+  r.box(route, SID.codex);
+  r.mail(route, "claude");
+  assert.deepEqual(scanMail(r.root, new Map()).map(b => b.name), []);
+  await r.poll();
+  assert.deepEqual(r.codex.writes, []);
+});
+
+test("two active entries for one session id are ambiguous and get nothing", async t => {
+  const r = rig(t);
+  r.mail("codex", "claude");
+  const sessions = (await r.plugin.fetchActive()).sessions;
+  r.plugin.fetchActive = async () => ({ sessions: [...sessions, { ...sessions[1], ancestors: [20] }] });
+  await r.poll();
+  assert.deepEqual(r.codex.writes, []);
+});
+
+test("a route mailbox is typed into only for its own agent", async t => {
+  const r = rig(t);
+  const sid = "10000000-0000-0000-0000-000000000001";
+  const claudeBox = "atlas-c-" + sid.replaceAll("-", "");
+  const codexBox = "atlas-x-" + sid.replaceAll("-", "");
+  r.claude.title = "A";
+  r.codex.title = "B";
+  r.claude.sessionIds = [sid];
+  r.codex.sessionIds = [sid];
+  r.plugin.fetchActive = async () => ({ sessions: [
+    { session_id: sid, agent: "claude", status: "idle", pid: 11, ancestors: [10] },
+    { session_id: sid, agent: "codex", status: "idle", pid: 21, ancestors: [20] },
+  ] });
+  r.box(claudeBox);
+  r.box(codexBox);
+  r.mail(codexBox, "other");
+  await r.poll();
+  assert.deepEqual([r.claude.writes, r.codex.writes], [[], [LINE(1, "other", codexBox)]]);
+  r.mail(claudeBox, "other");
+  await r.poll();
+  assert.deepEqual([r.claude.writes, r.codex.writes], [[LINE(1, "other", claudeBox)], [LINE(1, "other", codexBox)]]);
+});
+
+for (const stage of ["fetchActive", "terminalTabs"]) {
+  for (const change of ["switched off", "closed", "root moved"]) {
+    test(`nothing is published or typed when the plugin is ${change} during ${stage}`, async t => {
+      const r = rig(t);
+      await openCodexRoute(r);
+      r.mail("codex", "claude");
+      const original = r.plugin[stage];
+      r.plugin[stage] = async (...args) => {
+        const out = await original.apply(r.plugin, args);
+        if (change === "switched off") r.plugin.settings.wakeOnMail = false;
+        else if (change === "closed") r.nudger.closed = true;
+        else r.plugin.settings.agentMailRoot = path.join(r.root, "elsewhere");
+        return out;
+      };
+      let scans = 0;
+      const scan = r.plugin.terminalTabs;
+      r.plugin.terminalTabs = async () => { scans++; return scan(); };
+      await r.poll();
+      assert.equal(fs.existsSync(path.join(r.root, ".atlas-tabs")), false);
+      assert.deepEqual(r.codex.writes, []);
+      if (stage === "fetchActive") assert.equal(scans, 0, "the tabs are not even scanned");
+    });
+  }
+}
+
+test("the nudge loop stops at the next mailbox once the root changed", async t => {
+  const r = rig(t);
+  r.mail("claude", "codex");
+  r.mail("codex", "claude");
+  const lookups = [];
+  const find = r.plugin.tabForSession;
+  r.plugin.tabForSession = async session => {
+    lookups.push(session.session_id);
+    r.plugin.settings.wakeOnMail = false;
+    return find(session);
+  };
+  await r.poll();
+  assert.equal(lookups.length, 1);
+  assert.deepEqual([r.claude.writes, r.codex.writes], [[], []]);
 });

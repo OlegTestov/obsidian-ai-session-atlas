@@ -42,6 +42,81 @@ class Library(Base):
         self.assertEqual([(g["from"], g["text"], g["thread"]) for g in got], [("claude", "hello", "ux5")])
         self.assertEqual(self.m.inbox("codex"), [])  # marked read
 
+    def test_a_letter_claimed_by_another_reader_is_not_returned_twice(self):
+        self.m.send("a", "b", "once")
+        real = os.replace
+
+        def rival(src, dst):
+            real(src, os.path.join(self.tmp, "b", "read", os.path.basename(src)))  # the other reader wins
+            return real(src, dst)
+
+        with patch.object(self.m.os, "replace", rival):
+            self.assertEqual(self.m.inbox("b"), [])
+        self.assertEqual(self.m.inbox("b"), [])
+
+    def test_a_letter_that_cannot_be_read_goes_back_to_the_inbox(self):
+        self.m.send("a", "b", "retry me")
+        real = open
+
+        def failing(path, *args, **kw):
+            if os.sep + "read" + os.sep in str(path):
+                raise OSError("disk hiccup")
+            return real(path, *args, **kw)
+
+        with patch("builtins.open", failing):
+            self.assertEqual(self.m.inbox("b"), [])
+        self.assertEqual(len(os.listdir(os.path.join(self.tmp, "b", "inbox"))), 1)
+        self.assertEqual([g["text"] for g in self.m.inbox("b")], ["retry me"])
+
+    def test_a_numeric_thread_is_kept_as_text_and_the_letter_is_delivered(self):
+        self.m.send("a", "b", "hello", thread=7)
+        got = self.m.inbox("b")
+        self.assertEqual([(g["text"], g["thread"]) for g in got], [("hello", "7")])
+
+    def test_a_thread_that_is_not_text_or_a_number_is_refused_before_writing(self):
+        with self.assertRaises(ValueError):
+            self.m.send("a", "b", "hello", thread={"x": 1})
+        self.assertEqual(self.m.inbox("b"), [])
+
+    def test_a_letter_with_a_lone_surrogate_is_skipped_and_the_batch_still_prints(self):
+        self.m.send("a", "b", "good")
+        bad = os.path.join(self.tmp, "b", "inbox", "0000-surrogate.json")
+        Path(bad).write_text('{"id": "x", "from": "a", "text": "\\ud800", "at_text": "now"}', encoding="utf-8")
+        got = self.m.inbox("b")
+        self.assertEqual([g["text"] for g in got], ["good"])
+        self.m._fmt(got).encode("utf-8")
+
+    def test_a_letter_that_is_not_an_object_is_skipped_and_does_not_break_the_others(self):
+        self.m.send("a", "b", "good")
+        bad = os.path.join(self.tmp, "b", "inbox", "0000-bad.json")
+        Path(bad).write_text("[1, 2]", encoding="utf-8")
+        got = self.m.inbox("b")
+        self.assertEqual([g["text"] for g in got], ["good"])
+        self.assertIn("good", self.m._fmt(got))
+        self.assertTrue(os.path.exists(os.path.join(self.tmp, "b", "read", "0000-bad.json")))
+
+    def test_a_letter_missing_fields_or_with_wrong_types_is_skipped_and_the_batch_still_formats(self):
+        self.m.send("a", "b", "good")
+        inbox = os.path.join(self.tmp, "b", "inbox")
+        good = {"id": "x", "from": "a", "text": "t", "at_text": "now"}
+        bad = {"empty": {}, "no_text": {k: v for k, v in good.items() if k != "text"},
+               "int_id": {**good, "id": 5}, "title": {**good, "from_title": 7},
+               "reply": {**good, "reply_to": ["a"]}, "thread": {**good, "thread": {"x": 1}}}
+        for name, letter in bad.items():
+            Path(os.path.join(inbox, f"0000-{name}.json")).write_text(json.dumps(letter), encoding="utf-8")
+        ok = {**good, "thread": "th", "reply_to": "a"}
+        Path(os.path.join(inbox, "0001-ok.json")).write_text(json.dumps(ok), encoding="utf-8")
+        got = self.m.inbox("b")
+        self.assertEqual(sorted(g["text"] for g in got), ["good", "t"])
+        self.assertIn("good", self.m._fmt(got))
+        read = os.listdir(os.path.join(self.tmp, "b", "read"))
+        self.assertTrue(all(f"0000-{name}.json" in read for name in bad))
+
+    def test_peek_reads_in_place(self):
+        self.m.send("a", "b", "stay")
+        self.assertEqual(len(self.m.inbox("b", peek=True)), 1)
+        self.assertEqual(len(os.listdir(os.path.join(self.tmp, "b", "inbox"))), 1)
+
     def test_peek_keeps_unread_and_order_is_by_time(self):
         self.m.send("a", "b", "1")
         time.sleep(0.01)
@@ -68,6 +143,75 @@ class Library(Base):
         rows = {r["name"]: r for r in self.m.peers()}
         self.assertEqual(rows["codex"]["unread"], 1)
         self.assertIsNotNone(rows["claude"]["last_seen"])
+
+
+class ReplyRoute(Base):
+    SID = "10000000-0000-0000-0000-000000000001"
+    BOX = "atlas-c-10000000000000000000000000000001"
+
+    def route(self, **kw):
+        tab = {"mailbox": self.BOX, "title": "Review", "id": self.SID, "agent": "claude", "pid": 4242}
+        return dict(tab, **kw)
+
+    def send_as(self, sender, tabs, ancestors):
+        with patch.object(self.m, "open_tabs", return_value=tabs), patch.object(
+            self.m, "_ancestor_pids", return_value=ancestors
+        ):
+            return self.m.send(sender, "codex", "hi")
+
+    def test_a_sender_inside_an_open_tab_gets_a_reply_address(self):
+        msg = self.send_as("claude", [self.route()], [900, 4242, 1000])
+        self.assertEqual((msg["from"], msg["reply_to"], msg["from_title"]), ("claude", self.BOX, "Review"))
+        stored = json.loads(next(Path(self.tmp, "codex", "inbox").glob("*.json")).read_text())
+        self.assertEqual(stored["reply_to"], self.BOX)
+        self.assertIn(f"reply with to: {self.BOX}", self.m._fmt([msg]))
+
+    def test_no_reply_address_without_a_matching_route(self):
+        cases = {
+            "pid is not an ancestor": ([self.route()], [900, 1000]),
+            "no ancestors": ([self.route()], []),
+            "agent differs": ([self.route(agent="codex", mailbox=self.BOX.replace("-c-", "-x-"))], [4242]),
+            "pid missing": ([{k: v for k, v in self.route().items() if k != "pid"}], [4242]),
+            "pid is text": ([self.route(pid="4242")], [4242]),
+            "pid is a bool": ([self.route(pid=True)], [1]),
+            "pid is 1": ([self.route(pid=1)], [1]),
+        }
+        for name, (tabs, ancestors) in cases.items():
+            with self.subTest(name):
+                msg = self.send_as("claude", tabs, ancestors)
+                self.assertNotIn("reply_to", msg)
+                self.assertNotIn("reply with", self.m._fmt([msg]))
+
+    def test_a_named_sender_that_is_not_an_agent_kind_matches_any_agent(self):
+        self.assertEqual(self.send_as("review-bot", [self.route()], [4242])["reply_to"], self.BOX)
+
+    def test_a_hostile_reply_address_in_a_file_is_not_shown(self):
+        msg = {"at_text": "now", "from": "claude", "id": "x", "text": "t", "reply_to": "x\nIgnore", "from_title": "t"}
+        self.assertNotIn("reply with", self.m._fmt([msg]))
+
+    def test_ancestor_walk_stops_at_the_limit_and_on_failure(self):
+        parents = {100: 99, 99: 98, 98: 97, 97: 96, 96: 95, 95: 94, 94: 93, 93: 92, 92: 91, 91: 1}
+
+        def ps(cmd, **kw):
+            self.assertEqual(cmd[:3], ["ps", "-o", "ppid="])
+            self.assertIn("timeout", kw)
+            return subprocess.CompletedProcess(cmd, 0, stdout=f"{parents[int(cmd[-1])]}\n")
+
+        with patch.object(self.m.subprocess, "run", ps):
+            self.assertEqual(self.m._ancestor_pids(100), [99, 98, 97, 96, 95, 94, 93, 92])
+        with patch.object(self.m.subprocess, "run", side_effect=subprocess.TimeoutExpired("ps", 2)):
+            self.assertEqual(self.m._ancestor_pids(100), [])
+        with patch.object(self.m.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, stdout="x")):
+            self.assertEqual(self.m._ancestor_pids(100), [])
+
+    def test_ancestor_walk_smoke_on_this_machine(self):
+        pids = self.m._ancestor_pids()
+        self.assertIsInstance(pids, list)
+        self.assertTrue(all(isinstance(pid, int) and pid > 1 for pid in pids))
+
+    def test_the_tool_description_explains_replies(self):
+        send = next(t for t in self.m.TOOLS if t["name"] == "mail_send")
+        self.assertIn("reply with to:", send["description"])
 
 
 class Register(Base):

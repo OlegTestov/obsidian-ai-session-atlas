@@ -111,13 +111,16 @@ test("a Claude Code session continues in Codex as a new Codex thread", async ({ 
   await frame.locator("#rw-button").click();                             // toggles closed
   await expect(frame.locator("#rw-menu")).toBeHidden();
 
+  const title = await frame.locator("#card h3").textContent();
   const sent = await resumeWith(page, frame, lang, "Codex");
   const cwd = run.corpus.cwds.demo;
   expect(sent.session_id).toMatch(UUID);
   expect(sent.session_id[14]).toBe("7");                                 // a v7 id, as Codex makes them
-  expect(sent).toMatchObject({ cwd, command: `cd ${quote(cwd)} && codex resume ${sent.session_id}` });
+  expect(sent).toMatchObject({ title, cwd, command: `cd ${quote(cwd)} && codex resume ${sent.session_id}` });
   let removed;
   try {
+    const native = fs.readFileSync(run.codexStandInLog + ".own", "utf8").split("\n");
+    expect(native).toContain(`name ${sent.session_id} ${title}`);
     const [file] = findRollout(sent.session_id);
     expect(file, "the rollout in the fixture Codex home").toBeTruthy();
     const recs = records(file);
@@ -142,15 +145,18 @@ test("a Claude Code session continues in Codex as a new Codex thread", async ({ 
 
 test("a Codex session continues in Claude Code as a new transcript", async ({ page, lang }) => {
   const frame = await openCard(page, lang, ids.codexLedger);
+  const title = await frame.locator("#card h3").textContent();
   const sent = await resumeWith(page, frame, lang, "Claude Code");
   const cwd = run.corpus.cwds.billing;
   expect(sent.session_id).toMatch(UUID);
-  expect(sent).toMatchObject({ cwd, command: `cd ${quote(cwd)} && claude --resume ${sent.session_id}` });
+  expect(sent).toMatchObject({ title, cwd, command: `cd ${quote(cwd)} && claude --resume ${sent.session_id}` });
   const file = path.join(run.corpus.projects, cwd.replace(/[^A-Za-z0-9]/g, "-"), sent.session_id + ".jsonl");
   let removed;
   try {
     expect(fs.existsSync(file), file).toBe(true);
-    const chain = records(file).filter(r => r.type === "user" || r.type === "assistant");
+    const recs = records(file);
+    expect(recs).toContainEqual({ type: "custom-title", sessionId: sent.session_id, customTitle: title });
+    const chain = recs.filter(r => r.type === "user" || r.type === "assistant");
     expect(chain[0]).toMatchObject({ parentUuid: null, sessionId: sent.session_id, cwd, type: "user" });
     chain.slice(1).forEach((r, i) => expect(r.parentUuid).toBe(chain[i].uuid));
     expect(chain[0].message.content.startsWith(L[lang].note)).toBe(true);
@@ -242,6 +248,37 @@ test("outside Obsidian: the copy is created and its command is shown", async ({ 
   }
 });
 
+
+test("a native naming warning still lets the user open the same copy", async ({ page, lang }) => {
+  const frame = await openCard(page, lang, ids.claudeMain);
+  const warning = lang === "ru" ? "переименовано только в каталоге" : "renamed in the catalog only";
+  let created;
+  let requests = 0;
+  await page.route("**/api/resume-with", async route => {
+    requests++;
+    const response = await route.fetch();
+    created = await response.json();
+    await route.fulfill({ response, json: { ...created, title_warning: warning } });
+  });
+  try {
+    await frame.locator("#rw-button").click();
+    await frame.locator('#rw-menu .rw-item[data-agent="codex"]').click();
+    await frame.locator("#m-ok").click();
+    await expect(frame.locator("#m-note")).toContainText(warning);
+    expect(await sentOf(page, "resume")).toHaveLength(0);
+    await frame.locator("#m-ok").click();
+    await expect(frame.locator("#modal")).toBeHidden();
+    await expect.poll(() => sentOf(page, "resume")).toEqual([
+      expect.objectContaining({ session_id: created.session_id, title: created.title }),
+    ]);
+    expect(requests).toBe(1);
+  } finally {
+    if (created?.session_id) {
+      await expect(frame.locator(`#list .row[data-id="${created.session_id}"]`)).toBeVisible();
+      expect(await removeCopy(frame, created.session_id)).toBe("200");
+    }
+  }
+});
 
 test("waiting for the catalog prevents duplicate requests and allows retry after busy", async ({ page, lang }) => {
   const frame = await openCard(page, lang, ids.claudeMain);

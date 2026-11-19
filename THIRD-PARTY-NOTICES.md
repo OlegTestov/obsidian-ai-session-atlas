@@ -2,7 +2,7 @@
 
 The release `main.js` and `styles.css` include the following components.
 
-## xterm.js, @xterm/addon-fit, @xterm/addon-web-links
+## xterm.js, @xterm/addon-fit, @xterm/addon-serialize, @xterm/addon-web-links
 
 https://github.com/xtermjs/xterm.js — MIT License
 

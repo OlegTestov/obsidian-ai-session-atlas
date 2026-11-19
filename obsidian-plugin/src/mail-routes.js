@@ -20,7 +20,8 @@ function tabRoutes(sessions, tabs, limitForTab = () => null) {
     if (!title || title.length > 1000) continue;
     const mailbox = `atlas-${PREFIX[agent]}-${id.replaceAll("-", "")}`;
     const usageLimit = limitForTab(id, agent, tab);
-    routes.set(mailbox, { mailbox, title, id, agent, ...(usageLimit && { usage_limit: usageLimit }) });
+    const pid = Number.isInteger(session.pid) && session.pid > 1 ? session.pid : null;
+    routes.set(mailbox, { mailbox, title, id, agent, ...(pid && { pid }), ...(usageLimit && { usage_limit: usageLimit }) });
   }
   return routes;
 }
@@ -44,7 +45,8 @@ class MailRoutes {
     this.root = null;
   }
 
-  publish(root, routes) {
+  // The default root is created with its parents; a custom one only if its parent exists (it may be half-typed).
+  publish(root, routes, createRoot = false) {
     if (this.root !== root) this.clear();
     if (!routes.size) {
       this.clear();
@@ -53,7 +55,13 @@ class MailRoutes {
     const dir = path.join(root, DIRECTORY);
     let temp;
     try {
-      fs.mkdirSync(root, { recursive: true, mode: 0o700 });
+      // A custom folder is made only inside an existing one, so a mistyped path does not grow a tree.
+      try {
+        fs.mkdirSync(root, { recursive: createRoot, mode: 0o700 });
+      } catch (error) {
+        if (error?.code === "ENOENT") return;
+        if (error?.code !== "EEXIST") throw error;
+      }
       if (!fs.lstatSync(root).isDirectory()) return;
       fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
       if (!fs.lstatSync(dir).isDirectory()) return;
@@ -62,6 +70,7 @@ class MailRoutes {
       fs.renameSync(temp, path.join(dir, `${this.instance}.json`));
       this.root = root;
     } catch (error) {
+      if (error?.code === "ENOENT" && !temp) return;
       if (temp && error?.code !== "EEXIST") {
         try { fs.unlinkSync(temp); } catch { /* temp not created or already removed */ }
       }

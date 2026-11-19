@@ -38,12 +38,12 @@ server on `127.0.0.1`, and nothing is sent anywhere unless you turn on the optio
   - type a reply (it can carry images), stop the agent, run slash commands.
 
   A session that finished while you were away from its tab gets a dot before its title until you open
-  the card, its feed or its tab; "N new" in the summary line marks the cards on screen as seen.
-  Each card shows the agent's task list (for Codex, its plan checklist) and a step-by-step feed of
-  tool calls, commands with exit codes, errors and changed files. The feed opened on the right has the
-  card's reply field under it, in the compact view too. A session running in another
-  terminal app can be moved into an Obsidian tab. The header shows each agent's 5-hour and weekly
-  limits when they are known.
+  the card or tab. "N new" marks the visible cards as seen. Detailed cards have four view modes.
+  **Conversation** opens at the latest messages and loads earlier pages as you scroll up.
+  **Terminal** lets you type into the running session in an Atlas tab and scroll through its output.
+  **Steps** shows tools, commands and errors in order. **Files** shows which files the agent read or changed.
+  Each card also shows the agent's task list or plan checklist. You can move a session from another
+  terminal app into an Obsidian tab. The header shows each agent's 5-hour and weekly limits when known.
 - **Statistics.** Tokens, active time, cost at API prices and cache hit rate over a period, broken
   down by agent (Claude Code, Codex), model, category, topic, session, tool, skill and subagent, plus a
   weekly rhythm heatmap. Claude Code replies are priced at Anthropic API prices, Codex replies at
@@ -164,6 +164,8 @@ terminal tab with that agent's ordinary resume. Checked with Claude Code 2.1.289
   summary: your prompts and the agent's replies word for word, and tool calls as short text lines
   (the command or the file, and the first 800 characters of the result). Thinking, reasoning and encrypted content
   are never copied.
+- **Title:** the new session gets the source's title. If Codex cannot save it, Atlas shows a warning
+  and lets you open the copy.
 - **Size:** at most about 100,000 tokens, half of a 200,000-token context window. If the conversation
   is longer, the earliest messages are left out and the new session starts with a note saying so.
 - **The first message** says that the conversation continues a Claude Code or Codex session, with its
@@ -257,8 +259,7 @@ many sessions the first index can take a few minutes.
     written in the same language.
   - *Agents:* turn Claude Code and Codex on or off; until you do, each is on when the plugin finds it
     at start-up, extra launch arguments for each (for example
-    `--chrome`), the Codex "waiting for you" hook (off by default), terminal font size, number of
-    messages in a detailed Active card.
+    `--chrome`), the Codex "waiting for you" hook (off by default), and the terminal font size.
   - *Catalog:* note folders, project roots, categories, note areas mapped to categories, sensitive areas
     and projects, ticket prefixes. These live in `config.json` in the data folder.
   - *AI features:* on/off, model and effort for each task, 1M-token window, which agent runs them
@@ -281,6 +282,8 @@ Claude Code and Codex can write to each other by the title of an open Atlas term
 3. Resume the agent sessions so they load the MCP. Then ask one agent to “Write to the session titled ‘Review the report’ and ask it to check the draft.”
 
 Only one matching title is required to send. If several open sessions have that title, choose the recipient before sending. An open recipient tab is prompted once it is ready for input. Each agent's tool approval settings still apply.
+
+A letter sent from an Atlas tab carries a reply address for that tab. The recipient's answer goes back to that session and wakes it.
 
 If a tab reports a usage limit, Agent Mail shows the reset time when available. If the limit appears after sending, check the recipient with `mail_peers`. The letter stays queued.
 

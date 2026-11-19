@@ -14,11 +14,13 @@ Run as an MCP stdio server (no arguments) or as a CLI:
 Standard library only; Python 3.8+.
 """
 
+import contextlib
 import datetime
 import json
 import os
 import re
 import stat
+import subprocess
 import sys
 import time
 import unicodedata
@@ -56,12 +58,48 @@ def touch(name):
         f.write(str(time.time()))
 
 
+def _ancestor_pids(pid=None, depth=8):
+    """Parent pids of this process, nearest first; empty when ps is unavailable."""
+    pid, found = pid or os.getpid(), []
+    for _ in range(depth):
+        try:
+            done = subprocess.run(
+                ["ps", "-o", "ppid=", "-p", str(pid)], capture_output=True, text=True, timeout=2
+            )
+            pid = int(done.stdout.strip())
+        except (OSError, ValueError, subprocess.SubprocessError):
+            return []
+        if pid <= 1:
+            break
+        found.append(pid)
+    return found
+
+
+def _own_route(sender):
+    """The open Session Atlas tab this process runs in, so a reply can reach that very session."""
+    kind = sender if sender in TAB_PREFIX else None
+    tabs = [
+        tab
+        for tab in open_tabs()
+        if isinstance(tab.get("pid"), int) and tab["pid"] > 1
+        and (kind is None or tab["agent"] == kind)
+    ]
+    if not tabs:
+        return None
+    ancestors = set(_ancestor_pids())
+    return next((tab for tab in tabs if tab["pid"] in ancestors), None)
+
+
 def send(sender, to, text, thread=None):
     sender, to = _name(sender), _name(to)
     if not text or not text.strip():
         raise ValueError("empty message")
     if len(text) > MAX_TEXT:
         raise ValueError(f"message longer than {MAX_TEXT} characters")
+    if isinstance(thread, (int, float)) and not isinstance(thread, bool):
+        thread = str(thread)  # models sometimes send a numeric label; the reader accepts text only
+    if thread is not None and not isinstance(thread, str):
+        raise ValueError("thread must be text")
     now = time.time()
     msg = {
         "id": uuid.uuid4().hex[:12],
@@ -72,6 +110,9 @@ def send(sender, to, text, thread=None):
         "thread": thread,
         "text": text,
     }
+    route = _own_route(sender)
+    if route:
+        msg["reply_to"], msg["from_title"] = route["mailbox"], " ".join(route["title"].split())[:100]
     inbox = _dir(to, "inbox")
     fn = f"{int(now * 1000):013d}-{msg['id']}.json"
     tmp = os.path.join(inbox, "." + fn + ".tmp")
@@ -110,14 +151,44 @@ def inbox(name, wait=0, peek=False):
         files = _unread(name)
     out, src, dst = [], _dir(name, "inbox"), _dir(name, "read")
     for f in files:
+        claimed = None
         try:
-            with open(os.path.join(src, f), encoding="utf-8") as fh:
-                out.append(json.load(fh))
-            if not peek:
-                os.replace(os.path.join(src, f), os.path.join(dst, f))
-        except (OSError, ValueError):
+            if peek:
+                path = os.path.join(src, f)
+            else:
+                path = os.path.join(dst, f)
+                os.replace(os.path.join(src, f), path)  # the claim: only one reader wins the rename
+                claimed = path
+            with open(path, encoding="utf-8") as fh:
+                letter = json.load(fh)
+        except OSError:
+            if claimed:
+                with contextlib.suppress(OSError):
+                    os.replace(claimed, os.path.join(src, f))  # not read: let the next call try again
             continue
+        except ValueError:
+            continue
+        if _valid(letter):  # `_fmt` needs these fields; any other letter stays in read/
+            out.append(letter)
     return out
+
+
+def _text(value):
+    """A string the MCP output can encode: a lone surrogate from a hand-made file would break the batch."""
+    if not isinstance(value, str):
+        return False
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def _valid(letter):
+    """The fields `_fmt` and `_sender` read, with the types they assume."""
+    return (isinstance(letter, dict)
+            and all(_text(letter.get(k)) for k in ("id", "from", "text", "at_text"))
+            and all(letter.get(k) is None or _text(letter[k]) for k in ("thread", "reply_to", "from_title")))
 
 
 def _title_key(title):
@@ -296,11 +367,19 @@ def peers():
     return sorted(rows, key=lambda row: row["name"])
 
 
+def _sender(m):
+    reply, title = m.get("reply_to"), m.get("from_title")
+    if not (isinstance(reply, str) and NAME_RE.match(reply)):
+        return m["from"]
+    shown = " ".join(title.split())[:100] if isinstance(title, str) else ""
+    return f"{m['from']} (tab {shown!r}; reply with to: {reply})" if shown else f"{m['from']} (reply with to: {reply})"
+
+
 def _fmt(msgs):
     if not msgs:
         return "No new messages."
     return "\n\n".join(
-        f"[{m['at_text']}] from {m['from']}"
+        f"[{m['at_text']}] from {_sender(m)}"
         + (f" (thread {m['thread']})" if m.get("thread") else "")
         + f" id={m['id']}:\n{m['text']}"
         for m in msgs
@@ -314,6 +393,7 @@ TOOLS = [
         "description": "Send mail to another local agent. If the user gives a terminal tab title, "
         "copy the title into to_title (including non-English text). Use to only for a known mailbox name. "
         "For multiple matching tabs, ask the user which session to use; never guess. "
+        "To answer a letter that says 'reply with to: <mailbox>', send to that mailbox (to), not to the sender name. "
         "If a reply is delayed, call mail_peers to check the recipient's usage limit before resending.",
         "inputSchema": {
             "type": "object",

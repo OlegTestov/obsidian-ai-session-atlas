@@ -176,10 +176,9 @@
              tone: top >= 90 ? "warn" : top >= 75 ? "mid" : "ok", age, reached: top >= 100 };
   }
 
-  // The poll of "Active": the chat tail first (the detailed view), then whether to ask Codex itself.
-  function activeUrl(messages, agents) {
-    const q = (messages > 1 ? [`msgs=${messages}`] : []).concat((agents || []).includes("codex") ? ["codex_usage=1"] : []);
-    return "/api/active" + (q.length ? "?" + q.join("&") : "");
+  // Ask Codex for its live usage only while its cards are shown.
+  function activeUrl(agents) {
+    return (agents || []).includes("codex") ? "/api/active?codex_usage=1" : "/api/active";
   }
 
   // Card order does not depend on message freshness, otherwise cards jump on every reply:
@@ -310,14 +309,6 @@
     return scored.slice(0, limit || 12).map(x => x[3]);
   }
 
-  /** Earlier messages for the detailed card: everything before what its last block shows
-   *  (your unanswered prompt or the last reply), at most limit − 1. */
-  function cardHistory(s, unanswered, limit) {
-    const shownAt = unanswered ? unanswered.at : s.reply_at;
-    const list = (s.history || []).filter(m => !shownAt || !m.at || m.at < shownAt);
-    return limit > 1 ? list.slice(-(limit - 1)) : [];
-  }
-
   /** Card order while you are on the tab: existing cards keep their places, new ones go to the end,
    *  departed ones drop out. frozen = null means no order yet: take a fresh sort and remember it. */
   function applyFrozenOrder(sorted, frozen) {
@@ -407,7 +398,7 @@
   }
 
   const api = { AGENTS, sizeMb, freeTextOption, freeAnswerText, agentOf, agentSelection, agentParam, agentPasses, toggleAgent, newSessionAgents,
-                newSessionAgent, cardHistory, applyFrozenOrder, pruneClosedNotes, CLOSED_NOTE_TTL_MS, pluralRu, tasksSummary, jumpMatches, durationText, stepPasses, relPath, terminalStatus, infoParts, shortTokens, arrangeSessions, contextLevel, limitsText, limitsAge, activeUrl, deliveryState, DELIVERY_WAIT_MS, queuedNotShown, commandMatches,
+                newSessionAgent, applyFrozenOrder, pruneClosedNotes, CLOSED_NOTE_TTL_MS, pluralRu, tasksSummary, jumpMatches, durationText, stepPasses, relPath, terminalStatus, infoParts, shortTokens, arrangeSessions, contextLevel, limitsText, limitsAge, activeUrl, deliveryState, DELIVERY_WAIT_MS, queuedNotShown, commandMatches,
                 historyStep, PERIODS, periodOf, valuesOf, passes, filterOptions, parseLayout,
                 backgroundReasons, unansweredPrompt, nextCard, costText };
   root.AtlasLogic = api;           // own namespace: active.js has wrappers

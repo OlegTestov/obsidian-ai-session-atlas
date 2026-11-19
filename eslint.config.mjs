@@ -25,7 +25,7 @@ function pageGlobals() {
 }
 
 export default defineConfig([
-  globalIgnores(["dist/", "node_modules/", ".venv/", "main.js"]),
+  globalIgnores(["dist/", "node_modules/", ".venv/", "main.js", "test-results/"]),
   ...obsidianmd.configs.recommendedWithLocalesEn,
   {
     files: ["web/js/**/*.js"],

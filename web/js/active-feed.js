@@ -1,170 +1,216 @@
-// Active: the session feed in the side panel, the whole session: the end first, earlier parts in pages
-// on scrolling to the top. The live end refreshes from an anchor turn, so new turns
-// append without gaps, and pages before the anchor load once.
-// Classic script: shares one global scope with the other page files.
-/* exported feedButton, renderFeedReply -- used by other page scripts */
-let feedSid = null;
-let feedSignature = "";
-let feedSeq = 0;
-const FEED_TURNS = 20;                 // page: this many turns at a time
-let feedOlder = [];                    // loaded before the anchor, in order
-let feedLive = [];                     // from the anchor to the end, refreshed
-let feedAnchor = null;                 // time of the first turn of the live part
-let feedHasMore = false;
-let feedLoadingOlder = false;
-let feedReplyKey = "";                 // what the reply field under the feed was drawn for
+// The paged conversation, steps and files inside a detailed Active card.
+const FEED_TURNS = 20;
+const cardViews = new Map();
+const cardPanels = new Map();
 
-function resetFeedPages() {
-  feedOlder = [];
-  feedLive = [];
-  feedAnchor = null;
-  feedHasMore = false;
-  feedLoadingOlder = false;
-}
-const FEED_VIEW_KEY = "atlas.feedView";
-let feedView = loadStored(FEED_VIEW_KEY, "turns");      // turns by default
-let openedFeedView = null;                               // the view currently drawn
-
-function renderFeedViews() {
-  const seg = segButtons(FEED_VIEWS, feedView, v => {
-    feedView = v;
-    store(FEED_VIEW_KEY, v);
-    resetFeedPages();                  // turns and steps have different data: scroll from scratch
-    renderFeedViews();
-    refreshFeed(true);
-  }, "fviews");
-  seg.title = i18n("feed.views.hint");
-  $("#feed-views").replaceChildren(seg);
+function cardViewMode(sid) {
+  return cardViews.get(sid) || "turns";
 }
 
-function feedButton(s, mini) {
-  const b = el("button", "feedbtn" + (mini ? " mini" : ""), i18n("feed.button"));
-  b.type = "button";
-  b.title = i18n("feed.button.hint");
-  b.setAttribute("aria-pressed", String(feedSid === s.session_id));
-  b.addEventListener("click", e => {
-    e.stopPropagation();
-    if (feedSid === s.session_id) closeFeed(); else openFeed(s.session_id);
-  });
-  return mini ? iconify(b, FEED_SVG, i18n("feed.button.label")) : b;
-}
-
-function openFeed(sid) {
-  feedSid = sid;
-  seeCard(sid);                         // reading the feed is reading the session
-  resetFeedPages();
-  feedSignature = "";
-  $("#feed").classList.remove("hidden");
-  $("#active").classList.add("with-feed");
-  $("#feed-body").replaceChildren(el("p", "empty", i18n("feed.loading")));
-  renderFeedViews();
-  lastSignature = "";
-  renderActive(null, true);            // the card's feed button shows as pressed
-  renderFeedReply(true);
-  refreshFeed(true);
-}
-
-function closeFeed() {
-  feedSid = null;
-  $("#feed").classList.add("hidden");
-  $("#active").classList.remove("with-feed");
-  lastSignature = "";
-  renderActive(null, true);
-}
-
-async function refreshFeed(scrollToEnd) {
-  if (!feedSid) return;
-  const sid = feedSid;
-  const seq = ++feedSeq;
-  const s = activeSessions.find(x => x.session_id === sid);
-  $("#feed-title").textContent = s ? (s.title || sid) : sid;
-  const view = FEED_VIEWS.some(v => v.value === feedView) ? feedView : "turns";
-  const paged = view !== "files";
-  let data;
-  try { data = await api(`/api/active/feed/${encodeURIComponent(sid)}?turns=${FEED_TURNS}`
-                         + (view === "turns" ? "" : `&view=${view}`)
-                         + (paged && feedAnchor ? `&since=${encodeURIComponent(feedAnchor)}` : "")); }
-  catch (e) {
-    if (seq === feedSeq) $("#feed-body").replaceChildren(el("p", "empty", i18n("feed.error", { msg: e.message })));
-    return;
+function cardViewPicker(s, pid) {
+  const select = el("select", "card-view-picker");
+  select.setAttribute("aria-label", i18n("feed.mode"));
+  select.title = i18n("feed.mode");
+  for (const value of ["turns", "terminal", "steps", "files"]) {
+    const option = el("option", null, i18n(`feed.view.${value}`));
+    option.value = value;
+    option.disabled = value === "terminal" && !hostInlineTabs.has(pid);
+    if (option.disabled) option.title = i18n("feed.terminalUnavailable");
+    select.appendChild(option);
   }
-  if (seq !== feedSeq || sid !== feedSid || view !== feedView) return;   // everything changed while waiting
-  if (paged) {
-    feedLive = data.turns || [];
-    if (!feedAnchor) {                 // first page: the live end starts at its beginning
-      feedAnchor = feedLive.length ? feedLive[0].prompt_at : null;
-      feedHasMore = !!data.has_more;
+  select.value = cardViewMode(s.session_id);
+  select.addEventListener("change", () => {
+    if (select.value === "turns") cardViews.delete(s.session_id);
+    else cardViews.set(s.session_id, select.value);
+    const card = select.closest(".acard");
+    const placeholder = el("div", "card-view-slot");
+    card.querySelector(".card-view-body").replaceWith(placeholder);
+    attachCardPanel(card, s, pid);
+    if (select.value === "terminal") cardPanels.get(s.session_id)?.focus();
+    seeCard(s.session_id);
+  });
+  return select;
+}
+
+function attachCardPanel(card, session, pid) {
+  const sid = session.session_id;
+  const view = cardViewMode(sid);
+  const slot = card.querySelector(".card-view-slot");
+  const previous = cardPanels.get(sid);
+  let panel = previous;
+  if (!panel || view !== panel.view || (view === "terminal" && pid !== panel.pid)) {
+    if (panel) panel.dispose();
+    panel = view === "terminal" ? terminalCardPanel(session, pid) : conversationPanel(session, view);
+    cardPanels.set(sid, panel);
+  }
+  panel.session = session;
+  card.classList.toggle("terminal-mode", view === "terminal");
+  slot.replaceWith(panel.body);
+  panel.mount();
+}
+
+function mountCardPanels(grid, sessions = []) {
+  const cards = new Map([...grid.querySelectorAll(".acard .card-view-slot")].map(slot => {
+    const card = slot.closest(".acard");
+    return [card.dataset.id, card];
+  }));
+  for (const [sid, panel] of cardPanels) {
+    if (!cards.has(sid)) { panel.dispose(); cardPanels.delete(sid); }
+  }
+  for (const session of sessions) {
+    const card = cards.get(session.session_id);
+    if (card) attachCardPanel(card, session, tabFor(session));
+  }
+}
+
+function refreshCardPanels() {
+  for (const panel of cardPanels.values()) panel.refresh();
+}
+
+function conversationPanel(session, view) {
+  const body = el("div", "card-view-body");
+  body.tabIndex = 0;
+  body.setAttribute("role", "region");
+  body.setAttribute("aria-label", i18n(`feed.view.${view}`));
+  const sid = session.session_id;
+  const paged = view !== "files";
+  let older = [], live = [], hasMore = false, loadingOlder = false, epoch = 0;
+  let signature = "", files = {}, filter = "all";
+  let refreshing = false, drawn = false, disposed = false, shown = false;
+  let fetched = null, fetchedAt = 0;
+
+  const url = `/api/active/feed/${encodeURIComponent(sid)}?turns=${FEED_TURNS}`
+    + (view === "turns" ? "" : `&view=${view}`);
+  const watch = new IntersectionObserver(entries => {
+    shown = entries[0].isIntersecting;
+    if (shown) refresh();
+  }, { root: $("#active-grid") });
+  const panel = { view, body, session, mount() { if (drawn) draw(); watch.observe(body); },
+    refresh() { if (shown) { if (drawn) draw(); refresh(); } },
+    dispose() { disposed = true; watch.disconnect(); } };
+
+  function draw(prepended = false) {
+    const current = panel.session;
+    const turns = older.concat(live);
+    const mine = view === "turns" ? unansweredPrompt(current) : null;
+    const optimistic = mine && justSent.has(sid) && turns.at(-1)?.prompt !== mine.text ? mine : null;
+    const busy = ["busy", "background"].includes(current.activity || current.status);
+    const delivery = optimistic && DELIVERY_TEXT[AtlasLogic.deliveryState(current, justSent.get(sid), Date.now())];
+    const extra = view === "turns" ? [optimistic, delivery, busy && current.progress, current.queued, current.queued_count] : [];
+    const key = JSON.stringify([view, filter, view === "files" ? files : turns, hasMore, loadingOlder, extra,
+      view === "steps" ? [busy, Math.floor(Date.now() / 30000)] : null]);
+    if (key === signature) return;
+    signature = key;
+    const atEnd = !drawn || body.scrollHeight - body.scrollTop - body.clientHeight < 40;
+    const top = body.scrollTop, height = body.scrollHeight;
+    if (!paged) {
+      const expanded = body.querySelector(".fread")?.open;
+      body.replaceChildren(...renderFiles(files));
+      const details = body.querySelector(".fread");
+      if (details && expanded) details.open = true;
+    } else {
+      const head = hasMore ? [earlierButton()] : older.length ? [el("p", "fwho", i18n("feed.start"))] : [];
+      if (view === "steps") body.replaceChildren(...head, ...renderSteps(turns, current, filter, value => {
+        filter = value;
+        draw();
+      }));
+      else {
+        const content = turns.map((t, i) => feedTurn(t, i === turns.length - 1 && !optimistic, current));
+        if (optimistic) {
+          const sent = feedTurn({ prompt: optimistic.text, prompt_at: optimistic.at,
+            images: optimistic.images, steps: [] }, true, current);
+          if (delivery) sent.querySelector(".fwho").append(" · ", delivery);
+          content.push(sent);
+        }
+        if (!content.length) content.push(el("p", "empty", i18n("feed.noPrompts")));
+        body.replaceChildren(...head, ...content);
+        queuedLine(current, body, mine);
+        if (busy && current.progress) {
+          const progress = el("div", "ftxt now md");
+          progress.appendChild(renderMarkdown(i18n("active.nowMd", { text: current.progress })));
+          body.appendChild(progress);
+        }
+      }
+    }
+    drawn = true;
+    if (!paged) body.scrollTop = top;
+    else if (prepended) body.scrollTop = top + body.scrollHeight - height;
+    else body.scrollTop = atEnd ? body.scrollHeight : top;
+  }
+
+  async function refresh() {
+    if (disposed || refreshing) return;
+    const current = panel.session;
+    const activity = current.activity || current.status;
+    const revision = JSON.stringify([activity, current.prompt_at, current.reply_at, current.last_activity_at,
+      current.interrupted_at, current.transcript_session_id, current.progress_at]);
+    // Idle cards do not need to reparse the same transcript on every Active poll.
+    const maxAge = activity === "idle" ? 30000 : 4000;
+    if (fetched === revision && Date.now() - fetchedAt < maxAge) return;
+    refreshing = true;
+    try {
+      // Only from the last shown turn on (inclusive: it may still be growing); older ones are kept.
+      const last = paged ? live.at(-1)?.id : null;
+      let data = await api(url + (last ? `&since_id=${encodeURIComponent(last)}` : ""));
+      // The anchor is gone (compaction, rewrite, too far behind): load the latest page as on first open.
+      const reset = !!(last && data.reset);
+      if (reset) data = await api(url);
+      if (disposed) return;
+      fetched = revision;
+      fetchedAt = Date.now();
+      if (paged) {
+        const turns = data.turns || [];
+        if (!last || reset) {
+          if (live.length) { older = []; epoch++; }
+          live = turns;
+          hasMore = !!data.has_more;
+        } else if (turns.length) live = live.slice(0, -1).concat(turns);
+      } else files = data;
+      draw();
+    } catch (error) {
+      if (!disposed && !drawn) body.replaceChildren(el("p", "empty", i18n("feed.error", { msg: error.message })));
+    } finally {
+      refreshing = false;
     }
   }
-  drawFeed(view, s, data, scrollToEnd, false);
-}
 
-/** Draw the feed from what is already loaded. prepended: earlier turns were added on top,
- *  so keep what was on screen in place. */
-function drawFeed(view, s, data, scrollToEnd, prepended) {
-  const turns = feedOlder.concat(feedLive);
-  // A step's "running N min" ages, so steps redraw even without new data.
-  const signature = JSON.stringify([view, stepFilter, view === "files" ? data.files : turns, feedHasMore,
-    view === "steps" ? Math.floor(Date.now() / 30000) : 0]);
-  if (signature === feedSignature) return;            // leave the DOM alone so the scroll does not jump
-  feedSignature = signature;
-  const body = $("#feed-body");
-  const switched = openedFeedView !== view;
-  openedFeedView = view;
-  const atEnd = scrollToEnd || body.scrollHeight - body.scrollTop - body.clientHeight < 40;
-  const top = body.scrollTop;
-  const height = body.scrollHeight;
-  if (view === "files") body.replaceChildren(...renderFiles(data));
-  else {
-    const head = feedHasMore ? [earlierButton()] : feedOlder.length ? [el("p", "fwho", i18n("feed.start"))] : [];
-    if (view === "steps") body.replaceChildren(...head, ...renderSteps(turns, s));
-    else body.replaceChildren(...head, ...(turns.length
-      ? turns.map((t, i) => feedTurn(t, i === turns.length - 1))
-      : [el("p", "empty", i18n("feed.noPrompts"))]));
+  function earlierButton() {
+    const button = el("button", "fearlier", i18n(loadingOlder ? "feed.loadingEarlier" : "feed.loadEarlier"));
+    button.type = "button";
+    button.disabled = loadingOlder;
+    button.addEventListener("click", loadOlder);
+    return button;
   }
-  if (view === "files") body.scrollTop = switched ? 0 : top;     // files read top-down
-  else if (prepended) body.scrollTop = top + (body.scrollHeight - height);
-  else if (atEnd) body.scrollTop = body.scrollHeight;
-}
 
-function earlierButton() {
-  const b = el("button", "fearlier", feedLoadingOlder ? i18n("feed.loadingEarlier") : i18n("feed.loadEarlier"));
-  b.type = "button";
-  b.disabled = feedLoadingOlder;
-  b.addEventListener("click", loadOlderTurns);
-  return b;
-}
-
-async function loadOlderTurns() {
-  const view = feedView;
-  if (!feedSid || view === "files" || !feedHasMore || feedLoadingOlder) return;
-  const oldest = feedOlder[0] || feedLive[0];
-  if (!oldest || !oldest.prompt_at) return;
-  const sid = feedSid;
-  feedLoadingOlder = true;
-  feedSignature = "";
-  drawFeed(view, activeSessions.find(x => x.session_id === sid), {}, false, true);   // the button reads "loading…"
-  let data = null;
-  try {
-    data = await api(`/api/active/feed/${encodeURIComponent(sid)}?turns=${FEED_TURNS}`
-                     + (view === "turns" ? "" : `&view=${view}`) + `&before=${encodeURIComponent(oldest.prompt_at)}`);
-  } catch { /* the button stays and can be pressed again */ }
-  feedLoadingOlder = false;
-  if (sid !== feedSid || view !== feedView) return;
-  if (data) {
-    feedOlder = (data.turns || []).concat(feedOlder);
-    feedHasMore = !!data.has_more && (data.turns || []).length > 0;
+  async function loadOlder() {
+    const first = older[0] || live[0];
+    const before = first?.id ? `&before_id=${encodeURIComponent(first.id)}`
+      : first?.prompt_at ? `&before=${encodeURIComponent(first.prompt_at)}` : "";
+    if (disposed || !paged || !hasMore || loadingOlder || !before) return;
+    loadingOlder = true;
+    const mine = epoch;
+    draw(true);
+    try {
+      const data = await api(url + before);
+      if (disposed || mine !== epoch) return;
+      const turns = data.turns || [];
+      older = turns.concat(older);
+      hasMore = !!data.has_more && turns.length > 0;
+    } catch { /* The earlier-page button remains available for a retry. */ }
+    finally {
+      loadingOlder = false;
+      if (!disposed) draw(true);
+    }
   }
-  feedSignature = "";
-  drawFeed(view, activeSessions.find(x => x.session_id === sid), {}, false, true);
+
+  body.addEventListener("scroll", () => {
+    if (body.clientHeight && body.scrollTop < 80) loadOlder();
+  }, { passive: true });
+  body.appendChild(el("p", "empty", i18n("feed.loading")));
+  return panel;
 }
 
-// Scrolled to the top: the next page loads by itself, no click needed.
-$("#feed-body").addEventListener("scroll", () => {
-  if ($("#feed-body").scrollTop < 80) loadOlderTurns();
-});
-
-function feedTurn(t, last, session = activeSessions.find(x => x.session_id === feedSid)) {
+function feedTurn(t, last, session) {
   const box = el("section", "fturn");
   const you = el("div", "fwho", i18n("feed.you", { time: fmtShort(t.prompt_at) }));
   box.appendChild(you);
@@ -195,31 +241,4 @@ function feedTurn(t, last, session = activeSessions.find(x => x.session_id === f
     box.appendChild(el("div", "fwho", i18n("feed.noReply")));
   }
   return box;
-}
-
-$("#feed-close").addEventListener("click", closeFeed);
-
-/**
- * The reply field under the feed: the card's own form, so a reply goes the same way. Redrawn when
- * the session's state or tab changes; focus and caret stay where they were.
- */
-function renderFeedReply(force) {
-  const box = $("#feed-reply");
-  const s = feedSid ? activeSessions.find(x => x.session_id === feedSid) : null;
-  const pid = s ? tabFor(s) : null;
-  const key = s ? JSON.stringify([s.session_id, pid, hostReady, s.status, s.activity, I18N.lang()]) : "";
-  if (!force && key === feedReplyKey) return;
-  const area = box.querySelector("textarea");
-  const typing = area && document.activeElement === area;
-  // During IME composition or with the command hints open, a redraw would break them: next time.
-  if (!force && (composing || box.querySelector(".suggest:not(.hidden)"))) return;
-  feedReplyKey = key;
-  const caret = typing && { start: area.selectionStart, end: area.selectionEnd };
-  if (!s) { box.replaceChildren(); return; }
-  box.replaceChildren(answerForm(s, pid, true));
-  const next = box.querySelector("textarea");
-  if (caret && next && !next.disabled) {
-    next.focus({ preventScroll: true });
-    next.setSelectionRange(caret.start, caret.end);
-  }
 }

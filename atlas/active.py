@@ -380,15 +380,6 @@ def markdown_tail(text: str, limit: int = PREVIEW_CHARS) -> str:
     return (FENCE + "\n" + tail) if fences % 2 else tail
 
 
-def last_reply(conn: sqlite3.Connection, session_id: str) -> dict | None:
-    """Claude's full last reply, for "show in full" on the card."""
-    path = live_transcript(conn, session_id)
-    if not path:
-        return None
-    found = last_messages(path)
-    return {"session_id": session_id, "text": found["reply"] or "", "at": found["reply_at"]}
-
-
 def _transcript(conn: sqlite3.Connection, session_id: str, projects_root: str) -> str | None:
     row = conn.execute("SELECT source_path FROM sessions WHERE session_id=?",
                        (session_id,)).fetchone()

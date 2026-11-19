@@ -7,17 +7,41 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.12.0] - 2026-11-19
+
+### Added
+
+- Detailed Active cards have four modes: Conversation, Terminal, Steps and Files.
+- Terminal mode shows the session's Atlas tab inside the card: type into the same process and scroll its output there.
+- Conversation mode opens at the latest messages and loads earlier ones as you scroll up.
+- Resume with… gives the new Claude Code or Codex session the title of the session it came from.
+- Agent Mail letters sent from an Atlas tab carry a reply address, so the answer wakes the sender's own session.
+
+### Changed
+
+- The card modes replace the side session feed.
+- The Agent mail folder setting is saved when you leave the field. A custom folder is created only inside an existing folder.
+
+### Fixed
+
+- Codex session names that Codex keeps only in its session index now show in the catalog.
+- Agent Mail wakes a session once per check and waits while you type or a card reply is still being sent.
+- A usage limit stops blocking Agent Mail once the session works again.
+- Two readers of one mailbox can no longer both receive the same letter.
+
 ## [2.11.1] - 2026-11-18
 
 ### Added
 
 - Agent Mail reports a Claude Code or Codex usage limit and its reset time when shown in the recipient tab.
-  Check `mail_peers` if the recipient hits a limit after the letter was sent.
+- Check `mail_peers` if the recipient hits a limit after the letter was sent.
 
 ## [2.11.0] - 2026-11-18
 
+### Added
+
 - Claude Code and Codex can send local messages to open Atlas terminal tabs by title, including non-English titles.
-  If a title matches several sessions, Agent Mail returns the choices without sending.
+- If a title matches several sessions, Agent Mail returns the choices without sending.
 - Atlas wakes the recipient once its prompt is empty and it is ready for a request.
 - Agent Mail is bundled. Settings can copy the MCP setup commands for both agents.
 - Atlas discovers `CODEX_HOME` in the login shell and has an explicit Codex home setting.

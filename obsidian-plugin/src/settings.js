@@ -4,17 +4,17 @@ import { renderStatus, catalogDefinitions, aiDefinitions, advancedDefinitions, c
 import { NOTICE_HOLDS, DEFAULT_NOTICE_HOLD } from "./notify";
 import { DEFAULT_FONT_SIZE } from "./constants";
 import { mailSetupDefinition } from "./mail-setup";
+import { validMailRoot } from "./mail-nudge";
 import { normalizeCodexHome } from "./codex-hook";
 
 const DEFAULT_SETTINGS = { notify: true, systemNotify: true, explorerClicks: false, language: "auto",
                            wakeOnMail: false, agentMailRoot: "", agentMailScript: "", codexHome: "", agents: {}, agentArgs: { claude: "", codex: "" }, terminalFontSize: DEFAULT_FONT_SIZE,
-                           cardMessages: 10, noticeHold: DEFAULT_NOTICE_HOLD, loadAgentTabs: true, showWhatsNew: true };
+                           noticeHold: DEFAULT_NOTICE_HOLD, loadAgentTabs: true, showWhatsNew: true };
 
 class AtlasSettingTab extends PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
-    plugin.register(() => window.clearTimeout(this.reloadTimer));
   }
 
   save() { return this.plugin.saveData(this.plugin.settings); }
@@ -81,11 +81,20 @@ class AtlasSettingTab extends PluginSettingTab {
         })),
         this.toggleDefinition("wakeOnMail", "mail.wake", "mail.wake.desc"),
         mailSetupDefinition(this),
-        definition("mail.root", "mail.root.desc", setting => setting.addText(text =>
-          text.setPlaceholder("~/.agent-mail").setValue(plugin.settings.agentMailRoot).onChange(async value => {
+        definition("mail.root", "mail.root.desc", setting => setting.addText(text => {
+          text.setPlaceholder("~/.agent-mail").setValue(plugin.settings.agentMailRoot);
+          text.inputEl.addEventListener("blur", async () => {
+            const value = text.getValue().trim();
+            if (value === plugin.settings.agentMailRoot) return;
+            if (value && !validMailRoot(value)) {
+              text.setValue(plugin.settings.agentMailRoot);
+              new Notice(t("mail.root.invalid"));
+              return;
+            }
             plugin.settings.agentMailRoot = value;
             await this.save();
-          }))),
+          });
+        })),
         definition("mail.script", "mail.script.desc", setting => setting.addText(text =>
           text.setValue(plugin.settings.agentMailScript).onChange(async value => {
             plugin.settings.agentMailScript = value;
@@ -96,13 +105,6 @@ class AtlasSettingTab extends PluginSettingTab {
           .setValue(Number(plugin.settings.terminalFontSize) || DEFAULT_FONT_SIZE).setDynamicTooltip().onChange(async value => {
             plugin.settings.terminalFontSize = value;
             await this.save();
-          }))),
-        definition("settings.cardMessages", "settings.cardMessages.desc", setting => setting.addSlider(slider => slider.setLimits(1, 30, 1)
-          .setValue(Number(plugin.settings.cardMessages) || 10).setDynamicTooltip().onChange(async value => {
-            plugin.settings.cardMessages = value;
-            await this.save();
-            window.clearTimeout(this.reloadTimer);
-            this.reloadTimer = window.setTimeout(() => { if (plugin._loaded !== false) plugin.reloadAtlasViews(); }, 600);
           }))),
       ] },
       catalogDefinitions(this), aiDefinitions(this),

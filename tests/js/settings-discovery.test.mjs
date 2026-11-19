@@ -41,7 +41,7 @@ describe("settings discovery",()=>{
  it("provides localized searchable definitions for plugin and server settings",()=>{
   const {tab}=context();const defs=flat(tab.getSettingDefinitions());
   for(const key of ["settings.language","settings.agent.claude","settings.agent.codex","settings.fontSize",
-   "settings.cardMessages","settings.notify","updates.setting","cfg.roots","cfg.sensitive","ai.enabled",
+   "settings.notify","updates.setting","cfg.roots","cfg.sensitive","ai.enabled",
    "ai.model.classification","ai.agent","ai.codexModel","codexHook","adv.python","adv.shell"]){
    assert.ok(defs.some(d=>d.name===key),key);
   }
@@ -75,5 +75,20 @@ describe("settings discovery",()=>{
   const def=flat(tab.getSettingDefinitions()).find(d=>d.name==="settings.language");
   await controls(def)[0]("ru");assert.equal(plugin.settings.language,"ru");
   assert.deepEqual(effects,["config","refresh"]);               // config.json takes the new language too
+ });
+ it("the mail folder is saved on blur only, and only when it is a usable absolute path",async()=>{
+  const {tab,plugin,saved}=context();const def=flat(tab.getSettingDefinitions()).find(d=>d.name==="mail.root");
+  let value="",blur=null;const shown=[],changes=[];
+  const control={setPlaceholder(){return this;},setValue(v){shown.push(v);value=v;return this;},getValue:()=>value,
+   onChange(fn){changes.push(fn);return this;},inputEl:{addEventListener:(type,fn)=>{if(type==="blur")blur=fn;}}};
+  def.render({addText(fn){fn(control);return this;}});
+  for(const fn of changes)await fn("/Users/me/par");            // typing a partial path
+  value="/Users/me/par";assert.deepEqual(saved,[]);assert.equal(plugin.settings.agentMailRoot,"");
+  for(const bad of ["relative/box","~/","/","~"]){value=bad;await blur();}
+  assert.deepEqual(saved,[]);assert.equal(plugin.settings.agentMailRoot,"");
+  assert.deepEqual(shown.slice(-4),["","","",""]);
+  value="/Users/me/mailbox";await blur();
+  assert.equal(plugin.settings.agentMailRoot,"/Users/me/mailbox");assert.equal(saved.length,1);
+  value="";await blur();assert.equal(plugin.settings.agentMailRoot,"");
  });
 });

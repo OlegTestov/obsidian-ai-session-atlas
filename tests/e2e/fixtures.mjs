@@ -61,9 +61,11 @@ export const test = base.extend({
   page: async ({ page }, use) => {
     const problems = [];
     const allowed = [];                 // URL patterns a negative test expects to answer 4xx
+    const expectedLogs = [];            // console error texts a negative test expects the page to log
     const isAllowed = url => allowed.some(re => re.test(url));
     page.on("console", msg => {
       if (msg.type() !== "error") return;
+      if (expectedLogs.some(re => re.test(msg.text()))) return;
       // The browser logs every 4xx response as a console error too: those of allowed URLs are expected.
       if (/Failed to load resource/.test(msg.text()) && isAllowed(msg.location().url || "")) return;
       problems.push(`console: ${msg.text()} (${msg.location().url || "?"})`);
@@ -78,6 +80,7 @@ export const test = base.extend({
       if (res.status() >= 400 && !isAllowed(res.url())) problems.push(`HTTP ${res.status()}: ${res.url()}`);
     });
     page.expectHttpError = re => allowed.push(re);
+    page.expectConsoleError = re => expectedLogs.push(re);
     await use(page);
     expect(problems, "console errors and failed requests").toEqual([]);
   },

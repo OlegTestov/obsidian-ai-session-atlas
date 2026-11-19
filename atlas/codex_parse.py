@@ -378,8 +378,33 @@ def _state_db(home: str) -> str | None:
     return max(numbered)[1] if numbered else None
 
 
-def thread_titles(home: str) -> dict[str, str]:
-    """Codex's own thread names: {thread id: title}. Read-only and optional: any failure means none."""
+def _clean_title(value) -> str | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    return " ".join(value.split())[:TITLE_LIMIT]
+
+
+def _index_names(home: str) -> dict[str, str]:
+    """Names from Codex's `session_index.jsonl`, the latest line per thread. Codex keeps a name it
+    set on a thread not yet in its state database only here."""
+    out = {}
+    try:
+        with open(os.path.join(home, "session_index.jsonl"), encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                name = _clean_title(row.get("thread_name")) if isinstance(row, dict) else None
+                if name and isinstance(row.get("id"), str):
+                    out[row["id"].lower()] = name
+    except OSError:
+        return {}
+    return out
+
+
+def _state_titles(home: str) -> dict[str, tuple[str | None, str | None]]:
+    """{thread id: (name, title)} from the state database. Read-only: any failure means none."""
     path = _state_db(home)
     if not path:
         return {}
@@ -389,16 +414,27 @@ def thread_titles(home: str) -> dict[str, str]:
         return {}
     try:
         cols = {row[1] for row in conn.execute("PRAGMA table_info(threads)")}
-        pick = [c for c in ("name", "title") if c in cols]      # a name the user gave wins
-        if "id" not in cols or not pick:
+        if "id" not in cols or not cols & {"name", "title"}:
             return {}
-        out = {}
-        for row in conn.execute(f"SELECT id, {', '.join(pick)} FROM threads"):
-            title = next((v for v in row[1:] if isinstance(v, str) and v.strip()), None)
-            if title and row[0]:
-                out[str(row[0]).lower()] = " ".join(title.split())[:TITLE_LIMIT]
-        return out
+        name = "name" if "name" in cols else "NULL"
+        title = "title" if "title" in cols else "NULL"
+        return {str(i).lower(): (_clean_title(n), _clean_title(t))
+                for i, n, t in conn.execute(f"SELECT id, {name}, {title} FROM threads") if i}
     except sqlite3.Error:
         return {}
     finally:
         conn.close()
+
+
+def thread_titles(home: str) -> dict[str, str]:
+    """Codex's own thread names: {thread id: title}. A name the user gave wins (the state database,
+    then the session index), then Codex's automatic title."""
+    state = _state_titles(home)
+    names = _index_names(home)
+    out = {}
+    for tid in state.keys() | names.keys():
+        name, title = state.get(tid, (None, None))
+        found = name or names.get(tid) or title
+        if found:
+            out[tid] = found
+    return out

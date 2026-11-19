@@ -62,13 +62,21 @@ function resetInstant(clock, now) {
   }
 }
 
+// A prompt with text followed by an agent reply means the session worked after the limit line.
+function superseded(after, prompt, reply) {
+  const at = after.findIndex(line => prompt.test(line));
+  return at >= 0 && after.slice(at + 1).some(line => reply.test(line));
+}
+
 function screenLimit(lines, agent) {
   const rows = lines.slice(-32).map(line => line.trim());
   if (agent === "claude") {
-    const paused = rows.findLast(line => CLAUDE_PAUSED.test(line));
+    const pausedAt = rows.findLastIndex(line => CLAUDE_PAUSED.test(line));
+    const paused = pausedAt < 0 ? undefined : rows[pausedAt];
     const error = rows.findLastIndex(line => CLAUDE_ERROR.test(line));
     const after = rows.slice(error + 1);
     const prompts = after.filter(line => /^❯\s+\S/.test(line));
+    if (superseded(rows.slice(Math.max(error, pausedAt) + 1), /^❯\s+\S/, /^[⏺●]/)) return null;
     if (!paused && (error < 0 || prompts.length > 1 || after.some(line => /esc to interrupt/i.test(line)))) return null;
     const reported = error < 0 ? "" : rows.slice(error, error + 3).join(" ");
     // The detailed error usually supplies the time zone, the pinned footer may omit it.
@@ -79,7 +87,7 @@ function screenLimit(lines, agent) {
     const error = rows.findLastIndex(line => CODEX_ERROR.test(line));
     const after = rows.slice(error + 1);
     const prompts = after.filter(line => /^›\s+\S/.test(line) && !/^›\s+\d+\./.test(line));
-    if (error < 0 || prompts.length > 1 || after.some(line => /esc to interrupt\)|^• Worked for /.test(line))) return null;
+    if (error < 0 || superseded(after, /^›\s+(?!\d+\.)\S/, /^•\s/) || prompts.length > 1 || after.some(line => /esc to interrupt\)|^• Worked for /.test(line))) return null;
     const text = rows.slice(error, error + 5).join(" ");
     return { clock: clockText(text.split(/\btry again at\b/i)[1] || "") };
   }

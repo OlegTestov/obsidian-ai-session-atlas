@@ -1,4 +1,4 @@
-/* global openFeed, READ -- page globals, used inside page.evaluate */
+/* global READ -- page global, used inside page.evaluate */
 // Unread marks on Active cards: the plugin sends which sessions finished while you were away; the page
 // shows a dot and a "N new" button and reports the cards you open. A stand-in host page plays the plugin.
 import { expect, ids, run, test } from "./fixtures.mjs";
@@ -91,26 +91,13 @@ test("\"N new\" counts and clears only the cards the filters show", async ({ pag
   expect(await page.evaluate(() => window.unread)).toEqual([ids.codexLive]);
 });
 
-test("opening the feed of a card clears its mark at once", async ({ page, lang }) => {
+test("switching a card's view marks it as read", async ({ page, lang }) => {
   const frame = await openHost(page, lang, [ids.codexLive], "full", false);
   const codex = frame.locator(`.acard[data-id="${ids.codexLive}"]`);
   await expect(codex.locator(".unread-dot")).toBeVisible();
-  // The feed opens without a click on the card too (the f key); a click would clear the mark by itself.
-  await frame.locator("body").evaluate((_, id) => openFeed(id), ids.codexLive);
-  await expect(frame.locator("#feed")).toBeVisible();
-  await expect(codex.locator(".unread-dot")).toHaveCount(0, { timeout: 1500 });
+  await codex.locator(".card-view-picker").selectOption("files");
+  await expect(codex.locator(".unread-dot")).toHaveCount(0);
   await expect.poll(() => seenSent(page)).toEqual([expect.objectContaining({ ids: [ids.codexLive] })]);
-});
-
-test("a session whose feed is open stays seen when the plugin marks it", async ({ page, lang }) => {
-  const frame = await openHost(page, lang, [], "full");
-  await frame.locator("body").evaluate((_, id) => openFeed(id), ids.codexLive);
-  await expect(frame.locator("#feed")).toBeVisible();
-  await frame.locator("#feed-body").click();            // you are reading the feed: the page has focus
-  const before = (await seenSent(page)).length;
-  await page.evaluate(id => { window.unread = [id]; }, ids.codexLive);
-  await expect.poll(async () => (await seenSent(page)).length, { timeout: 12000 }).toBeGreaterThan(before);
-  await expect(frame.locator(`.acard[data-id="${ids.codexLive}"] .unread-dot`)).toHaveCount(0);
 });
 
 test("arrow keys pass over cards without clearing marks; Enter on one clears it", async ({ page, lang }) => {
@@ -152,17 +139,6 @@ test("cards drawn again keep their marks at once", async ({ page, lang }) => {
   await frame.locator("#active-filters .agent-ms .ms-pop label", { hasText: "Codex" }).locator("input").setChecked(false);
   await expect(claude).not.toHaveAttribute("data-probe", "old");
   await expect(claude.locator(".unread-dot")).toBeVisible({ timeout: 1000 });
-});
-
-test("an open feed in a page without focus does not keep its session seen", async ({ page, lang }) => {
-  const frame = await openHost(page, lang, [], "full");
-  await frame.locator("body").evaluate((_, id) => openFeed(id), ids.codexLive);
-  await expect(frame.locator("#feed")).toBeVisible();
-  // Focus leaves the Atlas page (another tab or app in Obsidian).
-  await page.evaluate(() => { const b = document.createElement("button"); document.body.prepend(b); b.focus(); });
-  expect(await frame.locator("body").evaluate(() => document.hasFocus())).toBe(false);
-  await page.evaluate(id => { window.unread = [id]; }, ids.codexLive);
-  await expect(frame.locator(`.acard[data-id="${ids.codexLive}"] .unread-dot`)).toBeVisible({ timeout: 12000 });
 });
 
 test("the summary line keeps its separators right when \"N new\" goes", async ({ page, lang }) => {
@@ -207,18 +183,6 @@ test("a click after the window sends at once", async ({ page, lang }) => {
   await page.waitForTimeout(5200);
   await desc.click();
   await expect.poll(() => seenSent(page), { timeout: 500 }).toHaveLength(2);
-});
-
-test("an open feed stays seen when the plugin says the Atlas tab is in front, without page focus", async ({ page, lang }) => {
-  const frame = await openHost(page, lang, [], "full");
-  await page.evaluate(() => { window.front = true; });
-  await frame.locator("body").evaluate((_, id) => openFeed(id), ids.codexLive);
-  await expect(frame.locator("#feed")).toBeVisible();
-  await page.evaluate(() => { const b = document.createElement("button"); document.body.prepend(b); b.focus(); });
-  const before = (await seenSent(page)).length;
-  await page.evaluate(id => { window.unread = [id]; }, ids.codexLive);
-  await expect.poll(async () => (await seenSent(page)).length, { timeout: 12000 }).toBeGreaterThan(before);
-  await expect(frame.locator(`.acard[data-id="${ids.codexLive}"] .unread-dot`)).toHaveCount(0);
 });
 
 // A detailed card on screen while you work at the page: a reply you could read as it came is not marked.

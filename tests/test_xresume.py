@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from atlas import convert, convert_write, db, delete, index, search, stats
+from atlas import actions, convert, convert_write, db, delete, index, messages, search, stats
 from atlas.convert_write import ConvertError
 from tests import xresume_corpus as X
 
@@ -72,9 +72,37 @@ def test_claude_to_codex_writes_a_rollout_codex_resumes(corpus):
         assert secret not in blob
 
 
+def test_conversion_saves_the_exact_source_title_in_codex(corpus, codex_cli):
+    conn = corpus["conn"]
+    title = "План «Маяк» & owner's notes"
+    actions.rename_session(conn, X.CLAUDE_ID, title, write_to_transcript=False)
+
+    result = _convert(corpus, X.CLAUDE_ID, "codex")
+
+    assert result["title"] == title
+    run, = codex_cli["runs"]()
+    assert run["home"] == corpus["codex_home"]
+    assert run["calls"][-1] == {"method": "thread/name/set",
+                                "params": {"threadId": result["session_id"], "name": title}}
+    assert search.load_session(conn, result["session_id"])["title"] == title
+
+
+def test_conversion_can_open_the_copy_when_codex_rejects_the_name(corpus, codex_cli):
+    codex_cli["mode"]("old")
+    with messages.use_lang("en"):
+        result = _convert(corpus, X.CLAUDE_ID, "codex")
+
+    assert result["converted"] and os.path.isfile(result["path"])
+    assert result["title_warning"] == messages.MESSAGES["rename.codex_old"]["en"]
+    assert search.load_session(corpus["conn"], result["session_id"])["title"] == result["title"]
+
+
 def test_codex_to_claude_writes_a_chained_transcript(corpus):
     before = _digest(corpus["paths"]["codex"])
+    title = "Обзор «Маяк»"
+    actions.rename_session(corpus["conn"], X.CODEX_ID, title, write_to_transcript=False)
     r = _convert(corpus, X.CODEX_ID, "claude")
+    assert r["title"] == title
     folder = os.path.join(corpus["projects"], convert_write.claude_slug(corpus["cwd"]))
     assert r["path"] == os.path.join(folder, r["session_id"] + ".jsonl")
     assert r["command"] == f"cd {shlex.quote(corpus['cwd'])} && claude --resume {r['session_id']}"

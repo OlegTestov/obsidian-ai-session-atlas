@@ -99,18 +99,7 @@ body{margin:0;font:14px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",syste
 .acard .head .mini{flex:0 0 auto;padding:1px 8px;font-size:12px;line-height:18px}
 .acard .info{font-size:11.5px;line-height:1.3;color:var(--dim);white-space:nowrap}
 .acard .hscroll{overflow-x:auto;overflow-y:hidden;text-overflow:clip;scrollbar-width:none}
-.reply{margin:4px 0 0;border-top:1px solid var(--line);padding-top:4px;flex:1 1 auto;min-height:0;
-  display:flex;flex-direction:column}
-.reply .who{font-size:11.5px;color:var(--dim);display:flex;gap:8px;align-items:baseline}
-.reply .who button{padding:0 6px;font-size:11.5px;border:none;background:none;color:var(--accent)}
-.reply .txt{font-size:12.5px;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere;
-  overflow-y:auto;margin:2px 0 0;flex:1 1 auto;min-height:0}
-.reply .txt.now{flex:0 0 auto;max-height:4.4em;color:var(--dim)}
-.reply.mine .txt:not(.now){background:var(--accent-soft);border-radius:8px;padding:6px 9px;
-  margin-top:4px;flex:0 1 auto}
-.reply.mine .txt.now{margin-top:6px}
-/* Markdown in a reply: dense, at card scale. */
-.reply .txt.md{white-space:normal}
+/* Markdown at card scale. */
 .md p{margin:0 0 6px}
 .md p:last-child{margin-bottom:0}
 .md h4,.md h5,.md h6{margin:8px 0 4px;font-size:13px;font-weight:700}
@@ -202,9 +191,6 @@ body{margin:0;font:14px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",syste
   display:flex;flex-direction:column;gap:1px;min-height:0;min-width:0;overflow:hidden}
 .acard>*{flex:0 0 auto;min-width:0}
 .acard>.d{flex:0 0 auto}
-/* The reply takes all free height and shrinks itself; the reply field stays at the bottom edge.
-   Otherwise the generic .acard>* rule overrides them by file order. */
-.acard>.reply{flex:1 1 auto;min-height:0}
 .acard>.answer{margin-top:auto}
 .acard .t{font-weight:600;line-height:1.3;cursor:pointer;overflow:hidden;white-space:nowrap;
   text-overflow:ellipsis}
@@ -428,7 +414,7 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
 /* Detailed card with a dialog: chat (takes the rest, scrolls) → dialog → reply field. The dialog sits
    on the field and rises as it grows; taller than its share, it scrolls inside itself, with shades at
    the edge that has more. The chat keeps two lines while the card has room; the field always shows. */
-.agrid.full .acard.has-dialog>.amsgs,.agrid.full .acard.has-dialog>.reply{flex:1 1 0;min-height:min(3em,14%)}
+.agrid.full .acard.has-dialog>.card-view-body:not(.terminal-body){flex:1 1 0;min-height:min(3em,14%)}
 .agrid.full .acard>.dialog,.agrid:not(.full) .acard>.dialog{flex:0 1 auto;min-height:min(5.2em,30%);
   overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin;background-color:var(--panel);
   background-image:linear-gradient(var(--panel) 40%,transparent),linear-gradient(transparent,var(--panel) 60%),
@@ -442,7 +428,7 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
 .agrid.full .acard.has-dialog{container-type:size}
 @container (max-height:280px){ .acard.has-dialog>.d,.acard.has-dialog>.tags,.acard.has-dialog>.tasks,
   .acard.has-dialog>.info{display:none}
-  .agrid.full .acard.has-dialog>.amsgs,.agrid.full .acard.has-dialog>.reply{min-height:1.5em}
+  .agrid.full .acard.has-dialog>.card-view-body:not(.terminal-body){min-height:1.5em}
   .agrid.full .acard.has-dialog>.dialog{min-height:3.5em}
   /* No room for the strip: the amber badge in the head says it, the tint stays. */
   .acard.waiting>.decide{display:none}
@@ -474,44 +460,36 @@ button.stop{color:var(--warn);border-color:var(--warn)}
 #newsess textarea{resize:vertical;min-height:90px}
 #newsess #ns-cmd{white-space:pre-wrap;overflow-wrap:anywhere}
 #active-filters .newsess{font-weight:600}
-.acard .reply .queued{font-size:12px;color:var(--accent);margin:0 0 2px}
-.acard .reply .who.bad{color:var(--warn);font-weight:600}
-/* session feed: the right-hand panel */
-#feed{position:fixed;top:72px;right:0;bottom:0;width:min(560px,100vw);background:var(--panel);
-  border-left:1px solid var(--line);box-shadow:-6px 0 18px rgba(0,0,0,.08);display:flex;
-  flex-direction:column;z-index:20}
-#feed.hidden{display:none}
-#feed .fhead{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line);
-  min-width:0}
-#feed .fhead b{flex:1 1 auto;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-#feed .fhead button{font-size:18px;line-height:1;padding:2px 8px}
-#feed-body{flex:1 1 auto;overflow:auto;padding:8px 12px 24px}
-#feed-reply{flex:0 0 auto;border-top:1px solid var(--line);padding:8px 12px calc(8px + var(--host-bottom, 0px))}
-#feed-reply:empty{display:none}
-#feed-reply .answer{margin-top:0}
-#feed-reply .answer textarea{max-height:40vh}
-:is(#feed, .catalog-feed-body) .fturn{border-bottom:1px dashed var(--line);padding:8px 0;display:flex;flex-direction:column;gap:4px}
-:is(#feed, .catalog-feed-body) .fwho{font-size:11.5px;color:var(--dim)}
-:is(#feed, .catalog-feed-body) .fwho.bad{color:var(--warn)}
-:is(#feed, .catalog-feed-body) .ftxt{font-size:13px;line-height:1.45;overflow-wrap:anywhere}
-:is(#feed, .catalog-feed-body) .ftxt.mine{background:var(--accent-soft);border-radius:6px;padding:4px 8px}
-:is(#feed, .catalog-feed-body) .fsteps{display:flex;flex-wrap:wrap;gap:4px}
-:is(#feed, .catalog-feed-body) .fstep{font-size:11.5px;cursor:default}
-button.feedbtn[aria-pressed="true"]{background:var(--accent-soft);border-color:var(--accent)}
-.acard .head .feedbtn.mini{flex:0 0 auto;padding:1px 8px;font-size:12px;line-height:18px}
-/* on a wide screen the feed does not cover the cards: the grid narrows */
-@media (min-width:1400px){#active.with-feed #active-grid{margin-right:min(560px,40vw)}}
+/* The card body uses the remaining grid height in all four modes. */
+.acard > .card-view-body{flex:1 1 0;min-height:0;overflow:auto;overscroll-behavior:contain;
+  scrollbar-gutter:stable;margin-top:4px;padding:0 4px 4px 0}
+.acard .card-view-picker{flex:0 0 auto;max-width:min(32%,14em);padding:2px 4px;
+  font-size:12px;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:5px}
+.acard.terminal-mode > .answer,.acard.terminal-mode > .dialog,.acard.terminal-mode > .cmdout{display:none}
+.acard > .terminal-body{position:relative;overflow:hidden;padding:0;scrollbar-gutter:auto}
+.card-terminal{position:absolute;inset:0;overflow:auto;overscroll-behavior:contain}
+.card-terminal .xterm{height:100%}
+.card-terminal .xterm-viewport{overscroll-behavior:contain}
+.card-view-body > .queued{font-size:12px;color:var(--accent);margin-top:4px}
+.card-view-body > .now{margin-top:4px;color:var(--dim)}
+:is(.card-view-body, .catalog-feed-body) .fturn{border-bottom:1px dashed var(--line);padding:8px 0;display:flex;flex-direction:column;gap:4px}
+:is(.card-view-body, .catalog-feed-body) .fwho{font-size:11.5px;color:var(--dim)}
+:is(.card-view-body, .catalog-feed-body) .fwho.bad{color:var(--warn)}
+:is(.card-view-body, .catalog-feed-body) .ftxt{font-size:13px;line-height:1.45;overflow-wrap:anywhere}
+:is(.card-view-body, .catalog-feed-body) .ftxt.mine{background:var(--accent-soft);border-radius:6px;padding:4px 8px}
+:is(.card-view-body, .catalog-feed-body) .fsteps{display:flex;flex-wrap:wrap;gap:4px}
+:is(.card-view-body, .catalog-feed-body) .fstep{font-size:11.5px;cursor:default}
 /* slash-command hints above the reply field */
-:is(.acard, #feed) .answer{position:relative}
-:is(.acard, #feed) .answer .suggest{position:absolute;left:0;right:0;bottom:100%;margin-bottom:4px;max-height:260px;
+.acard .answer{position:relative}
+.acard .answer .suggest{position:absolute;left:0;right:0;bottom:100%;margin-bottom:4px;max-height:260px;
   overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:8px;
   box-shadow:0 6px 18px rgba(0,0,0,.12);z-index:5;padding:3px}
-:is(.acard, #feed) .answer .suggest.hidden{display:none}
-:is(.acard, #feed) .answer .sug{display:flex;gap:8px;align-items:baseline;padding:4px 8px;border-radius:5px;
+.acard .answer .suggest.hidden{display:none}
+.acard .answer .sug{display:flex;gap:8px;align-items:baseline;padding:4px 8px;border-radius:5px;
   cursor:pointer;font-size:12.5px;min-width:0}
-:is(.acard, #feed) .answer .sug b{flex:0 0 auto;font-weight:600}
-:is(.acard, #feed) .answer .sug span{color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
-:is(.acard, #feed) .answer .sug.on{background:var(--accent-soft)}
+.acard .answer .sug b{flex:0 0 auto;font-weight:600}
+.acard .answer .sug span{color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+.acard .answer .sug.on{background:var(--accent-soft)}
 /* session context and subscription limits */
 .acard .ctx.mid{color:var(--accent)}
 .acard .ctx.warn{color:var(--warn);font-weight:600}
@@ -547,7 +525,7 @@ button.feedbtn[aria-pressed="true"]{background:var(--accent-soft);border-color:v
   color:var(--bg);font-size:12px;line-height:1.35;white-space:pre-line;pointer-events:none;
   box-shadow:0 4px 14px rgba(0,0,0,.18)}
 .tip.hidden{display:none}
-:is(.acard, #feed) .answer .suggest{max-height:300px;overscroll-behavior:contain}
+.acard .answer .suggest{max-height:300px;overscroll-behavior:contain}
 /* quick command answer and argument choice */
 .acard .cmdout{border-left:3px solid var(--accent);padding:3px 0 3px 8px;margin:2px 0;display:flex;
   flex-direction:column;gap:3px;min-width:0}
@@ -556,10 +534,10 @@ button.feedbtn[aria-pressed="true"]{background:var(--accent-soft);border-color:v
 .acard .cmdout .who button.ghost{margin-left:auto;padding:0 6px}
 .acard .cmdout pre{margin:0;font-size:11.5px;line-height:1.35;background:var(--accent-soft);padding:4px 6px;
   border-radius:4px;white-space:pre-wrap;overflow-wrap:anywhere;max-height:14em;overflow:auto}
-:is(.acard, #feed) .answer .argpick{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin:0 0 4px}
-:is(.acard, #feed) .answer .argpick.hidden{display:none}
-:is(.acard, #feed) .answer .argpick .lbl{font-size:12px;color:var(--dim)}
-:is(.acard, #feed) .answer .argpick button{padding:2px 9px;font-size:12px;line-height:18px}
+.acard .answer .argpick{display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin:0 0 4px}
+.acard .answer .argpick.hidden{display:none}
+.acard .answer .argpick .lbl{font-size:12px;color:var(--dim)}
+.acard .answer .argpick button{padding:2px 9px;font-size:12px;line-height:18px}
 #active-summary .link{white-space:nowrap}
 /* Agent tasks on the card: progress bar and the current step. */
 .acard .tasks{display:flex;align-items:center;gap:8px;font-size:12.5px;min-width:0}
@@ -580,37 +558,36 @@ button.feedbtn[aria-pressed="true"]{background:var(--accent-soft);border-color:v
 .crow .cm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dim);font-size:12px}
 .crow button{padding:2px 10px;font-size:12px}
 /* feed: the Steps and Files views */
-#feed .fviews button{font-size:12px;line-height:1.3;padding:2px 9px}
-#feed .ffilter{display:flex;flex-wrap:wrap;gap:4px;padding:4px 0 6px;position:sticky;top:-8px;
+.card-view-body .ffilter{display:flex;flex-wrap:wrap;gap:4px;padding:4px 0 6px;position:sticky;top:-8px;
   background:var(--panel);z-index:1}
-#feed .ffilter button{font-size:11.5px;padding:1px 8px;border-radius:20px;background:var(--panel)}
-#feed .ffilter button.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
-#feed .ffilter button.bad{color:var(--warn)}
-:is(#feed, .catalog-feed-body) .ftxt.clip{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
-#feed .fev{display:grid;grid-template-columns:58px 62px minmax(0,1fr) auto;gap:6px;align-items:baseline;
+.card-view-body .ffilter button{font-size:11.5px;padding:1px 8px;border-radius:20px;background:var(--panel)}
+.card-view-body .ffilter button.on{background:var(--accent-soft);border-color:var(--accent);color:var(--accent)}
+.card-view-body .ffilter button.bad{color:var(--warn)}
+.card-view-body .ftxt.clip{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.card-view-body .fev{display:grid;grid-template-columns:58px 62px minmax(0,1fr) auto;gap:6px;align-items:baseline;
   font-size:12.5px;padding:1px 4px;border-radius:4px}
-#feed .fev .fat,#feed .fev .ftook{font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums}
-#feed .fev .fk{font-size:11px;color:var(--dim)}
-#feed .fev .fx{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#feed .fev.text .fx{white-space:normal;color:var(--dim);font-style:italic}
-#feed .fev.edit .fk,#feed .fev.agent .fk{color:var(--accent)}
-#feed .fev.err{background:color-mix(in srgb,var(--warn) 10%,transparent)}
-#feed .fev.err .fk,#feed .fev.err .fx{color:var(--warn)}
-#feed .fev .ferr{grid-column:3/-1;font-size:11.5px;color:var(--warn);white-space:pre-wrap;
+.card-view-body .fev .fat,.card-view-body .fev .ftook{font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums}
+.card-view-body .fev .fk{font-size:11px;color:var(--dim)}
+.card-view-body .fev .fx{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.card-view-body .fev.text .fx{white-space:normal;color:var(--dim);font-style:italic}
+.card-view-body .fev.edit .fk,.card-view-body .fev.agent .fk{color:var(--accent)}
+.card-view-body .fev.err{background:color-mix(in srgb,var(--warn) 10%,transparent)}
+.card-view-body .fev.err .fk,.card-view-body .fev.err .fx{color:var(--warn)}
+.card-view-body .fev .ferr{grid-column:3/-1;font-size:11.5px;color:var(--warn);white-space:pre-wrap;
   overflow-wrap:anywhere;max-height:6.5em;overflow:auto}
-#feed .fev.run{background:var(--accent-soft)}
-#feed .fev.run .ftook{color:var(--accent);font-weight:600}
-#feed .fgroup{margin:6px 0 4px;font-size:12px;font-weight:600;color:var(--dim);text-transform:uppercase;
+.card-view-body .fev.run{background:var(--accent-soft)}
+.card-view-body .fev.run .ftook{color:var(--accent);font-weight:600}
+.card-view-body .fgroup{margin:6px 0 4px;font-size:12px;font-weight:600;color:var(--dim);text-transform:uppercase;
   letter-spacing:.04em;cursor:default}
-#feed details.fread summary{cursor:pointer;list-style-position:inside}
-#feed .ffile{display:grid;grid-template-columns:minmax(0,1fr) auto auto 88px;gap:8px;align-items:baseline;
+.card-view-body details.fread summary{cursor:pointer;list-style-position:inside}
+.card-view-body .ffile{display:grid;grid-template-columns:minmax(0,1fr) auto auto 88px;gap:8px;align-items:baseline;
   font-size:12.5px;padding:2px 0;border-bottom:1px dotted var(--line)}
-#feed .ffile .fn{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-#feed .ffile .fd,#feed .ffile .fops,#feed .ffile .ftook{color:var(--dim);font-size:11.5px}
-#feed .ffile .ftook{text-align:right;white-space:nowrap}
-#feed .ffile .plus{color:#2f7a4a}
-#feed .ffile .minus{color:var(--warn)}
-@media (prefers-color-scheme:dark){ #feed .ffile .plus{color:#7fc79a} }
+.card-view-body .ffile .fn{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.card-view-body .ffile .fd,.card-view-body .ffile .fops,.card-view-body .ffile .ftook{color:var(--dim);font-size:11.5px}
+.card-view-body .ffile .ftook{text-align:right;white-space:nowrap}
+.card-view-body .ffile .plus{color:#2f7a4a}
+.card-view-body .ffile .minus{color:var(--warn)}
+@media (prefers-color-scheme:dark){ .card-view-body .ffile .plus{color:#7fc79a} }
 /* button switch (segButtons): Statistics, feed view */
 .seg{display:flex;border:1px solid var(--line);border-radius:7px;overflow:hidden;flex:0 0 auto}
 .seg button{border:none;border-radius:0;background:var(--panel);padding:3px 10px;font-size:12.5px;
@@ -637,18 +614,7 @@ button.feedbtn[aria-pressed="true"]{background:var(--accent-soft);border-color:v
 #jump .jrow.closed .jt{color:var(--dim)}
 #jump .jhint{margin:6px 2px 0;font-size:11.5px;color:var(--dim)}
 
-/* Detailed card: the conversation tail, one column with a shared scroll, newest at the bottom. */
-.amsgs{flex:1 1 auto;min-height:0;overflow-y:auto;display:flex;flex-direction:column;margin-top:4px}
-.amsgs>.reply{flex:0 0 auto;min-height:auto}
-.amsgs>.reply .txt{flex:0 0 auto;overflow:visible}
-/* The chat scrolls as a whole: the "now" line is shown in full, never capped over the next message. */
-.amsgs>.reply .txt.now{max-height:none}
-.amsgs>.hmsg{border-top:1px dashed var(--line)}
-.amsgs>.hmsg .who{opacity:.85}
-/* Sticks to the bottom edge of the chat while the reader is scrolled up. */
-.amsgs>.tonewest{position:sticky;bottom:6px;align-self:flex-end;margin-top:-28px;flex:0 0 auto;z-index:1;
-  font-size:11px;padding:2px 10px;border-radius:12px;box-shadow:0 1px 4px rgba(0,0,0,.18)}
-:is(#feed-body, .catalog-feed-body) .fearlier{display:block;margin:4px auto 10px;font-size:12px}
+:is(.card-view-body, .catalog-feed-body) .fearlier{display:block;margin:4px auto 10px;font-size:12px}
 #menu button.danger{color:var(--warn)}
 #m-ok.danger{background:var(--warn);border-color:var(--warn);color:#fff}
 /* Agent badge (Claude Code / Codex): a type label, quieter than the tag pills next to it. */

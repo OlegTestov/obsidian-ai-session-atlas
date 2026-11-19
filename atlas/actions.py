@@ -122,7 +122,7 @@ def rename_session(conn: sqlite3.Connection, session_id: str, title: str,
 
     Claude Code: the only place that touches the transcript file — an append of one line in the
     same form Claude Code writes itself (`custom-title`), no rewriting and no truncation.
-    Codex: Codex's own `thread/name/set` (`_rename_in_codex`).
+    Codex: Codex's own `thread/name/set` (`rename_in_codex`).
     """
     title = " ".join((title or "").split())[:MAX_TITLE]
     if not title:
@@ -145,7 +145,7 @@ def rename_session(conn: sqlite3.Connection, session_id: str, title: str,
         if row is None:
             error = msg("rename.no_transcript")
         elif row["agent"] == "codex":
-            written, error = _rename_in_codex(session_id, title)
+            written, error = rename_in_codex(session_id, title)
         elif row["agent"] != "claude":
             error = msg("rename.no_transcript")
         else:
@@ -162,7 +162,7 @@ def rename_session(conn: sqlite3.Connection, session_id: str, title: str,
     return {"title": title, "written_to_transcript": written, "error": error}
 
 
-def _rename_in_codex(session_id: str, title: str) -> tuple[bool, str | None]:
+def rename_in_codex(session_id: str, title: str) -> tuple[bool, str | None]:
     """Codex renames its own thread (`thread/name/set`); its rollout is never written here.
     Any failure keeps the catalog name and says why."""
     from . import codex_app, index  # index imports actions: imported when used

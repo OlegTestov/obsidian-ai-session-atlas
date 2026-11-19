@@ -58,7 +58,7 @@ def second_turn():
 
 def test_turns_steps_and_replies(write_rollout):
     path = write_rollout(first_turn() + second_turn(), thread_id=TID)
-    turns = feed.feed(path, with_events=True)
+    turns = feed.feed_page(path, with_events=True)["turns"]
     assert [t["prompt"] for t in turns] == ["почини сборку", "прогони тесты"]
     assert [t["reply"] for t in turns] == ["Сборка починена", "Тесты зелёные"]
     one, two = turns
@@ -75,7 +75,7 @@ def test_turns_steps_and_replies(write_rollout):
     assert two["reply_len"] == len("Тесты зелёные") and not two["interrupted"]
 
 
-def test_paging_by_time_and_the_conversation_tail(write_rollout):
+def test_paging_by_time(write_rollout):
     path = write_rollout(first_turn() + second_turn(), thread_id=TID)
     page = feed.feed_page(path, turns=1)
     assert [t["prompt"] for t in page["turns"]] == ["прогони тесты"] and page["has_more"]
@@ -83,9 +83,6 @@ def test_paging_by_time_and_the_conversation_tail(write_rollout):
     assert [t["prompt"] for t in older["turns"]] == ["почини сборку"] and not older["has_more"]
     live = feed.feed_page(path, since="2026-09-01T11:00:00.000Z")
     assert [t["prompt"] for t in live["turns"]] == ["прогони тесты"]
-    tail = feed.messages_tail(path, 4)
-    assert [(m["role"], m["text"]) for m in tail] == [("you", "почини сборку"), ("claude", "Сборка починена"),
-                                                      ("you", "прогони тесты"), ("claude", "Тесты зелёные")]
 
 
 def test_prompt_twice_as_event_and_item_counts_once_but_a_real_repeat_stays(write_rollout):
@@ -94,14 +91,14 @@ def test_prompt_twice_as_event_and_item_counts_once_but_a_real_repeat_stays(writ
               "2026-09-01T10:00:02.000Z")
     lines = [cx_meta(TID), cx_user("дальше"), item, cx_agent("шаг 1"),
              cx_user("дальше", ts="2026-09-01T10:01:00.000Z"), cx_agent("шаг 2", ts="2026-09-01T10:01:30.000Z")]
-    turns = feed.feed(write_rollout(lines, thread_id=TID))
+    turns = feed.feed_page(write_rollout(lines, thread_id=TID))["turns"]
     assert [(t["prompt"], t["reply"]) for t in turns] == [("дальше", "шаг 1"), ("дальше", "шаг 2")]
 
 
 def test_aborted_turn_is_interrupted(write_rollout):
     lines = [cx_meta(TID), cx_user("долгая задача"), ev({"type": "task_started"}, "2026-09-01T10:00:03.000Z"),
              ev({"type": "turn_aborted", "reason": "interrupted"}, "2026-09-01T10:00:05.000Z")]
-    [t] = feed.feed(write_rollout(lines, thread_id=TID))
+    [t] = feed.feed_page(write_rollout(lines, thread_id=TID))["turns"]
     assert t["interrupted"] and t["reply"] is None
 
 
@@ -112,7 +109,7 @@ def test_images_and_reasoning_are_never_decoded(write_rollout, monkeypatch):
     big = cx("response_item", {"type": "message", "role": "user",
                                "content": [{"type": "input_image", "image_url": "data:image/png;base64,QUJD"}]})
     reasoning = cx("response_item", {"type": "reasoning", "summary": [], "encrypted_content": "QUJD"})
-    feed.feed(write_rollout([cx_meta(TID), big, reasoning, cx_user("привет"), cx_agent("ок")], thread_id=TID))
+    feed.feed_page(write_rollout([cx_meta(TID), big, reasoning, cx_user("привет"), cx_agent("ок")], thread_id=TID))
     assert not any(b"QUJD" in (s if isinstance(s, bytes) else s.encode()) for s in seen)
 
 
@@ -138,6 +135,6 @@ def test_failed_patch_is_an_error_step_and_not_a_changed_file(write_rollout):
              cx_patch_end({"/Users/u/Code/demo/a.py": {"type": "update", "unified_diff": "+x\n"}},
                           success=False)]
     path = write_rollout(lines, thread_id=TID)
-    [t] = feed.feed(path, with_events=True)
+    [t] = feed.feed_page(path, with_events=True)["turns"]
     assert [e["status"] for e in t["events"]["events"]] == ["error"]
     assert touched.session_files(path)["files"] == []

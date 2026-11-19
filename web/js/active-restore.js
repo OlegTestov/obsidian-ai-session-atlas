@@ -94,7 +94,7 @@ async function restoreAll() {
   // a resume next to it would put two processes on one transcript. Its card offers Move instead.
   let alive = new Set();
   try {
-    const now = await api(AtlasLogic.activeUrl(1, ""));
+    const now = await api("/api/active");
     alive = new Set((now.sessions || []).map(s => s.session_id));
   } catch { /* the server did not answer: each resume below fails on its own */ }
   const elsewhere = [];

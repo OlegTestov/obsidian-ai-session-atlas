@@ -26,6 +26,18 @@ const PAYLOAD = [
   ["obsidian-plugin/scripts", [".zsh"]],
 ];
 
+// The card's terminal renderer: the e2e specs serve exactly this build.
+export function terminalRenderer() {
+  const terminal = esbuild.buildSync({
+    absWorkingDir: ROOT,
+    entryPoints: ["obsidian-plugin/src/term-mirror-browser.js"],
+    bundle: true, minify: true, write: false, platform: "browser", format: "iife",
+    target: "es2020", legalComments: "inline",
+  });
+  return { js: terminal.outputFiles[0].text,
+           css: fs.readFileSync(path.join(ROOT, "node_modules", "@xterm", "xterm", "css", "xterm.css"), "utf8") };
+}
+
 export function payload() {
   const files = {};
   for (const [folder, suffixes] of PAYLOAD) {
@@ -35,6 +47,9 @@ export function payload() {
       files[rel] = fs.readFileSync(path.join(ROOT, folder, name), "utf8");
     }
   }
+  const renderer = terminalRenderer();
+  files["web/js/card-terminal-renderer.js"] = renderer.js;
+  files["web/js/card-terminal-renderer.css"] = renderer.css;
   const sorted = Object.fromEntries(Object.keys(files).sort().map((k) => [k, files[k]]));
   const version = createHash("sha256").update(JSON.stringify(sorted)).digest("hex").slice(0, 16);
   return { version, files: sorted };

@@ -1,10 +1,7 @@
-// Session feed: the Steps and Files views. Turns live in active-feed.js, which also picks the view.
+// Steps and files for the detailed card.
 // Classic script: shares one global scope with the other page files.
-/* exported FEED_VIEWS, renderSteps, renderFiles -- used by other page scripts */
+/* exported renderSteps, renderFiles -- used by other page scripts */
 // Read-only: no view sends anything to the session.
-const FEED_VIEWS = [{ value: "turns", label: i18n("feed.view.turns") },
-                    { value: "steps", label: i18n("feed.view.steps") },
-                    { value: "files", label: i18n("feed.view.files") }];
 const STEP_FILTER_LIST = [["all", i18n("feed.filter.all")], ["error", i18n("feed.filter.error")],
                           ["bash", i18n("feed.filter.bash")], ["edit", i18n("feed.filter.edit")],
                           ["agent", i18n("feed.filter.agent")]];
@@ -12,20 +9,20 @@ const STEP_LABEL = { bash: i18n("feed.step.bash"), edit: i18n("feed.step.edit"),
                      search: i18n("feed.step.search"), agent: i18n("feed.step.agent"), web: i18n("feed.step.web"),
                      skill: i18n("feed.step.skill"), task: i18n("feed.step.task"), mcp: "MCP",
                      text: i18n("feed.step.text"), other: i18n("feed.step.other") };
-let stepFilter = "all";
 
 const clock = iso => (iso ? new Date(iso).toLocaleTimeString(I18N.locale(),
   { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "");
 
-function stepFilterBar(turns) {
+function stepFilterBar(turns, filter, changeFilter) {
   const errors = turns.reduce((n, t) => n + ((t.events && t.events.errors) || 0), 0);
   const bar = el("div", "ffilter");
   STEP_FILTER_LIST.forEach(([value, label]) => {
-    const b = el("button", value === stepFilter ? "on" : null,
+    const b = el("button", value === filter ? "on" : null,
                  value === "error" && errors ? `${label} ${errors}` : label);
+    b.setAttribute("aria-pressed", String(value === filter));
     b.type = "button";
     if (value === "error" && errors) b.classList.add("bad");
-    b.addEventListener("click", () => { stepFilter = value; feedSignature = ""; refreshFeed(false); });
+    b.addEventListener("click", () => changeFilter(value));
     bar.appendChild(b);
   });
   return bar;
@@ -43,7 +40,7 @@ function stepRow(ev, running) {
   return row;
 }
 
-function stepsTurn(t, last, busy) {
+function stepsTurn(t, last, busy, session, filter) {
   const box = el("section", "fturn");
   box.appendChild(el("div", "fwho", i18n("feed.you", { time: fmtShort(t.prompt_at) })));
   const prompt = el("div", "ftxt mine clip", t.prompt || "");
@@ -51,27 +48,27 @@ function stepsTurn(t, last, busy) {
   box.appendChild(prompt);
   const ev = t.events || { events: [], earlier: 0 };
   if (ev.earlier) box.appendChild(el("div", "fwho", i18n("feed.earlier", { n: ev.earlier })));
-  const shown = ev.events.filter(e => AtlasLogic.stepPasses(e, stepFilter));
+  const shown = ev.events.filter(e => AtlasLogic.stepPasses(e, filter));
   const tail = ev.events[ev.events.length - 1];
   shown.forEach(e => box.appendChild(stepRow(e, last && busy && e === tail && e.status === "run")));
-  if (!shown.length) box.appendChild(el("div", "fwho", stepFilter === "all" ? i18n("feed.noSteps") : i18n("feed.noMatchingSteps")));
+  if (!shown.length) box.appendChild(el("div", "fwho", filter === "all" ? i18n("feed.noSteps") : i18n("feed.noMatchingSteps")));
   if (t.reply) {
     const reply = el("div", "fwho", i18n("feed.replied",
-      { agent: agentShort(activeSessions.find(x => x.session_id === feedSid)), time: fmtShort(t.reply_at) }));
+      { agent: agentShort(session), time: fmtShort(t.reply_at) }));
     reply.title = t.reply;
     box.appendChild(reply);
   } else if (t.interrupted) box.appendChild(el("div", "fwho bad", i18n("feed.interrupted")));
   return box;
 }
 
-function renderSteps(turns, s) {
+function renderSteps(turns, s, filter, changeFilter) {
   const busy = !!s && ["busy", "background"].includes(s.activity || s.status);
   if (!turns.length) return [el("p", "empty", i18n("feed.noPrompts"))];
   // With a filter, only turns that have matching steps: otherwise "none" rows bury the matches.
-  const keep = turns.map((t, i) => [t, i]).filter(([t]) => stepFilter === "all"
-    || ((t.events && t.events.events) || []).some(e => AtlasLogic.stepPasses(e, stepFilter)));
-  if (!keep.length) return [stepFilterBar(turns), el("p", "empty", i18n("feed.noMatchInTurns", { n: turns.length }))];
-  return [stepFilterBar(turns), ...keep.map(([t, i]) => stepsTurn(t, i === turns.length - 1, busy))];
+  const keep = turns.map((t, i) => [t, i]).filter(([t]) => filter === "all"
+    || ((t.events && t.events.events) || []).some(e => AtlasLogic.stepPasses(e, filter)));
+  if (!keep.length) return [stepFilterBar(turns, filter, changeFilter), el("p", "empty", i18n("feed.noMatchInTurns", { n: turns.length }))];
+  return [stepFilterBar(turns, filter, changeFilter), ...keep.map(([t, i]) => stepsTurn(t, i === turns.length - 1, busy, s, filter))];
 }
 
 function fileRow(f, cwd, home) {

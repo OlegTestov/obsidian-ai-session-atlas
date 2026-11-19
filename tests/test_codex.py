@@ -1,6 +1,7 @@
 """Codex rollouts: parsing into session facts, indexing next to Claude Code sessions, titles."""
 from __future__ import annotations
 
+import json
 import os
 
 from atlas import codex_parse, db, index, resolve
@@ -183,6 +184,21 @@ def test_title_from_codex_state_then_first_prompt(atlas_env, write_rollout, code
     assert titles[TID] == ("Заголовок из Codex", "recorded")
     assert titles[OTHER] == ("без заголовка", "first-prompt")
     assert titles[third][0] == "Имя от пользователя"
+
+
+def test_name_from_codex_session_index(atlas_env, write_rollout, codex_home):
+    # Codex keeps a name it set on a thread not yet in its state database only in this index.
+    write_rollout(_session(prompt="первый запрос"), thread_id=TID)
+    write_rollout(_session(prompt="второй запрос"), thread_id=OTHER)
+    write_codex_state(codex_home, {TID: ("автозаголовок", None), OTHER: ("другой", "Имя из базы")})
+    with open(os.path.join(codex_home, "session_index.jsonl"), "w", encoding="utf-8") as fh:
+        fh.write(json.dumps({"id": TID, "thread_name": "Старое имя"}) + "\n")
+        fh.write("not json\n")
+        fh.write(json.dumps({"id": TID.upper(), "thread_name": "Имя  из\n списка"}) + "\n")
+        fh.write(json.dumps({"id": OTHER, "thread_name": "Имя из списка"}) + "\n")
+    titles = codex_parse.thread_titles(codex_home)
+    assert titles[TID] == "Имя из списка"                  # the latest line wins over the state title
+    assert titles[OTHER] == "Имя из базы"                  # a name in the state database stays first
 
 
 def test_broken_state_database_is_ignored(atlas_env, write_rollout, codex_home):

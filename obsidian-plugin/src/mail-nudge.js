@@ -4,6 +4,7 @@ import * as os from "os";
 import { Notice } from "obsidian";
 import { DIRECTORY, ROUTE, MailRoutes, tabRoutes } from "./mail-routes";
 import { MailLimits } from "./mail-limits";
+import { shellQuote } from "./agents";
 
 const NAME = /^[a-z0-9][a-z0-9._-]{0,39}$/;
 const FILE = /^\d{13}-[0-9a-f]{12}\.json$/;
@@ -63,8 +64,10 @@ function absolutePath(value) {
   return path.isAbsolute(value) ? path.normalize(value) : null;
 }
 
-function shellQuote(text) {
-  return "'" + text.replace(/'/g, "'\\''") + "'";
+// A folder the user may type: absolute, and neither the home folder nor the filesystem root.
+function validMailRoot(value) {
+  const dir = absolutePath(value);
+  return !!dir && dir !== path.parse(dir).root && dir !== path.normalize(os.homedir());
 }
 
 function mailRoot(settings) {
@@ -115,6 +118,40 @@ class MailNudger {
     }
   }
 
+  async nudge(batch, { root, sessions, routes }) {
+    const matches = sessions.filter(s => s?.session_id === batch.id && s.status === "idle"
+      && (!batch.agent || s.agent === batch.agent));
+    if (matches.length !== 1) return false;
+    const session = matches[0];
+    const tab = await this.plugin.tabForSession(session);
+    if (!tab) return false;
+    const guard = () => !this.closed && root === this.currentRoot()
+      && entries(root).some(box => box.name === batch.name && box.isDirectory())
+      && (batch.agent || readSmall(path.join(root, batch.name, "session"), 128).trim() === batch.id)
+      && entries(batch.inbox).some(file => file.isFile() && file.name === batch.files.at(-1));
+    if (!guard()) return false;
+    const senders = new Set();
+    for (const file of batch.files) {
+      try {
+        const msg = JSON.parse(readSmall(path.join(batch.inbox, file), MESSAGE_BYTES));
+        if (typeof msg.from === "string" && NAME.test(msg.from)) senders.add(msg.from);
+      } catch {
+        // A reader can move the message while this scan is in progress.
+      }
+    }
+    const from = [...senders].slice(0, 12).join(", ");
+    const script = absolutePath((this.plugin.settings.agentMailScript || "").trim());
+    const fallback = script ? ` or run: AGENT_MAIL_HOME=${shellQuote(root)} python3 -- ${shellQuote(script)} inbox ${batch.name}` : "";
+    const count = batch.files.length;
+    const text = `You have ${count} new ${count === 1 ? "message" : "messages"}${from ? " from " + from : ""}. Read with mail_inbox (as: ${batch.name})${fallback}`;
+    if (!await this.plugin.typeNudge({ text, ptyPid: tab.pid, claudePid: session.pid, sessionId: batch.id }, guard)) {
+      return false;
+    }
+    this.sent.set(batch.inbox, { file: batch.files.at(-1), at: this.now() });
+    new Notice(this.plugin.t("mail.sent", { name: routes.get(batch.name)?.title || batch.name }), NOTICE_MS);
+    return true;
+  }
+
   async poll() {
     if (this.closed || this.running) return;
     this.running = true;
@@ -136,7 +173,7 @@ class MailNudger {
       const limited = new Set([...routes.values()].filter(route => route.usage_limit).map(route => route.id));
       this.limits.retain(new Set([...routes.values()].map(route => route.id)));
       try {
-        this.routes.publish(root, routes);
+        this.routes.publish(root, routes, root === mailRoot({}));
       } catch (error) {
         console.error("AI Session Atlas: could not advertise the open mail tabs", error);
       }
@@ -144,40 +181,11 @@ class MailNudger {
         const prior = this.sent.get(batch.inbox);
         return !prior || (batch.files.at(-1) > prior.file && this.now() - prior.at >= COOLDOWN_MS);
       });
+      const nudged = new Set();
       for (const batch of pending) {
         if (this.closed || root !== this.currentRoot()) break;
-        if (limited.has(batch.id)) continue;
-        const matches = sessions.filter(s => s?.session_id === batch.id && s.status === "idle"
-          && (!batch.agent || s.agent === batch.agent));
-        if (matches.length !== 1) continue;
-        const session = matches[0];
-        const tab = await this.plugin.tabForSession(session);
-        if (!tab) continue;
-        const guard = () => !this.closed && root === this.currentRoot()
-          && entries(root).some(box => box.name === batch.name && box.isDirectory())
-          && (batch.agent || readSmall(path.join(root, batch.name, "session"), 128).trim() === batch.id)
-          && entries(batch.inbox).some(file => file.isFile() && file.name === batch.files.at(-1));
-        if (!guard()) continue;
-        const senders = new Set();
-        for (const file of batch.files) {
-          try {
-            const msg = JSON.parse(readSmall(path.join(batch.inbox, file), MESSAGE_BYTES));
-            if (typeof msg.from === "string" && NAME.test(msg.from)) senders.add(msg.from);
-          } catch {
-            // A reader can move the message while this scan is in progress.
-          }
-        }
-        const from = [...senders].slice(0, 12).join(", ");
-        const script = absolutePath((this.plugin.settings.agentMailScript || "").trim());
-        const fallback = script ? ` or run: AGENT_MAIL_HOME=${shellQuote(root)} python3 -- ${shellQuote(script)} inbox ${batch.name}` : "";
-        const count = batch.files.length;
-        const text = `You have ${count} new ${count === 1 ? "message" : "messages"}${from ? " from " + from : ""}. Read with mail_inbox (as: ${batch.name})${fallback}`;
-        if (await this.plugin.sendText(null, {
-          text, ptyPid: tab.pid, claudePid: session.pid, sessionId: batch.id,
-        }, guard)) {
-          this.sent.set(batch.inbox, { file: batch.files.at(-1), at: this.now() });
-          new Notice(this.plugin.t("mail.sent", { name: routes.get(batch.name)?.title || batch.name }), NOTICE_MS);
-        }
+        if (limited.has(batch.id) || nudged.has(batch.id)) continue;
+        if (await this.nudge(batch, { root, sessions, routes })) nudged.add(batch.id);
       }
     } catch (error) {
       console.error("AI Session Atlas: mail poll failed", error);
@@ -187,4 +195,4 @@ class MailNudger {
   }
 }
 
-export { MailNudger, mailRoot, scanMail };
+export { MailNudger, mailRoot, scanMail, validMailRoot };

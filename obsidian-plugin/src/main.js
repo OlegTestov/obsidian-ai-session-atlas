@@ -18,6 +18,7 @@ import { MultiQuestionMethods } from "./multi-answer";
 import { CodexInputMethods } from "./input-codex";
 import { AtlasView } from "./view";
 import { AgentTerminalView } from "./term-view";
+import { openTerminalMirror } from "./term-mirror";
 import { HeldMethods, keepHeldTabs } from "./held";
 import { AgentMethods } from "./agents";
 import { GuardMethods } from "./guard";
@@ -166,13 +167,6 @@ class SessionAtlasPlugin extends PluginData {
 
   atlasOrigin() { return `http://127.0.0.1:${this.atlasPort()}`; }
 
-  /** Re-render open catalog tabs (a page setting changed). */
-  reloadAtlasViews() {
-    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE)) {
-      if (leaf.view && typeof leaf.view.render === "function") leaf.view.render();
-    }
-  }
-
   /** The page's start-server button: the same start as opening the tab. */
   async raiseServer(target) {
     if (this.raisingServer) return;          // a second click does not start a second launch
@@ -253,6 +247,10 @@ class SessionAtlasPlugin extends PluginData {
         .then(reply, () => reply(false));
       return;
     }
+    if (data.type === "open-card-terminal") {
+      openTerminalMirror(this, event, data);
+      return;
+    }
     if (data.type === "send-text") {
       this.sendText(event.source, data);
       return;
@@ -329,26 +327,7 @@ class SessionAtlasPlugin extends PluginData {
       groups: true,                    // tabs can be put into session groups from the page
       unread: this.unreadIds(),        // sessions that finished while you were not looking
       front: this.atlasInFront(target),      // the page is read even when the keyboard focus is outside it
-      cover: this.statusBarCover(target),
     }, this.atlasOrigin());
-  }
-
-  /**
-   * How many pixels of the page's bottom Obsidian's status bar covers (it floats over the bottom-right
-   * corner): the reply field under the feed rises by that much. 0 when hidden or elsewhere.
-   */
-  statusBarCover(target) {
-    try {
-      const bar = document.querySelector(".status-bar");
-      const frame = [...document.querySelectorAll("iframe")].find((f) => f.contentWindow === target);
-      if (!bar || !frame) return 0;
-      const b = bar.getBoundingClientRect();
-      const f = frame.getBoundingClientRect();
-      if (!b.width || !b.height || b.left >= f.right || b.right <= f.left || b.top >= f.bottom || b.bottom <= f.top) return 0;
-      return Math.max(0, Math.round(f.bottom - b.top));
-    } catch {
-      return 0;                                          // no document (tests) or a frame gone meanwhile
-    }
   }
 
   /**
@@ -357,6 +336,7 @@ class SessionAtlasPlugin extends PluginData {
    */
   tabInfo({ leaf, pid, title }) {
     const info = { ptyPid: pid, title };
+    if (leaf.view instanceof AgentTerminalView && leaf.view.pty && !leaf.view.pty.exited) info.inline = true;
     const group = this.tabGroupInfo(leaf);
     if (group) info.group = group;
     const job = leaf.view && leaf.view.backgroundJob;

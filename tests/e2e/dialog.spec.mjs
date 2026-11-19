@@ -104,7 +104,7 @@ test("the dialog sits on the reply field and rises with it as the field grows", 
   // Two tall cards side by side: the chat has room to give.
   const { card } = await openWithDialog(page, lang, await questionDialog(), "am=full&lf=2x1");
   const dialog = card.locator(":scope > .dialog");
-  const chat = card.locator(":scope > .amsgs, :scope > .reply").first();
+  const chat = card.locator(":scope > .card-view-body").first();
   // Order: chat, dialog, reply field; the dialog right on the field.
   const [c0, d0, a0] = [await box(chat), await box(dialog), await box(card.locator(":scope > .answer"))];
   expect(c0.y + c0.height).toBeLessThanOrEqual(d0.y + 0.5);
@@ -164,7 +164,7 @@ test("a dialog taller than the card scrolls inside itself; the reply field stays
       await expectFits(card);
       await expect(card.locator(":scope > .answer textarea")).toBeInViewport();
       // The chat keeps a couple of lines while the card has room for them.
-      const chat = await box(card.locator(":scope > .amsgs, :scope > .reply").first());
+      const chat = await box(card.locator(":scope > .card-view-body").first());
       if (!hash.includes("lf=")) expect(chat.height, hash).toBeGreaterThanOrEqual(30);
       // A tall card does not hand the whole height to the dialog: at most 60 % of it.
       expect((await box(dialog)).height, hash).toBeLessThanOrEqual((await box(card)).height * 0.6 + 1);

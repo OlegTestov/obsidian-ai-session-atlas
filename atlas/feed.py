@@ -1,4 +1,4 @@
-"""Session feed for the side panel: recent turns with your prompt, what the agent did, its reply.
+"""Session turns for paged conversations and step views.
 
 A turn starts with your message (see `active.is_message`). Tool calls collapse into short
 lines: "edited 3 files", "commands: 2". The transcript tail is read with a growing window
@@ -6,6 +6,7 @@ until it holds enough turns; for a live session that is usually the last few hun
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from collections import OrderedDict
@@ -20,11 +21,6 @@ MAX_WINDOW = 16 * 1024 * 1024
 PROMPT_CHARS = 2000
 REPLY_CHARS = 4000
 DETAIL_ITEMS = 6
-HISTORY_PROMPT_CHARS = 1500       # conversation tail in the card: shorter than in the feed
-HISTORY_REPLY_CHARS = 2000
-HISTORY_CACHE_SIZE = 64
-HISTORY_MAX = 30
-_history_cache: OrderedDict[tuple, list] = OrderedDict()
 
 EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit"}
 SEARCH_TOOLS = {"Grep", "Glob"}
@@ -106,7 +102,10 @@ def summarize(calls: list[tuple[str, dict]]) -> list[dict]:
 def _new_turn(rec: dict) -> dict:
     content = (rec.get("message") or {}).get("content")
     prompt = active.prompt_text(content)
-    return {"prompt": prompt[:PROMPT_CHARS], "prompt_len": len(prompt),
+    # `id` is the key clients merge on, so it must not depend on the read window: the record's uuid, else
+    # the time plus a short hash of the text (Codex records carry no uuid).
+    stamp = f"{rec.get('timestamp') or ''}:{hashlib.sha1(prompt.encode('utf-8', 'replace')).hexdigest()[:8]}"
+    return {"id": rec.get("uuid") or stamp, "prompt": prompt[:PROMPT_CHARS], "prompt_len": len(prompt),
             "prompt_at": rec.get("timestamp"), "images": active._images_in(content),
             "calls": [], "reply": None, "reply_at": None, "interrupted": False,
             "collector": stepmod.Collector()}
@@ -139,7 +138,12 @@ def build(records, with_events: bool = False) -> list[dict]:
             elif block.get("type") == "text" and (block.get("text") or "").strip():
                 turn["reply"] = block["text"].strip()
                 turn["reply_at"] = rec.get("timestamp")
+    seen: dict = {}
     for turn in turns:
+        # Only an identical time and text repeats an id; it would make since_id/before_id pick the first turn.
+        n = seen[turn["id"]] = seen.get(turn["id"], 0) + 1
+        if n > 1 and turn["id"]:
+            turn["id"] = f"{turn['id']}#{n}"
         calls = turn.pop("calls")
         collector = turn.pop("collector")
         turn["steps"] = summarize(calls)
@@ -170,28 +174,13 @@ def _window(path: str, size: int, window: int) -> list[dict]:
     return out
 
 
-def feed(path: str | None, turns: int = DEFAULT_TURNS, with_events: bool = False) -> list[dict]:
-    if not path:
-        return []
-    turns = max(1, min(MAX_TURNS, int(turns)))
-    try:
-        size = os.path.getsize(path)
-    except OSError:
-        return []
-    window = FIRST_WINDOW
-    while True:
-        built = build(_window(path, size, window), with_events)
-        # `build` drops the tail of a turn started before the window; the other turns are whole.
-        if len(built) >= turns or window >= size or window >= MAX_WINDOW:
-            return built[-turns:]
-        window *= 4
-
-
 def feed_page(path: str | None, turns: int = DEFAULT_TURNS, with_events: bool = False,
-              before: str | None = None, since: str | None = None) -> dict:
-    """A page of the feed. before: turns earlier than this time (scrolling up); since: all turns
-    from this time on (live end while the feed is open). Keyed by turn time, not index from the end:
-    a live session's end keeps growing, so indexes would shift."""
+              before: str | None = None, since: str | None = None,
+              before_id: str | None = None, since_id: str | None = None) -> dict:
+    """A page of the feed. before/before_id: turns earlier than that time/turn (scrolling up); since/since_id:
+    the turns from that time/turn on, inclusive, because a live turn keeps growing (the open feed's live end).
+    Keyed by turn id or time, not by index from the end: a live session's end keeps growing, so indexes
+    would shift. An id works for turns without a time; one that is gone answers `reset` with the last page."""
     if not path:
         return {"turns": [], "has_more": False}
     turns = max(1, min(MAX_TURNS, int(turns)))
@@ -199,7 +188,7 @@ def feed_page(path: str | None, turns: int = DEFAULT_TURNS, with_events: bool = 
         size = os.path.getsize(path)
     except OSError:
         return {"turns": [], "has_more": False}
-    cap = None if (before or since) else MAX_WINDOW    # scrolling up may reach the very beginning
+    cap = None if (before or since or before_id) else MAX_WINDOW    # scrolling up may reach the very beginning
     window = FIRST_WINDOW
     while True:
         built = build(_window(path, size, window), with_events)
@@ -208,38 +197,24 @@ def feed_page(path: str | None, turns: int = DEFAULT_TURNS, with_events: bool = 
         def at(t: dict) -> str:
             return t.get("prompt_at") or ""
 
-        if since:
+        ids = [t.get("id") for t in built]
+        if since_id:
+            if since_id in ids:
+                return {"turns": built[ids.index(since_id):], "has_more": None}
+            if whole or (cap and window >= cap):
+                return {"turns": built[-turns:], "has_more": len(built) > turns or not whole, "reset": True}
+        elif since:
             # A turn started at `since` is fully in the window if the window starts no later than it.
             if whole or (built and at(built[0]) <= since):
-                return {"turns": [t for t in built if at(t) >= since], "has_more": None}
+                first = next((i for i, t in enumerate(built) if at(t) >= since), len(built))
+                return {"turns": built[first:], "has_more": None}   # a later turn without a time stays
         else:
-            pool = [t for t in built if not before or at(t) < before]
+            if before_id and before_id not in ids:
+                if whole:
+                    return {"turns": [], "has_more": False}
+                window *= 4
+                continue
+            pool = built[:ids.index(before_id)] if before_id else [t for t in built if not before or at(t) < before]
             if len(pool) > turns or whole or (cap and window >= cap):
                 return {"turns": pool[-turns:], "has_more": len(pool) > turns or not whole}
         window *= 4
-
-
-def messages_tail(path: str | None, count: int) -> list[dict]:
-    """Last conversation messages, yours and the agent's, without steps: for the detail card."""
-    if not path or count < 1:
-        return []
-    try:
-        st = os.stat(path)
-    except OSError:
-        return []
-    key = (path, st.st_size, st.st_mtime_ns, count)
-    if key in _history_cache:
-        _history_cache.move_to_end(key)
-        return _history_cache[key]
-    out = []
-    for t in feed(path, turns=min(MAX_TURNS, count // 2 + 2)):
-        out.append({"role": "you", "text": (t["prompt"] or "")[:HISTORY_PROMPT_CHARS],
-                    "len": t["prompt_len"], "at": t["prompt_at"], "images": t["images"]})
-        if t["reply"]:
-            out.append({"role": "claude", "text": active.markdown_tail(t["reply"], HISTORY_REPLY_CHARS),
-                        "len": t["reply_len"], "at": t["reply_at"]})
-    out = out[-count:]
-    _history_cache[key] = out
-    while len(_history_cache) > HISTORY_CACHE_SIZE:
-        _history_cache.popitem(last=False)
-    return out

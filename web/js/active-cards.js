@@ -1,6 +1,6 @@
 // Active: the card, the last reply and the quick reply field.
 // Classic script: shares one global scope with the other page files.
-/* exported activeCard, decisionStrip, FEED_SVG, HIDE_SVG, STOP_SVG -- used by other page scripts */
+/* exported activeCard, decisionStrip, HIDE_SVG, STOP_SVG -- used by other page scripts */
 /** The strip on top of a card whose session waits for a decision: what is asked, when known. */
 function decisionStrip(s) {
   const got = dialogs.get(s.session_id);
@@ -136,7 +136,7 @@ function activeCard(s) {
     iconify(close, CLOSE_SVG, i18n("active.close"));
     const stopFull = stopButton(s, pid, true);
     if (stopFull) head.appendChild(stopFull);
-    head.appendChild(feedButton(s, true));
+    head.appendChild(cardViewPicker(s, pid));
     head.appendChild(hideButton(s, true));
     if (bgJob) head.appendChild(bringBackButton(bgJob, true));
     head.append(canMove(s, pid || heldPid) ? moveButton(s, true) : go, close);
@@ -148,7 +148,7 @@ function activeCard(s) {
     card.append(info);
     const cmdOut = commandOutputBlock(s, pid);
     if (cmdOut) card.appendChild(cmdOut);
-    card.appendChild(messagesBlock(s));
+    card.appendChild(el("div", "card-view-slot"));
     if (dialog) {
       card.classList.add("has-dialog");
       card.appendChild(dialog);
@@ -164,7 +164,6 @@ function activeCard(s) {
   const foot = el("div", "foot");
   const stopCompact = stopButton(s, pid, false);
   if (stopCompact) foot.appendChild(stopCompact);
-  foot.appendChild(feedButton(s, false));
   foot.appendChild(hideButton(s, false));
   if (bgJob) foot.classList.add("bgfoot");              // fitBringBack: icon only when the row does not fit
   foot.append(canMove(s, pid || heldPid) ? moveButton(s, false) : go, close);
@@ -239,51 +238,6 @@ const DELIVERY_TEXT = {
   lost: i18n("active.delivery.lost"),
 };
 
-function promptBlock(p, s) {
-  const box = el("div", "reply mine");
-  const delivery = p.sent ? AtlasLogic.deliveryState(s, p, Date.now()) : null;
-  const who = el("div", "who" + (delivery === "lost" ? " bad" : ""), i18n("active.you", { ago: ago(p.at),
-    state: delivery ? DELIVERY_TEXT[delivery]
-      : p.interrupted ? i18n("active.interrupted") : i18n("active.awaitingReply") }));
-  if (delivery === "lost") who.title = i18n("active.lostHint");
-  box.appendChild(who);
-  const body = el("div", "txt md");
-  if (p.text) body.appendChild(renderMarkdown(p.text));
-  if (p.images) body.appendChild(el("p", "cutmark",
-    i18nN("active.images", p.images)));
-  box.appendChild(body);
-  return box;
-}
-
-// Message count in the detailed card comes from the plugin settings (page address), default 10.
-const CARD_MESSAGES = Math.max(1, Math.min(30,
-  Number(new URLSearchParams(location.search).get("msgs")) || 10));
-
-/** Detailed card: the conversation tail, earlier messages above the last block, one shared scroll. */
-function messagesBlock(s) {
-  const latest = replyBlock(s);
-  const earlier = AtlasLogic.cardHistory(s, unansweredPrompt(s), CARD_MESSAGES);
-  if (!earlier.length) return latest;
-  const box = el("div", "amsgs");
-  box.dataset.sid = s.session_id;
-  earlier.forEach(m => box.appendChild(historyMessage(m, s)));
-  box.appendChild(latest);
-  return box;
-}
-
-function historyMessage(m, s) {
-  const mine = m.role === "you";
-  const box = el("div", "reply hmsg" + (mine ? " mine" : ""));
-  box.appendChild(el("div", "who", mine ? i18n("active.youWas", { ago: ago(m.at) }) : `${agentShort(s)}, ${ago(m.at)}`));
-  const body = el("div", "txt md");
-  if (!mine && m.len > (m.text || "").length) body.appendChild(el("p", "cutmark", i18n("active.replyStartAbove")));
-  if (m.text) body.appendChild(renderMarkdown(m.text));
-  if (mine && m.len > (m.text || "").length) body.appendChild(el("p", "cutmark", i18n("active.promptCut")));
-  if (m.images) body.appendChild(el("p", "cutmark", i18nN("active.images", m.images)));
-  box.appendChild(body);
-  return box;
-}
-
 // Typed in the tab while the agent was working: waits for its turn in the agent's queue.
 function queuedLine(s, box, shown) {
   const queued = AtlasLogic.queuedNotShown(s, shown);
@@ -295,57 +249,9 @@ function queuedLine(s, box, shown) {
   box.appendChild(q);
 }
 
-// Tail of the agent's last reply: a question to you is usually at the end, the start reports the work.
-function replyBlock(s) {
-  const mine = unansweredPrompt(s);
-  if (mine) {
-    const box = promptBlock(mine, s);
-    queuedLine(s, box, mine);           // queued before the agent said anything in this turn
-    if ((s.activity === "busy" || s.status === "busy") && s.progress) {
-      const now = el("div", "txt now md");
-      now.appendChild(renderMarkdown(i18n("active.nowMd", { text: s.progress })));
-      now.title = i18n("active.lastNote", { ago: ago(s.progress_at) });
-      box.appendChild(now);
-    }
-    return box;
-  }
-  const box = el("div", "reply");
-  const who = el("div", "who", `${agentShort(s)}, ${ago(s.reply_at)}`);
-  const full = fullReplies.get(s.session_id);
-  const cut = s.reply_len > (s.reply_tail || "").length;
-  if (cut) {
-    const more = el("button", null, full ? i18n("active.collapse") : i18n("active.showAll", { n: s.reply_len }));
-    more.addEventListener("click", async () => {
-      if (full) { fullReplies.delete(s.session_id); renderActive(); return; }
-      try {
-        const r = await api("/api/active/reply/" + encodeURIComponent(s.session_id));
-        fullReplies.set(s.session_id, r.text || "");
-      } catch (e) { sendState.set(s.session_id, { note: i18n("active.error", { msg: e.message }), cls: "bad" }); }
-      renderActive();
-    });
-    who.appendChild(more);
-  }
-  box.appendChild(who);
-  queuedLine(s, box);
-  if (s.status === "busy" && s.progress) {
-    const now = el("div", "txt now md");
-    const lead = renderMarkdown(i18n("active.nowMd", { text: s.progress }));
-    now.appendChild(lead);
-    now.title = i18n("active.lastNote", { ago: ago(s.progress_at) });
-    box.appendChild(now);
-  }
-  const text = full != null ? full : (s.reply_tail || "");
-  const body = el("div", full != null ? "txt md all" : "txt md");
-  if (cut && full == null) body.appendChild(el("p", "cutmark", i18n("active.replyStartAbove")));
-  body.appendChild(text ? renderMarkdown(text) : document.createTextNode(i18n("active.noTextReply")));
-  box.appendChild(body);
-  return box;
-}
-
 const GO_SVG = [["path", { d: "M14 4h6v6" }], ["path", { d: "M20 4 11 13" }],
                 ["path", { d: "M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" }]];
 const CLOSE_SVG = [["path", { d: "M6 6l12 12M18 6 6 18" }]];
-const FEED_SVG = [["path", { d: "M4 6h16M4 12h16M4 18h10" }]];
 const HIDE_SVG = [["path", { d: "M5 12h14" }]];
 const STOP_SVG = [["rect", { x: 7, y: 7, width: 10, height: 10, rx: 1 }]];
 const SERVER_SVG = [["rect", { x: 2, y: 2, width: 20, height: 8, rx: 2 }], ["rect", { x: 2, y: 14, width: 20, height: 8, rx: 2 }],
@@ -411,11 +317,6 @@ async function attachImages(sid, files) {
   renderThumbs(sid);
 }
 
-/** The session's reply fields: on its card and under its feed. */
-function answerAreas(sid) {
-  return [...document.querySelectorAll(`.answer textarea[data-id="${CSS.escape(sid)}"]`)];
-}
-
 function renderThumbs(sid) {
   document.querySelectorAll(`.thumbs[data-id="${CSS.escape(sid)}"]`).forEach(box => thumbsInto(box, sid));
 }
@@ -438,8 +339,7 @@ function thumbsInto(box, sid) {
   });
 }
 
-/** The reply field. inFeed: the one under the session feed, where no dialog buttons are above it. */
-function answerForm(s, pid, inFeed = false) {
+function answerForm(s, pid) {
   const sid = s.session_id;
   const form = el("div", "answer");
   const thumbs = el("div", "thumbs");
@@ -465,7 +365,7 @@ function answerForm(s, pid, inFeed = false) {
   const note = el("div", "note");
   const blocked = !hostReady ? i18n("active.blockedNoHost")
     : !pid ? i18n("active.blockedNoTab")
-    : s.status === "waiting" ? i18n(inFeed ? "active.blockedDialogFeed" : "active.blockedDialog")
+    : s.status === "waiting" ? i18n("active.blockedDialog")
     : null;
   area.disabled = send.disabled = clip.disabled = !!blocked;
   area.placeholder = blocked || (s.activity === "busy" || s.status === "busy"
@@ -478,8 +378,6 @@ function answerForm(s, pid, inFeed = false) {
   area.addEventListener("input", () => {
     drafts.set(sid, area.value);
     autosize(area);
-    // The card's field and the feed's show one draft.
-    answerAreas(sid).forEach(other => { if (other !== area) { other.value = area.value; autosize(other); } });
   });
   area.addEventListener("paste", e => {
     const files = [...(e.clipboardData ? e.clipboardData.files : [])]
@@ -535,12 +433,12 @@ function answerForm(s, pid, inFeed = false) {
 // While the field has focus the global redraw is skipped, so the send state updates in place.
 function setSendNote(sid, note, cls, clear) {
   sendState.set(sid, { note, cls });
-  answerAreas(sid).forEach(area => {
-    if (clear) { area.value = ""; autosize(area); }
-    const box = area.closest(".answer").querySelector(".note");
-    box.className = "note" + (cls ? " " + cls : "");
-    box.textContent = note;
-  });
+  const area = document.querySelector(`.answer textarea[data-id="${CSS.escape(sid)}"]`);
+  if (!area) return;
+  if (clear) { area.value = ""; autosize(area); }
+  const box = area.closest(".answer").querySelector(".note");
+  box.className = "note" + (cls ? " " + cls : "");
+  box.textContent = note;
 }
 
 // What wakes the session without you, in words, for the label and the tooltip.

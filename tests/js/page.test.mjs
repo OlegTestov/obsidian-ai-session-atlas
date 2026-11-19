@@ -339,10 +339,9 @@ describe("context and limits", () => {
     assert.equal(L.limitsText(lim).reached, false);
   });
   test("active poll: asks Codex itself only with Codex shown", () => {
-    assert.equal(L.activeUrl(1, ["claude"]), "/api/active");
-    assert.equal(L.activeUrl(1, ["claude", "codex"]), "/api/active?codex_usage=1");
-    assert.equal(L.activeUrl(6, ["codex"]), "/api/active?msgs=6&codex_usage=1");
-    assert.equal(L.activeUrl(6, ["claude"]), "/api/active?msgs=6");
+    assert.equal(L.activeUrl(["claude"]), "/api/active");
+    assert.equal(L.activeUrl(["claude", "codex"]), "/api/active?codex_usage=1");
+    assert.equal(L.activeUrl(["codex"]), "/api/active?codex_usage=1");
   });
   test("limits: 90% is alarming", () => {
     assert.equal(L.limitsText({ windows: [{ label: "неделя", used_percentage: 93 }] }).tone, "warn");
@@ -481,15 +480,6 @@ describe("quick jump and frozen order", () => {
                  { kind: "live", id: "b", title: "Session Atlas плагин", sub: "session-atlas" },
                  { kind: "live", id: "d", title: "Новый Session Atlas", sub: "" },
                  { kind: "live", id: "e", title: "Atlas отчёт", sub: "" }];
-  const hist = [{ role: "you", at: "10:00" }, { role: "claude", at: "10:01" }, { role: "you", at: "10:02" },
-                { role: "claude", at: "10:03" }];
-  test("detailed card: history is everything before the last reply, at most N − 1", () => {
-    const at = (r) => r.map((m) => m.at).join();
-    assert.ok(at(L.cardHistory({ history: hist, reply_at: "10:03" }, null, 10)) === "10:00,10:01,10:02"
-      && at(L.cardHistory({ history: hist, reply_at: "10:03" }, null, 3)) === "10:01,10:02"
-      && at(L.cardHistory({ history: hist, reply_at: "10:01" }, { at: "10:02" }, 10)) === "10:00,10:01"
-      && L.cardHistory({ history: hist, reply_at: "10:03" }, null, 1).length === 0);
-  });
   const S = (id) => ({ session_id: id });
   const first = L.applyFrozenOrder([S("a"), S("b"), S("c")], null);
   test("order: the first time sorts fresh and remembers it", () => {
@@ -762,15 +752,6 @@ describe("shared global scope", () => {
     const ctx = loadPage();
     assert.equal(typeof ctx.AtlasLogic, "object");
     assert.equal(typeof ctx.renderMarkdown, "function");
-  });
-
-  test("chat in a card: at the bottom within a few pixels, unknown while hidden", () => {
-    const { nearBottom, stickChats } = loadPage();
-    assert.equal(typeof stickChats, "function");
-    assert.equal(nearBottom(900, 1300, 400), true);          // exactly at the bottom
-    assert.equal(nearBottom(880, 1300, 400), true);          // a few pixels short still counts
-    assert.equal(nearBottom(700, 1300, 400), false);         // scrolled up to read
-    assert.equal(nearBottom(0, 0, 0), null);                 // hidden tab: no layout to judge
   });
 });
 

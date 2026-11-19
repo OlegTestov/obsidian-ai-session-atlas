@@ -56,3 +56,23 @@ test("an unknown reset expires and a successful turn clears the observation", ()
   assert.equal(limits.forTab("c", "claude", ["❯"], DATE + 3600010), null);
   assert.ok(limits.forTab("c", "claude", lines, DATE + 3600020));
 });
+
+test("a limit is superseded once a later prompt with text got an agent reply", () => {
+  const error = "⎿  You've hit your 5-hour limit · resets 5pm";
+  const paused = "⏺ Usage limit reached · continuing automatically at 5pm · esc to cancel";
+  const worked = ["❯ Continue", "⏺ Updated.", "────", "❯ ", "────"];
+  assert.equal(screenLimit([error, ...worked], "claude"), null);
+  assert.equal(screenLimit([paused, ...worked], "claude"), null);
+  assert.equal(screenLimit([error, "────", "❯ ", "────"], "claude").clock.label, "5 PM");
+  assert.equal(screenLimit([paused, "────", "❯ ", "────"], "claude").clock.label, "5 PM");
+  assert.equal(screenLimit([error, "⏺ Note", "────", "❯ ", "────"], "claude").clock.label, "5 PM");
+  assert.equal(screenLimit([error, "❯ Continue", "────"], "claude").clock.label, "5 PM");
+  // A limit that comes back after the new turn is the latest thing again.
+  assert.notEqual(screenLimit([error, ...worked, paused], "claude"), null);
+});
+
+test("Codex: a limit is superseded once a later prompt with text got a reply", () => {
+  const error = "■ You've hit your usage limit. Try again at 5pm.";
+  assert.equal(screenLimit([error, "", "› Ask Codex to do anything", ""], "codex").clock.label, "5 PM");
+  assert.equal(screenLimit([error, "› Continue", "• Updated.", "", "›", ""], "codex"), null);
+});

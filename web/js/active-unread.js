@@ -39,8 +39,6 @@ function readHostUnread(d) {
   const inView = !document.hidden && (hostFront || document.hasFocus());
   inViewSince = inView ? inViewSince || now : 0;
   const read = inView ? [...hostUnread].filter(id => !before.has(id) && readInPlace(id, now)) : [];
-  // The feed open on the right is being read while the page is in view: its session stays seen.
-  if (feedSid && hostUnread.has(feedSid) && inView && !read.includes(feedSid)) read.push(feedSid);
   if (read.length) read.forEach(seeCard);
   else applyUnread();
 }

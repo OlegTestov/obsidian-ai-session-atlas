@@ -105,7 +105,12 @@ def resume_with(conn: sqlite3.Connection, session_id: str, target: str) -> dict:
             except sqlite3.Error:
                 logging.getLogger(__name__).warning("Could not remove conversion link %s", new_id, exc_info=True)
             raise
-    return {"agent": target, "session_id": new_id, "cwd": cwd, "converted": True, "path": path,
-            "source_session_id": session_id, "omitted": omitted, "messages": len(messages),
-            "title": src["title"], "command": actions.resume_command(cwd, new_id, agent=target)}
-
+    result = {"agent": target, "session_id": new_id, "cwd": cwd, "converted": True, "path": path,
+              "source_session_id": session_id, "omitted": omitted, "messages": len(messages),
+              "title": src["title"], "command": actions.resume_command(cwd, new_id, agent=target)}
+    if target == agents.CODEX and src["title"]:
+        # Codex finds the new rollout by its id. Run the native rename outside the indexer's lock.
+        _, warning = actions.rename_in_codex(new_id, src["title"])
+        if warning:
+            result["title_warning"] = warning
+    return result

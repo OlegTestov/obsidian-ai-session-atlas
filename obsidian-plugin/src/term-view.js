@@ -21,6 +21,7 @@ import { normalizeCodexHome } from "./codex-hook";
 
 import { pasteImageEvent } from "./term-paste";
 import { saveClipboardImage } from "./term-image";
+import { nextTail } from "./esc-tail";
 
 const DEFAULT_SHELL = "/bin/zsh";
 const CLOSE_OSC = 7770;                 // scripts/agent-resume-terminal.zsh: "close;<tab id>"
@@ -54,6 +55,8 @@ class AgentTerminalView extends ItemView {
     this.plugin = plugin;
     this.state = {};
     this.emulator = null;
+    this.mirrorSubscribers = new Set();
+    this.escTail = "";
   }
 
   getViewType() { return AGENT_VIEW_TYPE; }
@@ -187,9 +190,20 @@ class AgentTerminalView extends ItemView {
     registry().set(this.ptyKey, { pty, timer: null, held: false });
     this.pty = pty;
     this.term = term;
-    pty.onData((data) => term.write(data));
-    pty.onExit(() => term.write(`\r\n\x1b[2m[${this.plugin.t("terminal.exited")}]\x1b[0m\r\n`));
-    term.onData((data) => pty.write(data));
+    const output = (text) => {
+      term.write(text);
+      this.escTail = nextTail(this.escTail, text);
+      this.mirrorSubscribers.forEach(send => send({ type: "data", text }));
+    };
+    pty.onData(output);
+    pty.onExit(() => {
+      output(`\r\n\x1b[2m[${this.plugin.t("terminal.exited")}]\x1b[0m\r\n`);
+      this.mirrorSubscribers.forEach(send => send({ type: "exit" }));
+    });
+    term.onData((data) => {
+      this.lastInputAt = Date.now();
+      pty.write(data);
+    });
     term.onTitleChange((title) => this.setLiveTitle(title));
     // The tab script asks to close a tab that would show what another tab already shows. Only for
     // this tab's own id and only while it starts: printed text must not close tabs later.
@@ -200,7 +214,10 @@ class AgentTerminalView extends ItemView {
       }
       return true;
     });
-    term.onResize(({ cols, rows }) => pty.resize(cols, rows));
+    term.onResize(({ cols, rows }) => {
+      this.mirrorSubscribers.forEach(send => send({ type: "size", cols, rows }));
+      pty.resize(cols, rows);
+    });
     // Consecutive changes (dragging the window) make one fit: each fit makes the program redraw.
     let settle = null;
     this.resizeObserver = new ResizeObserver(() => {
@@ -237,8 +254,11 @@ class AgentTerminalView extends ItemView {
       if (leaf === this.leaf) term.focus();
     }));
     // Obsidian switches the theme with a class on body (theme-dark / theme-light) and fires css-change.
-    this.registerEvent(this.app.workspace.on("css-change", () => applyTheme(term, document.body)));
-    this.themeObserver = new MutationObserver(() => applyTheme(term, document.body));
+    const followTheme = () => {
+      if (applyTheme(term, document.body)) this.mirrorSubscribers.forEach(send => send({ type: "theme", theme: term.options.theme }));
+    };
+    this.registerEvent(this.app.workspace.on("css-change", followTheme));
+    this.themeObserver = new MutationObserver(followTheme);
     this.themeObserver.observe(document.body, { attributes: true, attributeFilter: ["class"] });
     // A tab loaded in the background at start-up leaves the keyboard where it is.
     if (this.state.focus !== false && !this.plugin.loadingInBackground) term.focus();
@@ -287,12 +307,18 @@ class AgentTerminalView extends ItemView {
     return menu;
   }
 
+  fitMirror(cols, rows) {
+    // A visible terminal tab keeps its size. A hidden tab follows the card.
+    if (this.term && !canFit(this.box)) this.term.resize(cols, rows);
+  }
+
   /**
    * The tab was closed: the process ends. When the plugin itself unloads (Obsidian has already
    * cleared its _loaded), the process is held for the next plugin copy (held.js).
    */
   async onClose() {
     // The header outlives the view (a plugin reload keeps the tab): the mark must not stay on it.
+    this.mirrorSubscribers.forEach(send => send({ type: "exit" }));
     this.setBackgroundJob(null);
     if (this.resizeObserver) this.resizeObserver.disconnect();
     if (this.themeObserver) this.themeObserver.disconnect();

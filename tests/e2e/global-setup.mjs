@@ -9,6 +9,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { IDS, PHRASES, writeCorpus } from "./corpus.mjs";
+import { terminalRenderer } from "../../esbuild.config.mjs";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const PYTHON = process.env.E2E_PYTHON || "python3";
@@ -125,6 +126,22 @@ process.stdin.on("data", d => {
   return { bin, log };
 }
 
+/**
+ * The server runs from a temp tree: `atlas` linked from the repo, `web` copied with the built card renderer
+ * added, as a release build ships it. The repo's web/ is never written, and the real server code decides
+ * whether the nonce'd tags and the static files exist.
+ */
+function appTree(root) {
+  const app = path.join(root, "app");
+  fs.mkdirSync(app);
+  fs.symlinkSync(path.join(REPO, "atlas"), path.join(app, "atlas"), "dir");
+  fs.cpSync(path.join(REPO, "web"), path.join(app, "web"), { recursive: true });
+  const renderer = terminalRenderer();
+  fs.writeFileSync(path.join(app, "web", "js", "card-terminal-renderer.js"), renderer.js);
+  fs.writeFileSync(path.join(app, "web", "js", "card-terminal-renderer.css"), renderer.css);
+  return app;
+}
+
 async function waitFor(fn, what, timeoutMs = 30000) {
   const until = Date.now() + timeoutMs;
   let last;
@@ -140,27 +157,6 @@ async function waitFor(fn, what, timeoutMs = 30000) {
 
 export default async function globalSetup() {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(tempBase(), "atlas-e2e-")));
-  let corpus;
-  try {
-    corpus = writeCorpus(root, PYTHON);
-  } catch (e) {
-    fs.rmSync(root, { recursive: true, force: true });
-    throw e;
-  }
-  const codexStandIn = writeCodexStandIn(root);
-  const env = {
-    ...process.env,
-    ATLAS_CODEX_BIN: codexStandIn.bin,
-    HOME: corpus.home,
-    ATLAS_HOME: corpus.atlasHome,
-    ATLAS_PROJECTS_ROOT: corpus.projects,
-    ATLAS_CLAUDE_SESSIONS: path.join(corpus.claudeDir, "sessions"),
-    CLAUDE_CONFIG_DIR: corpus.claudeDir,
-    ATLAS_CODEX_HOME: corpus.codexHome,
-    CODEX_HOME: corpus.codexHome,
-    PYTHONDONTWRITEBYTECODE: "1",
-    PYTHONPATH: REPO,
-  };
   const cleanup = [];
   const teardown = async () => {
     for (const fn of cleanup.reverse()) {
@@ -170,6 +166,22 @@ export default async function globalSetup() {
   };
 
   try {
+    const corpus = writeCorpus(root, PYTHON);
+    const codexStandIn = writeCodexStandIn(root);
+    const env = {
+      ...process.env,
+      ATLAS_CODEX_BIN: codexStandIn.bin,
+      HOME: corpus.home,
+      ATLAS_HOME: corpus.atlasHome,
+      ATLAS_PROJECTS_ROOT: corpus.projects,
+      ATLAS_CLAUDE_SESSIONS: path.join(corpus.claudeDir, "sessions"),
+      CLAUDE_CONFIG_DIR: corpus.claudeDir,
+      ATLAS_CODEX_HOME: corpus.codexHome,
+      CODEX_HOME: corpus.codexHome,
+      PYTHONDONTWRITEBYTECODE: "1",
+      PYTHONPATH: REPO,
+    };
+    const app = appTree(root);
     // Live sessions: a Claude Code process with its sessions/<pid>.json, a Codex one holding its rollout.
     const claudeProc = await startAgent("claude");
     cleanup.push(() => process.kill(-claudeProc.shell, "SIGKILL"));
@@ -189,7 +201,7 @@ export default async function globalSetup() {
     const port = await freePort();
     const log = fs.openSync(path.join(root, "server.log"), "a");
     const server = spawn(PYTHON, ["-m", "atlas.cli", "serve", "--port", String(port)],
-                         { cwd: REPO, env, stdio: ["ignore", log, log], detached: true });
+                         { cwd: app, env: { ...env, PYTHONPATH: app }, stdio: ["ignore", log, log], detached: true });
     cleanup.push(() => process.kill(-server.pid, "SIGTERM"));
     const base = `http://127.0.0.1:${port}`;
     await waitFor(async () => (await fetch(base + "/health")).ok, "the server");

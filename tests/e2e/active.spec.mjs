@@ -51,7 +51,7 @@ test("a Codex card shows its /goal and the message queued for after the turn", a
   await page.locator("#active-filters .mode button[data-mode=full]").click();   // replies and the queue
   const codex = card(page, ids.codexLive);
   // goals_1.sqlite and queue_1.sqlite of the Codex home (global setup); the turn has no reply yet.
-  await expect(codex.locator(".reply.mine").last()).toContainText("Run the full test suite");
+  await expect(codex.locator(".ftxt.mine").last()).toContainText("Run the full test suite");
   const goal = codex.locator(".tags .pill.acc", { hasText: "goal" });
   await expect(goal).toHaveAttribute("title", new RegExp(PHRASES.codexGoal));
   await expect(codex.locator(".queued")).toContainText(PHRASES.codexQueued);
@@ -84,60 +84,77 @@ test("the Agent filter hides and shows each agent's cards", async ({ page, open 
   await expect(card(page, ids.codexLive)).toBeVisible();
 });
 
-test("the detailed view shows the chat tail of both agents", async ({ page, open, t }) => {
+test("detailed cards default to the conversation of their own agent", async ({ page, open }) => {
   await open("active");
-  const tail = page.waitForRequest(r => /\/api\/active\?msgs=\d+/.test(r.url()));
   await page.locator("#active-filters .mode button[data-mode=full]").click();
-  await tail;
   const codex = card(page, ids.codexLive);
   const claude = card(page, ids.claudeLive);
-  await expect(claude.locator(".amsgs")).toContainText("Does it cap the delay?");
-  await expect(claude.locator(".amsgs .reply").last()).toContainText(PHRASES.claudeLiveReply);
-  await expect(claude.locator(".amsgs .who").last()).toContainText("Claude,");
-  await expect(codex.locator(".amsgs")).toContainText(PHRASES.codexLiveReply);
-  await expect(codex.locator(".amsgs .hmsg:not(.mine) .who").last()).toContainText("Codex,");
-  // The prompt of the running turn has no answer yet: it closes the tail.
-  await expect(codex.locator(".amsgs .reply.mine").last()).toContainText("Run the full test suite");
-  await expect(codex.locator(".amsgs .reply.mine .who").last()).toContainText(t.you);
+  await expect(claude.locator(".card-view-picker")).toHaveValue("turns");
+  await expect(codex.locator(".card-view-picker")).toHaveValue("turns");
+  await expect(claude.locator(".card-view-body")).toContainText("Does it cap the delay?");
+  await expect(claude.locator(".fturn").last()).toContainText(PHRASES.claudeLiveReply);
+  await expect(claude.locator(".fturn .fwho").last()).toContainText("Claude");
+  await expect(codex.locator(".card-view-body")).toContainText(PHRASES.codexLiveReply);
+  await expect(codex.locator(".fturn").first()).toContainText("Codex");
+  await expect(codex.locator(".ftxt.mine").last()).toContainText("Run the full test suite");
+  await expect(codex.locator("option[value=terminal]")).toBeDisabled();
 });
 
-test("the feed of the Codex card: turns, steps with exit codes, files", async ({ page, open, t }) => {
+test("the card switches between conversation, steps and files independently", async ({ page, open, t }) => {
   await open("active");
-  await card(page, ids.codexLive).locator(".feedbtn").click();
-  const feed = page.locator("#feed");
-  await expect(feed).toBeVisible();
-  await expect(page.locator("#feed-title")).toHaveText("Reconcile the ledger with the invoices");
-  const body = page.locator("#feed-body");
+  await page.locator("#active-filters .mode button[data-mode=full]").click();
+  const codex = card(page, ids.codexLive);
+  const claude = card(page, ids.claudeLive);
+  const picker = codex.locator(".card-view-picker");
+  const body = codex.locator(".card-view-body");
+  await expect(picker.locator("option")).toHaveCount(4);
   await expect(body.locator(".fturn")).toHaveCount(2);
-  await expect(body.locator(".fturn").first()).toContainText("Reconcile the ledger with the invoices");
   await expect(body.locator(".fturn").first()).toContainText(PHRASES.codexLiveReply);
-  await expect(body.locator(".fturn").last()).toContainText("Run the full test suite");
-
-  await page.locator("#feed-views button", { hasText: t.steps }).click();
-  await expect(body.locator(".fev").first()).toBeVisible();
+  await picker.selectOption("steps");
   await expect(body.locator(".fev.bash", { hasText: "python3 scripts/reconcile.py" })).not.toHaveClass(/\berr\b/);
   const failed = body.locator(".fev.err", { hasText: "pytest -q" });
   await expect(failed.locator(".ferr")).toContainText(t.exit);
   await expect(failed.locator(".ferr")).toContainText("FAILED tests/test_ledger.py::test_total");
   await expect(body.locator(".fev.edit")).toContainText("reconcile.py");
-
-  await page.locator("#feed-views button", { hasText: t.files }).click();
+  await picker.selectOption("files");
   await expect(body.locator(".ffile")).toHaveCount(1);
   await expect(body.locator(".ffile .fn")).toContainText("reconcile.py");
   await expect(body.locator(".ffile .fdelta")).toHaveText("+2 −1");
+  await expect(claude.locator(".card-view-picker")).toHaveValue("turns");
+  await expect(claude.locator(".card-view-body")).toContainText(PHRASES.claudeLiveReply);
+  await page.locator("#active-filters .mode button[data-mode=compact]").click();
+  await expect(picker).toHaveCount(0);
+  await page.locator("#active-filters .mode button[data-mode=full]").click();
+  await expect(picker).toHaveValue("files");
+  await expect(body.locator(".ffile")).toHaveCount(1);
+  await picker.selectOption("turns");
+  await expect(body.locator(".fturn")).toHaveCount(2);
+  await expect(page.locator("#feed")).toHaveCount(0);
+});
 
-  await page.locator("#feed-close").click();
-  await expect(feed).toBeHidden();
-  // The Claude card has a feed too.
-  await card(page, ids.claudeLive).locator(".feedbtn").click();
-  await page.locator("#feed-views button", { hasText: t.turns }).click();
-  await expect(page.locator("#feed-body .fturn")).toHaveCount(2);
-  await expect(page.locator("#feed-body")).toContainText(PHRASES.claudeLiveReply);
+test("conversation loads earlier pages inside the card and marks shortened replies", async ({ page, open }) => {
+  const prompt = n => ({ prompt: `Prompt ${n} ` + "words ".repeat(30), prompt_at: `2026-11-01T00:${String(n).padStart(2, "0")}:00Z`,
+    steps: [], reply: "The reply ends here", reply_len: 100, reply_at: "2026-11-01T01:00:00Z" });
+  await page.route(`**/api/active/feed/${ids.claudeLive}?*`, route => {
+    const before = new URL(route.request().url()).searchParams.has("before");
+    const turns = before ? [prompt(1)] : Array.from({ length: 20 }, (_, i) => prompt(i + 2));
+    return route.fulfill({ json: { turns, has_more: !before } });
+  });
+  await open("active");
+  await page.locator("#active-filters .mode button[data-mode=full]").click();
+  const body = card(page, ids.claudeLive).locator(".card-view-body");
+  await expect(body.locator(".fturn")).toHaveCount(20);
+  await expect(body.locator(".cutmark")).toHaveCount(20);
+  expect(await body.evaluate(el => el.scrollTop)).toBeGreaterThan(0);
+  await body.evaluate(el => { el.scrollTop = 0; });
+  await expect(body.locator(".fturn")).toHaveCount(21);
+  await expect(body.locator(".fturn").first()).toContainText("Prompt 1 ");
+  expect(await body.evaluate(el => el.scrollTop)).toBeGreaterThan(0);
 });
 
 // Inside Obsidian the page is a frame and the plugin answers with its terminal tabs. A stand-in host
 // page on the same origin does that here, so the cards get their reply fields as they do in Obsidian.
-function hostPage(lang, { mode = "full", background = null, cover = 0 } = {}) {
+function hostPage(lang, { mode = "full", background = null } = {}) {
   const tabs = [Object.assign({ ptyPid: run.pids.claude.shell, title: "claude tab" }, background ? { background } : {}),
                 { ptyPid: run.pids.codex.shell, title: "codex tab", agent: "codex", screen: null }];
   return `<!doctype html><html><head><title>host</title></head><body style="margin:0">
@@ -150,7 +167,7 @@ window.addEventListener("message", e => {
   if (!d || d.source !== "session-atlas") return;
   window.sent.push(d);
   const reply = m => e.source.postMessage(Object.assign({ source: "session-atlas-host" }, m), "*");
-  if (d.type === "list-tabs") reply({ type: "tabs", tabs, health: { ok: true }, cover: ${cover} });
+  if (d.type === "list-tabs") reply({ type: "tabs", tabs, health: { ok: true } });
   if (d.type === "send-text") reply({ type: "sent", nonce: d.nonce, ok: true });
 });
 </script></body></html>`;
@@ -231,8 +248,8 @@ test("a message sent while the agent works is not shown twice", async ({ page, l
   await area.fill(mine);
   await area.press("Enter");
   const ru = lang === "ru";
-  await expect(claude.locator(".reply.mine .who").last()).toContainText(ru ? "в очереди" : "queued");
-  await expect(claude.locator(".reply.mine").last()).toContainText(mine);
+  await expect(claude.locator(".fturn:has(.mine) .fwho:first-child").last()).toContainText(ru ? "в очереди" : "queued");
+  await expect(claude.locator(".ftxt.mine").last()).toContainText(mine);
   await expect(claude.locator(".queued")).toHaveCount(0);                 // only that one waits: no second line
   queue = [queue[0], { text: "and update the README", at: new Date().toISOString() }];
   await expect(claude.locator(".queued")).toHaveCount(1, { timeout: 15000 });
@@ -255,10 +272,11 @@ test("the detailed chat shows a long \"now\" line in full, over nothing", async 
   });
   await open("active");
   await page.locator("#active-filters .mode button[data-mode=full]").click();
-  const now = card(page, ids.codexLive).locator(".amsgs .txt.now");
+  const now = card(page, ids.codexLive).locator(".card-view-body .now");
   await expect(now).toContainText("Found the cause");
   const fit = await now.evaluate(el => ({ sh: el.scrollHeight, ch: el.clientHeight }));
   expect(fit.sh).toBeLessThanOrEqual(fit.ch + 1);
+  await page.unrouteAll({ behavior: "wait" });
 });
 
 // A Claude Code tab that shows a background job (← on an empty prompt, /background): its card says
@@ -309,45 +327,29 @@ for (const mode of ["compact", "full"]) {
   });
 }
 
-// The session feed has the card's reply field under it: in the compact view too, where cards have none.
-for (const mode of ["compact", "full"]) {
-  test(`${mode}: a reply typed under the feed goes to the session's tab; the card's field shows the same draft`,
-    async ({ page, lang }) => {
-      await page.route(`${run.base}/e2e-host.html`, route => route.fulfill({ contentType: "text/html; charset=utf-8",
-        body: hostPage(lang, { mode }) }));
-      await page.route(/\/api\/upload$/, route => route.fulfill({ json: { path: "/tmp/atlas-e2e-shot.png" } }));
-      await page.goto(`${run.base}/e2e-host.html`);
-      const frame = page.frameLocator("#atlas");
-      const claude = frame.locator(`.acard[data-id="${ids.claudeLive}"]`);
-      await claude.locator(".feedbtn").click();
-      const area = frame.locator("#feed-reply .answer textarea");
-      await expect(area).toBeEnabled();
-      await expect(frame.locator("#feed-reply .answer .send")).toBeVisible();
-      await expect(frame.locator("#feed-reply .answer .clip")).toBeVisible();
-      await area.fill("check the feed field");
-      if (process.env.LIVE_SHOT_DIR) await page.screenshot({ path: `${process.env.LIVE_SHOT_DIR}/feed-reply-${mode}-${lang}.png` });
-      if (mode === "full") await expect(claude.locator(".answer textarea")).toHaveValue("check the feed field");
-      else await expect(claude.locator(".answer textarea")).toHaveCount(0);
-      // A picture attached under the feed shows on the card's field too, and goes with the reply.
-      await frame.locator('#feed-reply input[type="file"]').setInputFiles({ name: "shot.png", mimeType: "image/png",
-        buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==", "base64") });
-      await expect(frame.locator("#feed-reply .thumbs img")).toHaveCount(1);
-      if (mode === "full") await expect(claude.locator(".thumbs img")).toHaveCount(1);
-      await area.press("Enter");
-      await expect.poll(() => page.evaluate(() => window.sent.filter(m => m.type === "send-text"))).toEqual([
-        expect.objectContaining({ ptyPid: run.pids.claude.shell, sessionId: ids.claudeLive, text: "check the feed field",
-                                  images: [expect.stringMatching(/\.png$/)] })]);
-      await expect(area).toHaveValue("");
-      if (mode === "full") await expect(claude.locator(".answer textarea")).toHaveValue("");
-      // The feed's field stays the feed's: another card's feed gets that session's field.
-      await frame.locator(`.acard[data-id="${ids.codexLive}"] .feedbtn`).click();
-      await expect(frame.locator("#feed-reply .answer textarea")).toHaveAttribute("data-id", ids.codexLive);
-      await frame.locator("#feed-close").click();
-      await expect(frame.locator("#feed-reply .answer")).toHaveCount(0);
-    });
-}
+test("the reply field and its draft stay on the card when switching views", async ({ page, lang }) => {
+  await page.route(`${run.base}/e2e-host.html`, route =>
+    route.fulfill({ contentType: "text/html; charset=utf-8", body: hostPage(lang) }));
+  await page.route(/\/api\/upload$/, route => route.fulfill({ json: { path: "/tmp/atlas-e2e-shot.png" } }));
+  await page.goto(`${run.base}/e2e-host.html`);
+  const frame = page.frameLocator("#atlas");
+  const claude = frame.locator(`.acard[data-id="${ids.claudeLive}"]`);
+  const area = claude.locator(".answer textarea");
+  await expect(area).toBeEnabled();
+  await area.fill("check the card field");
+  await claude.locator('input[type="file"]').setInputFiles({ name: "shot.png", mimeType: "image/png",
+    buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==", "base64") });
+  await claude.locator(".card-view-picker").selectOption("files");
+  await expect(area).toHaveValue("check the card field");
+  await expect(claude.locator(".thumbs img")).toHaveCount(1);
+  await area.press("Enter");
+  await expect.poll(() => page.evaluate(() => window.sent.filter(m => m.type === "send-text"))).toEqual([
+    expect.objectContaining({ ptyPid: run.pids.claude.shell, sessionId: ids.claudeLive, text: "check the card field",
+                              images: [expect.stringMatching(/\.png$/)] })]);
+  await expect(area).toHaveValue("");
+});
 
-test("the feed's field follows the session: a dialog opens, the field says where to answer", async ({ page, lang }) => {
+test("the card reply field is disabled while the agent shows a dialog", async ({ page, lang }) => {
   let waiting = false;
   await page.route(/\/api\/active(\?|$)/, async route => {
     const res = await route.fetch();
@@ -360,30 +362,87 @@ test("the feed's field follows the session: a dialog opens, the field says where
     await route.fulfill({ response: res, json: data });
   });
   await page.route(`${run.base}/e2e-host.html`, route => route.fulfill({ contentType: "text/html; charset=utf-8",
-    body: hostPage(lang, { mode: "compact" }) }));
+    body: hostPage(lang) }));
   await page.goto(`${run.base}/e2e-host.html`);
   const frame = page.frameLocator("#atlas");
-  await frame.locator(`.acard[data-id="${ids.claudeLive}"] .feedbtn`).click();
-  const area = frame.locator("#feed-reply .answer textarea");
+  const area = frame.locator(`.acard[data-id="${ids.claudeLive}"] .answer textarea`);
   await expect(area).toBeEnabled();
   waiting = true;                                          // the next poll brings the dialog
   await expect(area).toBeDisabled({ timeout: 15000 });
-  await expect(area).toHaveAttribute("placeholder", lang === "ru" ? /на карточке или во вкладке/ : /on the card or in the tab/);
+  await expect(area).toHaveAttribute("placeholder", lang === "ru" ? /диалог/ : /dialog/);
 });
 
-// Obsidian's status bar floats over the bottom-right corner: the feed's field rises above what it covers.
-test("the feed's reply field rises above Obsidian's status bar", async ({ page, lang }) => {
-  await page.route(`${run.base}/e2e-host.html`, route => route.fulfill({ contentType: "text/html; charset=utf-8",
-    body: hostPage(lang, { mode: "compact", cover: 26 }) }));
-  await page.goto(`${run.base}/e2e-host.html`);
-  const frame = page.frameLocator("#atlas");
-  await frame.locator(`.acard[data-id="${ids.claudeLive}"] .feedbtn`).click();
-  const send = frame.locator("#feed-reply .answer .send");
-  await expect(send).toBeVisible();
-  const gap = await page.evaluate(() => {
-    const f = document.querySelector("#atlas");
-    const b = f.contentDocument.querySelector("#feed-reply .answer .send").getBoundingClientRect();
-    return f.getBoundingClientRect().height - b.bottom;
+test("the live conversation refresh fetches from the last turn only and merges without a gap or duplicate", async ({ page, open }) => {
+  // Turn 0 has no time at all; ids are what the page merges on.
+  const mk = (n, reply = "The reply ends here") => ({ id: `t${n}`, prompt: `Prompt ${n}`, steps: [], reply, reply_len: reply.length,
+    prompt_at: n === 0 ? "" : `2026-11-01T00:${String(n).padStart(2, "0")}:00Z`, reply_at: "2026-11-01T01:00:00Z" });
+  let turns = Array.from({ length: 25 }, (_, n) => mk(n));
+  const asked = [];
+  let tick = 0;
+  await page.route(`**/api/active/feed/${ids.claudeLive}?*`, route => {
+    const q = new URL(route.request().url()).searchParams;
+    asked.push(Object.fromEntries(q));
+    const at = id => turns.findIndex(t => t.id === id);
+    if (q.has("since_id")) return route.fulfill({ json: { turns: turns.slice(at(q.get("since_id"))), has_more: null } });
+    if (q.has("before_id")) return route.fulfill({ json: { turns: turns.slice(0, at(q.get("before_id"))).slice(-20), has_more: false } });
+    return route.fulfill({ json: { turns: turns.slice(-20), has_more: true } });
   });
-  expect(gap).toBeGreaterThanOrEqual(26);
+  await page.route(/\/api\/active(\?|$)/, async route => {
+    const res = await route.fetch();
+    const data = await res.json();
+    (data.sessions || []).forEach(s => { if (s.session_id === ids.claudeLive) s.last_activity_at = new Date(Date.now() + ++tick * 1000).toISOString(); });
+    await route.fulfill({ response: res, json: data });
+  });
+  await open("active");
+  await page.locator("#active-filters .mode button[data-mode=full]").click();
+  const body = card(page, ids.claudeLive).locator(".card-view-body");
+  await expect(body.locator(".fturn")).toHaveCount(20);
+  await body.evaluate(el => { el.scrollTop = 0; });
+  await expect(body.locator(".fturn")).toHaveCount(25);
+  // The last turn grows and a new one starts.
+  turns = turns.slice(0, -1).concat([mk(24, "The reply grew"), mk(25)]);
+  await expect(body.locator(".fturn")).toHaveCount(26, { timeout: 20000 });
+  const prompts = await body.locator(".fturn .ftxt.mine").allTextContents();
+  expect(prompts.map(p => p.trim())).toEqual(Array.from({ length: 26 }, (_, n) => `Prompt ${n}`));
+  await expect(body.locator(".fturn").nth(24)).toContainText("The reply grew");
+  const live = asked.filter(q => q.since_id);
+  expect(live.length).toBeGreaterThan(0);
+  expect(live.every(q => q.since_id === "t24" || q.since_id === "t25")).toBe(true);
+  expect(asked.some(q => q.since)).toBe(false);
+});
+
+test("a reset answer reloads the latest page, so older pages can still be loaded", async ({ page, open }) => {
+  const mk = n => ({ id: `t${n}`, prompt: `Prompt ${n}`, steps: [], reply: "Done", reply_len: 4,
+    prompt_at: `2026-11-01T00:${String(n).padStart(2, "0")}:00Z`, reply_at: "2026-11-01T01:00:00Z" });
+  const turns = Array.from({ length: 30 }, (_, n) => mk(n));
+  const asked = [];
+  let tick = 0, lost = false;
+  await page.route(`**/api/active/feed/${ids.claudeLive}?*`, route => {
+    const q = new URL(route.request().url()).searchParams;
+    asked.push({ ...Object.fromEntries(q), at: Date.now() });
+    // The anchor fell out of the server's read window: it answers reset, with nothing to show.
+    if (q.has("since_id")) { lost = true; return route.fulfill({ json: { turns: [], has_more: true, reset: true } }); }
+    if (q.has("before_id")) return route.fulfill({ json: { turns: turns.slice(0, 10), has_more: false } });
+    return route.fulfill({ json: { turns: turns.slice(-20), has_more: true } });
+  });
+  await page.route(/\/api\/active(\?|$)/, async route => {
+    const res = await route.fetch();
+    const data = await res.json();
+    (data.sessions || []).forEach(s => { if (s.session_id === ids.claudeLive) s.last_activity_at = new Date(Date.now() + ++tick * 1000).toISOString(); });
+    await route.fulfill({ response: res, json: data });
+  });
+  await open("active");
+  await page.locator("#active-filters .mode button[data-mode=full]").click();
+  const body = card(page, ids.claudeLive).locator(".card-view-body");
+  await expect(body.locator(".fturn")).toHaveCount(20);
+  await expect.poll(() => lost, { timeout: 20000 }).toBe(true);
+  await expect.poll(() => asked.filter(q => q.since_id).length > 0 && asked.at(-1).since_id === undefined).toBe(true);
+  const reset = asked.findIndex(q => q.since_id);
+  const reload = asked.findIndex((q, i) => i > reset && !q.since_id && !q.before_id);
+  expect(reload).toBeGreaterThan(reset);
+  expect(asked[reload].at - asked[reset].at).toBeLessThan(1500);   // at once, not on a later poll
+  await expect(body.locator(".fturn")).toHaveCount(20);            // not emptied by the reset
+  await body.evaluate(el => { el.scrollTop = 0; });
+  await expect(body.locator(".fturn")).toHaveCount(30);            // the earlier page loads from the first turn shown
+  expect(asked.some(q => q.before_id === "t10")).toBe(true);
 });

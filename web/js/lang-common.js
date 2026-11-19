@@ -12,8 +12,6 @@
       "nav.helpTitle": "How to use this",
       "nav.help": "Help",
       "common.activeFilters": "Active session filters",
-      "common.feed": "Session feed",
-      "common.closeFeed": "Close feed",
       "common.statsPeriod": "Statistics period",
 
       // --- common ---
@@ -300,8 +298,6 @@
       "nav.helpTitle": "Как этим пользоваться",
       "nav.help": "Справка",
       "common.activeFilters": "Фильтры активных сессий",
-      "common.feed": "Лента сессии",
-      "common.closeFeed": "Закрыть ленту",
       "common.statsPeriod": "Период статистики",
 
       // --- common ---

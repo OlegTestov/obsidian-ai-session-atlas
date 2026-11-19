@@ -2,7 +2,7 @@
 // Classic script: shares one global scope with the other page files.
 /* exported hostHealth, activeUpdated, activeLimits, activeCodexLimits, ACTIVE_FILTERS, PERIODS -- used by other page scripts */
 /* exported legacyGroupNames, activeFilter, filterUI, layout, LAYOUT_MAX, LAYOUT_CELLS, layoutUI -- used by other page scripts */
-/* exported fullReplies, SEND_TIMEOUT_MS, MAX_ATTACH, lastSignature, composing -- used by other page scripts */
+/* exported SEND_TIMEOUT_MS, MAX_ATTACH, lastSignature, composing -- used by other page scripts */
 /* exported lastRenderAt, fmtShort, tellTabHost, tabFor, heldFor, hostHeld, hostBackground -- used by other page scripts */
 // --- Active tab --------------------------------------------------------------
 
@@ -12,6 +12,7 @@ let activeSessions = [];
 let activeRaw = [];             // sessions as the server sent them; activeSessions adds tab screens
 let hostScreens = new Map();    // PTY proxy PID → a Codex tab's screen: {state: waiting | busy | idle, queued}
 let hostTabs = new Map();       // PTY proxy PID → terminal tab title
+let hostInlineTabs = new Set(); // PTYs of Atlas-owned terminals that can be shown in a card
 let hostHeld = new Map();       // PTY proxy PID → title: the tab closed with the plugin, the process runs
 let hostBackground = new Map(); // PTY proxy PID → the Claude Code background job the tab shows
 let hostReady = false;          // the plugin answered, so Go to and Close are available
@@ -42,7 +43,6 @@ const LAYOUT_MAX = { compact: 5, full: 4 };
 const LAYOUT_CELLS = 5;
 let layoutUI = null;
 const drafts = new Map();             // session id → unfinished reply: survives a poll
-const fullReplies = new Map();        // session id → the full reply, if expanded
 const sendState = new Map();          // session id → {note, cls}
 const pendingSends = new Map();       // nonce → session id
 const SEND_TIMEOUT_MS = 6000;
@@ -118,6 +118,7 @@ window.addEventListener("message", e => {
   if (!d || d.source !== HOST_SOURCE || d.type !== "tabs" || !Array.isArray(d.tabs)) return;
   hostTabs = new Map(d.tabs.filter(t => t && Number.isInteger(t.ptyPid))
     .map(t => [t.ptyPid, String(t.title || "")]));
+  hostInlineTabs = new Set(d.tabs.filter(t => t?.inline === true && Number.isInteger(t.ptyPid)).map(t => t.ptyPid));
   hostScreens = tabScreens(d.tabs);
   hostBackground = new Map(d.tabs.filter(t => t && Number.isInteger(t.ptyPid) && /^[0-9a-f]{8}$/.test(t.background || ""))
     .map(t => [t.ptyPid, t.background]));
@@ -125,9 +126,6 @@ window.addEventListener("message", e => {
     .map(t => [t.ptyPid, String(t.title || "")]));
   readTabGroups(d);
   readHostUnread(d);
-  // Obsidian's status bar over the page's bottom-right corner: the feed's reply field rises above it.
-  const cover = Number.isFinite(d.cover) ? Math.min(Math.max(d.cover, 0), 80) : 0;
-  document.documentElement.style.setProperty("--host-bottom", cover + "px");
   activeSessions = screenSessions();
   hostReady = true;
   tabsAskedAt = null;
@@ -173,14 +171,17 @@ function heldFor(s) {
 
 registerView("active", { tab: "#view-active", panel: "#active",
                          show: () => { resortActive(); loadActive(); },
-                         hide: () => window.clearTimeout(activeTimer) });
+                         hide: () => {
+                           window.clearTimeout(activeTimer);
+                           for (const panel of cardPanels.values()) panel.suspend?.();
+                           lastSignature = "";
+                         } });
 
 async function loadActive() {
   window.clearTimeout(activeTimer);
   try {
-    // Only detailed cards need the conversation tail: compact ones skip it.
     // Codex's own usage read is asked for only while Codex cards are shown.
-    const data = await api(AtlasLogic.activeUrl(activeMode === "full" ? CARD_MESSAGES : 1, agentPick.active));
+    const data = await api(AtlasLogic.activeUrl(agentPick.active));
     activeRaw = data.sessions || [];
     activeSessions = screenSessions();
     activeLimits = data.limits || null;
@@ -193,7 +194,9 @@ async function loadActive() {
   } catch (e) {
     // If the server is down, cards stay as they are and the banner on top reports it.
     if (!serverDown || !activeSessions.length) {
-      $("#active-grid").replaceChildren(el("p", "empty", i18n("active.error", { msg: e.message })));
+      const grid = $("#active-grid");
+      grid.replaceChildren(el("p", "empty", i18n("active.error", { msg: e.message })));
+      mountCardPanels(grid);
     }
   }
   $("#active-count").textContent = activeSessions.length ? String(activeSessions.length) : "";
@@ -202,6 +205,6 @@ async function loadActive() {
     tellHost("list-tabs", {});
   }
   renderActive();
-  refreshFeed(false);                        // an open feed refreshes together with the cards
+  refreshCardPanels();
   if (state.view === "active") activeTimer = window.setTimeout(loadActive, ACTIVE_POLL_MS);
 }

@@ -18,7 +18,6 @@ function section(title, list, cls) {
 const RERENDER_EVERY_MS = 60000;     // "N min ago" ages, so redraw once a minute anyway
 
 function renderActive(skipKey, force) {
-  renderFeedReply(false);
   const summary = $("#active-summary");
   const grid = $("#active-grid");
   arrangeActive(activeSessions);              // bring back hidden cards that have a new message
@@ -118,12 +117,14 @@ function renderActive(skipKey, force) {
   if (!activeSessions.length || !shown.length) lastSignature = "";
   if (!activeSessions.length) {
     grid.replaceChildren(el("p", "empty", i18n("active.noSessions")), ...closed());
+    mountCardPanels(grid);
     return;
   }
   if (!shown.length) {
     grid.replaceChildren(el("p", "empty", arranged.hiddenCount
       ? i18n("active.allHidden")
       : i18n("active.noMatches")), ...closed());
+    mountCardPanels(grid);
     return;
   }
   // During IME composition the DOM is left alone, otherwise the word breaks. Open command
@@ -132,10 +133,10 @@ function renderActive(skipKey, force) {
   // Plan feedback is being typed: the field is not recreated, otherwise focus and caret are lost.
   if (document.activeElement && document.activeElement.matches("#active-grid .planfb textarea")) return;
   // Nothing changed: leave the DOM alone entirely, so the text scroll does not reset.
-  const signature = JSON.stringify([shown, activeMode, layout, hostReady, [...hostTabs.keys()], [...hostHeld.keys()], [...hostBackground],
+  const signature = JSON.stringify([shown, activeMode, layout, hostReady, [...hostTabs.keys()], [...hostInlineTabs], [...hostHeld.keys()], [...hostBackground],
     [...justSent].map(([sid, sent]) => [sid, AtlasLogic.deliveryState(
-      activeSessions.find(x => x.session_id === sid) || {}, sent, Date.now())]), [...dialogs], [...dialogNotes], [...dialogAnswers.values()], [...stopNotes], [...commandOutputs], feedSid, pinnedCards, hiddenCards,
-    [...fullReplies.keys()], [...attachments].map(([k, v]) => [k, v.length]),
+      activeSessions.find(x => x.session_id === sid) || {}, sent, Date.now())]), [...dialogs], [...dialogNotes], [...dialogAnswers.values()], [...stopNotes], [...commandOutputs], pinnedCards, hiddenCards,
+    [...attachments].map(([k, v]) => [k, v.length]),
     recentClosed, backgroundJobs, [...backgroundNotes], agentPick.active, closedOpen, [...closedNotes], [...planForms], [...freeModes],
     [...planTexts].map(([k, v]) => [k, v.name, (v.text || "").length])]);
   if (!force && signature === lastSignature && Date.now() - lastRenderAt < RERENDER_EVERY_MS) return;
@@ -149,11 +150,6 @@ function renderActive(skipKey, force) {
   const decide = shown.filter(s => act(s) === "waiting");
   const waitingYou = shown.filter(s => !isWorking(s) && act(s) !== "waiting");
   const working = shown.filter(isWorking);
-  // Scroll inside a reply is kept per card: otherwise the text jumps to the top every 5 seconds.
-  const inner = new Map([...grid.querySelectorAll(".acard")].map(c => {
-    const txt = c.querySelector(".reply .txt:not(.now)");
-    return [c.dataset.id, txt ? txt.scrollTop : 0];
-  }));
   // A long dialog scrolls inside itself: the reader's place in it survives the redraw too.
   // A dialog that changed its view (another question tab) starts at the top.
   const dialogTops = new Map([...grid.querySelectorAll(".acard > .dialog")].map(d =>
@@ -168,8 +164,22 @@ function renderActive(skipKey, force) {
   // A dialog blocks the session: such cards get their own section on top, shown only when there are any.
   const sections = [decide.length ? section(i18n("active.sectionDecision"), decide, "decide") : null,
                     section(i18n("active.sectionWaiting"), waitingYou), section(i18n("active.sectionWorking"), working)];
+  const terminalFocus = document.activeElement?.closest(".card-terminal")?.closest(".acard")?.dataset.id;
+  const contentFocus = document.activeElement?.matches(".card-view-body")
+    && document.activeElement.closest(".acard")?.dataset.id;
+  const pickerFocus = document.activeElement?.matches(".card-view-picker")
+    && document.activeElement.closest(".acard")?.dataset.id;
+  // Keep the mounted body and its scroll position across header and status updates.
+  const positions = new Map([...cardPanels].map(([sid, panel]) => [sid, panel.body.scrollTop]));
   grid.replaceChildren(...sections.filter(Boolean), ...closed());
-  stickChats(grid);
+  mountCardPanels(grid, shown);
+  for (const [sid, top] of positions) {
+    const panel = cardPanels.get(sid);
+    if (panel && state.view === "active") panel.body.scrollTop = top;
+  }
+  if (terminalFocus) cardPanels.get(terminalFocus)?.focus?.();
+  if (contentFocus) cardPanels.get(contentFocus)?.body.focus({ preventScroll: true });
+  if (pickerFocus) grid.querySelector(`.acard[data-id="${CSS.escape(pickerFocus)}"] .card-view-picker`)?.focus({ preventScroll: true });
   fitBringBack(grid);
   watchBringBack(grid);
   grid.scrollTop = scroll;
@@ -182,8 +192,6 @@ function renderActive(skipKey, force) {
     }
   }
   grid.querySelectorAll(".acard").forEach(c => {
-    const txt = c.querySelector(".reply .txt:not(.now)");
-    if (txt && inner.get(c.dataset.id)) txt.scrollTop = inner.get(c.dataset.id);
     const dialog = c.querySelector(":scope > .dialog");
     const was = dialogTops.get(c.dataset.id);
     if (dialog && was && was.top && was.view === (dialog.dataset.view || "")) dialog.scrollTop = was.top;

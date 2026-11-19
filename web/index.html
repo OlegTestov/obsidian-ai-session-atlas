@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AI Session Atlas</title>
 <link rel="stylesheet" nonce="__NONCE__" href="/static/atlas.css">
+__TERMINAL_ASSETS__
 <link rel="stylesheet" nonce="__NONCE__" href="/static/stats.css">
 <link rel="stylesheet" nonce="__NONCE__" href="/static/folder-pick.css">
 </head>
@@ -23,12 +24,6 @@
     data-i18n-aria-label="common.activeFilters"></div>
   <div id="restore-banner" class="hidden" role="status"></div>
   <div id="active-grid" aria-live="polite"></div>
-  <aside id="feed" class="hidden" aria-label="Session feed" data-i18n-aria-label="common.feed">
-    <div class="fhead"><b id="feed-title"></b><span id="feed-views"></span><button class="ghost" id="feed-close" type="button"
-      aria-label="Close feed" data-i18n-aria-label="common.closeFeed">×</button></div>
-    <div id="feed-body"></div>
-    <div id="feed-reply"></div>
-  </aside>
 </section>
 <section id="stats" class="hidden" role="tabpanel" aria-labelledby="view-stats">
   <div id="stats-bar" role="toolbar" aria-label="Statistics period" data-i18n-aria-label="common.statsPeriod"></div>
@@ -174,13 +169,13 @@
 <script nonce="__NONCE__" src="/static/active-new.js"></script>
 <script nonce="__NONCE__" src="/static/active-feed-views.js"></script>
 <script nonce="__NONCE__" src="/static/active-feed.js"></script>
+<script nonce="__NONCE__" src="/static/card-terminal.js"></script>
 <script nonce="__NONCE__" src="/static/active-compose.js"></script>
 <script nonce="__NONCE__" src="/static/active-order.js"></script>
 <script nonce="__NONCE__" src="/static/active-restore.js"></script>
 <script nonce="__NONCE__" src="/static/active-closed.js"></script>
 <script nonce="__NONCE__" src="/static/active-filters.js"></script>
 <script nonce="__NONCE__" src="/static/active-cards.js"></script>
-<script nonce="__NONCE__" src="/static/active-stick.js"></script>
 <script nonce="__NONCE__" src="/static/active.js"></script>
 <script nonce="__NONCE__" src="/static/active-keys.js"></script>
 <script nonce="__NONCE__" src="/static/active-unread.js"></script>

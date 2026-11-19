@@ -232,7 +232,6 @@ function buildFilters() {
     b.dataset.mode = value;
     b.addEventListener("click", () => {
       activeMode = value; writeHash(); refreshLayoutButton(); renderActive(null, true);
-      if (value === "full") loadActive();      // the detailed view needs the conversation tail
     });
     mode.appendChild(b);
   });

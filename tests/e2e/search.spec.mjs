@@ -29,6 +29,8 @@ async function pickAgents(page, want) {
 
 /** Every row's badge matches the agent the server has for that session. */
 async function expectBadges(page, only) {
+  // An index refresh can redraw the list: check the settled list as a whole before row by row.
+  if (only) await expect(list(page).locator(`.agent-badge:not(.${only})`)).toHaveCount(0);
   const rows = await list(page).all();
   expect(rows.length).toBeGreaterThan(0);
   const all = await api("/api/sessions?limit=200");

@@ -42,6 +42,7 @@ import { GroupMethods } from "./groups";
 import { GroupStripMethods } from "./groups-strip";
 import { AtlasSettingTab, DEFAULT_SETTINGS } from "./settings";
 import { MailNudger } from "./mail-nudge";
+import { MailLaunchMethods } from "./mail-launch";
 
 /** A port written into the dev marker (a live test Obsidian next to the test vault), else none. */
 function markerPort(file) {
@@ -58,6 +59,12 @@ class SessionAtlasPlugin extends PluginData {
     const saved = (await this.loadData()) || {};
     const firstRun = !Object.keys(saved).length;       // no data.json yet: a fresh install
     this.settings = Object.assign({}, DEFAULT_SETTINGS, saved);
+    // Up to 2.12 mail wake was off by default and that default got saved: turned on once with 2.13.
+    if (!saved.mailOnByDefault) {
+      this.settings.wakeOnMail = true;
+      this.settings.mailOnByDefault = true;
+      if (!firstRun) await this.saveData(this.settings);
+    }
     this.loadedAt = Date.now();
     // Before the tabs come back: a process an earlier Obsidian left behind would hold their sessions.
     this.endOrphanTabs();
@@ -89,7 +96,9 @@ class SessionAtlasPlugin extends PluginData {
     // Held processes whose tabs are still in the layout wait for them; the rest are offered back.
     this.app.workspace.onLayoutReady(() => { keepHeldTabs(this.app.workspace); this.offerHeldTabs(); });
     // Every agent comes back without its tab having to be shown first.
-    this.app.workspace.onLayoutReady(() => { this.loadAgentTabs().catch(() => {}); });
+    // The Agent Mail flags first: a background tab started before them would run without mail.
+    this.app.workspace.onLayoutReady(() => this.writeMailArgs()
+      .then(() => this.loadAgentTabsWhenRestored()).catch(() => {}));
     // Not only the catalog tab needs the server: notifications poll it constantly, and Obsidian
     // does not create a background tab until you switch to it.
     this.app.workspace.onLayoutReady(() => this.ensureServer().catch(() => {}));
@@ -379,7 +388,7 @@ for (const methods of [TerminalMethods, InputMethods, MultiQuestionMethods, Code
                        AgentMethods, GuardMethods, BackgroundTabMethods, ExplorerMethods, RuntimeMethods,
                        StatusLineMethods, ReloadMethods, StartupMethods, OpenPathMethods, GroupMethods,
                        GroupStripMethods, WhatsNewMethods, FirstRunMethods, GroupNavigationMethods, GroupDragMethods,
-                       CodexHookMethods]) {
+                       CodexHookMethods, MailLaunchMethods]) {
   for (const name of Object.getOwnPropertyNames(methods.prototype)) {
     if (name === "constructor") continue;
     Object.defineProperty(SessionAtlasPlugin.prototype, name,

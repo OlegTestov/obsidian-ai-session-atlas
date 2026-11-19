@@ -367,12 +367,32 @@ def peers():
     return sorted(rows, key=lambda row: row["name"])
 
 
+NO_REPLY = "(no reply needed)"
+REPLY_HINT = "The sender can't see your screen: answer via mail_send (to: {addr}{thread})."
+REPLY_RULE = (
+    "After reading a letter, answer its sender with mail_send at the address the letter names, "
+    f"unless the letter ends with {NO_REPLY!r}. End a letter with {NO_REPLY!r} when you need no answer."
+)
+
+
+def _reply_addr(m):
+    reply = m.get("reply_to")
+    return reply if isinstance(reply, str) and NAME_RE.match(reply) else m["from"]
+
+
 def _sender(m):
-    reply, title = m.get("reply_to"), m.get("from_title")
-    if not (isinstance(reply, str) and NAME_RE.match(reply)):
+    title = m.get("from_title")
+    if _reply_addr(m) == m["from"] or not isinstance(title, str):
         return m["from"]
-    shown = " ".join(title.split())[:100] if isinstance(title, str) else ""
-    return f"{m['from']} (tab {shown!r}; reply with to: {reply})" if shown else f"{m['from']} (reply with to: {reply})"
+    shown = " ".join(title.split())[:100]
+    return f"{m['from']} (tab {shown!r})" if shown else m["from"]
+
+
+def _hint(m):
+    if m["text"].rstrip().lower().endswith(NO_REPLY):
+        return ""
+    thread = f", thread: {m['thread']}" if m.get("thread") else ""
+    return "\n" + REPLY_HINT.format(addr=_reply_addr(m), thread=thread)
 
 
 def _fmt(msgs):
@@ -382,6 +402,7 @@ def _fmt(msgs):
         f"[{m['at_text']}] from {_sender(m)}"
         + (f" (thread {m['thread']})" if m.get("thread") else "")
         + f" id={m['id']}:\n{m['text']}"
+        + _hint(m)
         for m in msgs
     )
 
@@ -393,7 +414,8 @@ TOOLS = [
         "description": "Send mail to another local agent. If the user gives a terminal tab title, "
         "copy the title into to_title (including non-English text). Use to only for a known mailbox name. "
         "For multiple matching tabs, ask the user which session to use; never guess. "
-        "To answer a letter that says 'reply with to: <mailbox>', send to that mailbox (to), not to the sender name. "
+        "To answer a letter, send to the address its reply line names (to), not to the sender name. "
+        f"End a letter with {NO_REPLY!r} when you need no answer. "
         "If a reply is delayed, call mail_peers to check the recipient's usage limit before resending.",
         "inputSchema": {
             "type": "object",
@@ -418,6 +440,7 @@ TOOLS = [
     {
         "name": "mail_inbox",
         "description": "Read and mark as read new messages for this agent. "
+        f"The sender can't see your screen: answer each letter with mail_send unless it ends with {NO_REPLY!r}. "
         "Set wait (seconds, max 50) to wait for a message if none is there yet.",
         "inputSchema": {
             "type": "object",
@@ -495,6 +518,7 @@ def serve():
                 "protocolVersion": params.get("protocolVersion", "2025-06-18"),
                 "capabilities": {"tools": {}},
                 "serverInfo": {"name": "agent-mail", "version": "0.1.0"},
+                "instructions": REPLY_RULE,
             }
         elif method == "tools/list":
             res = {"tools": TOOLS}

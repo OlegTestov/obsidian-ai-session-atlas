@@ -278,12 +278,12 @@ many sessions the first index can take a few minutes.
 Claude Code and Codex can write to each other by the title of an open Atlas terminal tab.
 
 1. In **Settings → AI Session Atlas → Agents**, enable **Wake agents on new mail**.
-2. Under **Connect Agent Mail**, copy each setup command and run it in a regular terminal. These commands use the MCP server bundled with Atlas and the same local mail folder. If you already use a compatible Agent Mail server, keep it and make sure both clients use that folder.
+2. Under **Connect Agent Mail**, copy each setup command and run it in a regular terminal. These commands use the MCP server bundled with Atlas and the same local mail folder. Reply addresses, usage limits and the reply rule need this bundled server: an older standalone Agent Mail script lacks them, so switch both clients to these commands.
 3. Resume the agent sessions so they load the MCP. Then ask one agent to “Write to the session titled ‘Review the report’ and ask it to check the draft.”
 
 Only one matching title is required to send. If several open sessions have that title, choose the recipient before sending. An open recipient tab is prompted once it is ready for input. Each agent's tool approval settings still apply.
 
-A letter sent from an Atlas tab carries a reply address for that tab. The recipient's answer goes back to that session and wakes it.
+A letter sent from an Atlas tab carries a reply address for that tab. The recipient's answer goes back to that session and wakes it. Each letter in the inbox ends with the address to answer, and agents answer unless the letter ends with "(no reply needed)".
 
 If a tab reports a usage limit, Agent Mail shows the reset time when available. If the limit appears after sending, check the recipient with `mail_peers`. The letter stays queued.
 

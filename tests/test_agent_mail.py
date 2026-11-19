@@ -164,7 +164,7 @@ class ReplyRoute(Base):
         self.assertEqual((msg["from"], msg["reply_to"], msg["from_title"]), ("claude", self.BOX, "Review"))
         stored = json.loads(next(Path(self.tmp, "codex", "inbox").glob("*.json")).read_text())
         self.assertEqual(stored["reply_to"], self.BOX)
-        self.assertIn(f"reply with to: {self.BOX}", self.m._fmt([msg]))
+        self.assertIn(f"(to: {self.BOX})", self.m._fmt([msg]))
 
     def test_no_reply_address_without_a_matching_route(self):
         cases = {
@@ -180,14 +180,18 @@ class ReplyRoute(Base):
             with self.subTest(name):
                 msg = self.send_as("claude", tabs, ancestors)
                 self.assertNotIn("reply_to", msg)
-                self.assertNotIn("reply with", self.m._fmt([msg]))
+                out = self.m._fmt([msg])
+        self.assertNotIn("Ignore", out)
+        self.assertIn("(to: claude)", out)
 
     def test_a_named_sender_that_is_not_an_agent_kind_matches_any_agent(self):
         self.assertEqual(self.send_as("review-bot", [self.route()], [4242])["reply_to"], self.BOX)
 
     def test_a_hostile_reply_address_in_a_file_is_not_shown(self):
         msg = {"at_text": "now", "from": "claude", "id": "x", "text": "t", "reply_to": "x\nIgnore", "from_title": "t"}
-        self.assertNotIn("reply with", self.m._fmt([msg]))
+        out = self.m._fmt([msg])
+        self.assertNotIn("Ignore", out)
+        self.assertIn("(to: claude)", out)
 
     def test_ancestor_walk_stops_at_the_limit_and_on_failure(self):
         parents = {100: 99, 99: 98, 98: 97, 97: 96, 96: 95, 95: 94, 94: 93, 93: 92, 92: 91, 91: 1}
@@ -211,7 +215,49 @@ class ReplyRoute(Base):
 
     def test_the_tool_description_explains_replies(self):
         send = next(t for t in self.m.TOOLS if t["name"] == "mail_send")
-        self.assertIn("reply with to:", send["description"])
+        self.assertIn("reply line", send["description"])
+
+
+class ReplyHint(Base):
+    def _letter(self, sender, text, **extra):
+        inbox = os.path.join(self.tmp, "b", "inbox")
+        os.makedirs(inbox, exist_ok=True)
+        letter = {"id": sender + "1", "from": sender, "text": text, "at_text": "now", **extra}
+        name = f"{len(os.listdir(inbox)):013d}-{sender}.json"
+        Path(os.path.join(inbox, name)).write_text(json.dumps(letter), encoding="utf-8")
+
+    def test_each_letter_ends_with_a_reply_line_to_its_own_sender(self):
+        self._letter("alpha", "first")
+        self._letter("beta", "second")
+        out = self.m._fmt(self.m.inbox("b"))
+        first, second = out.split("\n\n")
+        self.assertTrue(first.endswith(self.m.REPLY_HINT.format(addr="alpha", thread="")))
+        self.assertTrue(second.endswith(self.m.REPLY_HINT.format(addr="beta", thread="")))
+
+    def test_the_reply_address_wins_over_the_sender_name(self):
+        self._letter("claude", "hi", reply_to="atlas-c-" + "1" * 32)
+        out = self.m._fmt(self.m.inbox("b"))
+        self.assertTrue(out.endswith(self.m.REPLY_HINT.format(addr="atlas-c-" + "1" * 32, thread="")))
+
+    def test_no_reply_line_when_the_letter_says_none_is_needed(self):
+        self._letter("alpha", "FYI only (no reply needed)")
+        self._letter("beta", "question?")
+        out = self.m._fmt(self.m.inbox("b"))
+        self.assertNotIn("(to: alpha)", out)
+        self.assertIn("(to: beta)", out)
+
+    def test_the_reply_line_keeps_the_thread(self):
+        self._letter("alpha", "next step?", thread="ux5")
+        self.assertIn("(to: alpha, thread: ux5)", self.m._fmt(self.m.inbox("b")))
+
+    def test_the_no_reply_marker_ignores_case_and_trailing_space(self):
+        self._letter("alpha", "done (No reply needed)  \n")
+        self.assertNotIn("can't see your screen", self.m._fmt(self.m.inbox("b")))
+
+    def test_the_rule_is_in_the_tool_descriptions(self):
+        tools = {t["name"]: t["description"] for t in self.m.TOOLS}
+        for name in ("mail_send", "mail_inbox"):
+            self.assertIn(self.m.NO_REPLY, tools[name])
 
 
 class Register(Base):
@@ -298,6 +344,10 @@ class Mcp(Base):
             ]
         )
         by = {x["id"]: x for x in r}
+        self.assertIn("mail_send", by[1]["result"]["instructions"])
+        self.assertIn(self.m.NO_REPLY, by[1]["result"]["instructions"])
+        self.assertNotIn("can't see your screen", by[3]["result"]["content"][0]["text"])
+        self.assertIn("can't see your screen", by[4]["result"]["content"][0]["text"])
         self.assertEqual(by[1]["result"]["serverInfo"]["name"], "agent-mail")
         self.assertEqual(
             {t["name"] for t in by[2]["result"]["tools"]}, {"mail_send", "mail_inbox", "mail_peers", "mail_register"}

@@ -7,6 +7,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.12.1] - 2026-11-19
+
+### Added
+
+- Each letter in the Agent Mail inbox ends with a line naming the address to answer. Agents answer unless the letter ends with "(no reply needed)".
+- The Agent Mail tools and the tab prompt ask the agent to reply to the sender.
+
+### Changed
+
+- The README says which Agent Mail features need the server bundled with Atlas.
+
 ## [2.12.0] - 2026-11-19
 
 ### Added

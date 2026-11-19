@@ -143,7 +143,7 @@ class MailNudger {
     const script = absolutePath((this.plugin.settings.agentMailScript || "").trim());
     const fallback = script ? ` or run: AGENT_MAIL_HOME=${shellQuote(root)} python3 -- ${shellQuote(script)} inbox ${batch.name}` : "";
     const count = batch.files.length;
-    const text = `You have ${count} new ${count === 1 ? "message" : "messages"}${from ? " from " + from : ""}. Read with mail_inbox (as: ${batch.name})${fallback}`;
+    const text = `You have ${count} new ${count === 1 ? "message" : "messages"}${from ? " from " + from : ""}. Read with mail_inbox (as: ${batch.name})${fallback}, then reply to the sender.`;
     if (!await this.plugin.typeNudge({ text, ptyPid: tab.pid, claudePid: session.pid, sessionId: batch.id }, guard)) {
       return false;
     }

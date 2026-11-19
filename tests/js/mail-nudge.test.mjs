@@ -190,7 +190,7 @@ function rig(t, { tabless = false } = {}) {
   return { root, claude, codex, active, plugin, clock, nudger, box, mail, poll: () => nudger.poll() };
 }
 
-const LINE = (n, from, name) => PASTE_START + `You have ${n} new ${n === 1 ? "message" : "messages"}${from ? " from " + from : ""}. Read with mail_inbox (as: ${name})` + PASTE_END + "\r";
+const LINE = (n, from, name) => PASTE_START + `You have ${n} new ${n === 1 ? "message" : "messages"}${from ? " from " + from : ""}. Read with mail_inbox (as: ${name}), then reply to the sender.` + PASTE_END + "\r";
 
 test("the notice names the mailbox and stays 4 s", async t => {
   const r = rig(t);
@@ -523,7 +523,8 @@ test("a custom mail folder is created only inside an existing folder", async t =
 test("the default mail folder is still created for the routes", async t => {
   const r = rig(t);
   await openCodexRoute(r);
-  const home = path.join(r.root, "default-home");
+  // Its parent does not exist yet: only the default folder may be created with its parents.
+  const home = path.join(r.root, "not-yet", "default-home");
   const before = process.env.AGENT_MAIL_HOME;
   process.env.AGENT_MAIL_HOME = home;
   t.after(() => { if (before === undefined) delete process.env.AGENT_MAIL_HOME; else process.env.AGENT_MAIL_HOME = before; });

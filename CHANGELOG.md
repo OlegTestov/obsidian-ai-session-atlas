@@ -7,6 +7,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.13.0] - 2026-11-19
+
+### Added
+
+- Agent Mail works with no setup: every Claude Code or Codex session started in an Atlas agent tab gets the bundled mail server, and its mail tools run without approval prompts. Your own agent config files stay untouched.
+
+### Changed
+
+- Waking agents on new mail is on by default, and it is turned on once for earlier installs. You can still switch it off in the settings.
+- The Connect Agent Mail commands are gone from the settings.
+
+### Fixed
+
+- After the plugin updates or reloads, background agent tabs load by themselves again. Before, they stayed unloaded until clicked, and Agent Mail could not reach them.
+
 ## [2.12.2] - 2026-11-19
 
 ### Fixed

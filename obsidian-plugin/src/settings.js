@@ -3,12 +3,11 @@ import { Notice, PluginSettingTab, Setting } from "obsidian";
 import { renderStatus, catalogDefinitions, aiDefinitions, advancedDefinitions, codexHookDefinition } from "./settings-server";
 import { NOTICE_HOLDS, DEFAULT_NOTICE_HOLD } from "./notify";
 import { DEFAULT_FONT_SIZE } from "./constants";
-import { mailSetupDefinition } from "./mail-setup";
 import { validMailRoot } from "./mail-nudge";
 import { normalizeCodexHome } from "./codex-hook";
 
 const DEFAULT_SETTINGS = { notify: true, systemNotify: true, explorerClicks: false, language: "auto",
-                           wakeOnMail: false, agentMailRoot: "", agentMailScript: "", codexHome: "", agents: {}, agentArgs: { claude: "", codex: "" }, terminalFontSize: DEFAULT_FONT_SIZE,
+                           wakeOnMail: true, agentMailRoot: "", agentMailScript: "", codexHome: "", agents: {}, agentArgs: { claude: "", codex: "" }, terminalFontSize: DEFAULT_FONT_SIZE,
                            noticeHold: DEFAULT_NOTICE_HOLD, loadAgentTabs: true, showWhatsNew: true };
 
 class AtlasSettingTab extends PluginSettingTab {
@@ -24,11 +23,12 @@ class AtlasSettingTab extends PluginSettingTab {
     else this.display();
   }
 
-  toggleDefinition(key, name, desc) {
+  toggleDefinition(key, name, desc, after) {
     return { name: this.plugin.t(name), desc: this.plugin.t(desc), render: setting => setting.addToggle(toggle =>
       toggle.setValue(!!this.plugin.settings[key]).onChange(async value => {
         this.plugin.settings[key] = value;
         await this.save();
+        if (after) after();
       })) };
   }
 
@@ -79,8 +79,7 @@ class AtlasSettingTab extends PluginSettingTab {
             this.refresh();
           });
         })),
-        this.toggleDefinition("wakeOnMail", "mail.wake", "mail.wake.desc"),
-        mailSetupDefinition(this),
+        this.toggleDefinition("wakeOnMail", "mail.wake", "mail.wake.desc", () => plugin.writeMailArgs()),
         definition("mail.root", "mail.root.desc", setting => setting.addText(text => {
           text.setPlaceholder("~/.agent-mail").setValue(plugin.settings.agentMailRoot);
           text.inputEl.addEventListener("blur", async () => {
@@ -93,6 +92,7 @@ class AtlasSettingTab extends PluginSettingTab {
             }
             plugin.settings.agentMailRoot = value;
             await this.save();
+            plugin.writeMailArgs();
           });
         })),
         definition("mail.script", "mail.script.desc", setting => setting.addText(text =>

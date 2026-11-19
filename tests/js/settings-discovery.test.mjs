@@ -12,7 +12,7 @@ function context(){
  const plugin={settings:JSON.parse(JSON.stringify(DEFAULT_SETTINGS)),t:k=>k,
   readServerConfig:()=>config,writeServerConfig:cfg=>{Object.assign(config,cfg||{});effects.push(cfg||"config");},agentEnabled:()=>true,
   saveData:async data=>saved.push(JSON.parse(JSON.stringify(data))),
-  register(){},refreshAgentButtons:()=>effects.push("buttons"),writeAgentArgs:()=>effects.push("args"),
+  register(){},refreshAgentButtons:()=>effects.push("buttons"),writeAgentArgs:()=>effects.push("args"),writeMailArgs:()=>effects.push("mail"),
   codexHooksPath:()=>"/tmp/hooks.json",codexHookState:()=>({state:"off"}),setCodexHook:async on=>{effects.push("hook:"+on);return{ok:true};}};
  const tab=new AtlasSettingTab({},plugin);
  tab.update=()=>effects.push("refresh");
@@ -90,5 +90,19 @@ describe("settings discovery",()=>{
   value="/Users/me/mailbox";await blur();
   assert.equal(plugin.settings.agentMailRoot,"/Users/me/mailbox");assert.equal(saved.length,1);
   value="";await blur();assert.equal(plugin.settings.agentMailRoot,"");
+ });
+ it("the mail launch flags are rewritten when the mail folder or the wake switch changes",async()=>{
+  const {tab,effects}=context();const defs=flat(tab.getSettingDefinitions());
+  assert.equal(defs.some(d=>/^mail\.setup/.test(d.name)),false);   // no manual connect row
+  await controls(defs.find(d=>d.name==="mail.wake"))[0](false);
+  assert.deepEqual(effects,["mail"]);
+  let value="/Users/me/mailbox",blur=null;
+  defs.find(d=>d.name==="mail.root").render({addText(fn){fn({setPlaceholder(){return this;},setValue(){return this;},
+   getValue:()=>value,inputEl:{addEventListener:(t,f)=>{if(t==="blur")blur=f;}}});return this;}});
+  await blur();assert.deepEqual(effects,["mail","mail"]);
+  await controls(defs.find(d=>d.name==="adv.python"))[0]("/opt/python3");
+  assert.deepEqual(effects,["mail","mail","mail"]);
+  await controls(defs.find(d=>d.name==="adv.shell"))[0]("/bin/zsh");
+  assert.deepEqual(effects,["mail","mail","mail"]);
  });
 });

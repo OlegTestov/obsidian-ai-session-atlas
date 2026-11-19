@@ -9,6 +9,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import shlex
 import subprocess
 import threading
 import time
@@ -526,3 +527,62 @@ def test_codex_quitting_mid_record_leaves_no_lock_behind(tab):
     assert f"codex\tcx-9\t{TID}\t" in (tab["state"] / "resume.tsv").read_text(encoding="utf-8")
     time.sleep(2)                                  # a stray slow mv of a killed tracker has finished
     assert not (tab["state"] / "resume.lock").exists()
+
+
+# --- Agent Mail words (agent-mail-args/<kind>) -----------------------------------------------------
+
+MAIL_WORDS = {
+    "claude": ["--mcp-config={\"mcpServers\":{\"agent-mail\":{\"command\":\"/A path/python3\"}}}",
+               "--allowedTools=mcp__agent-mail__mail_send,mcp__agent-mail__mail_inbox"],
+    "codex": ["-c", "mcp_servers.agent-mail.command=\"/A path/it's python\"",
+              "-c", "mcp_servers.agent-mail.default_tools_approval_mode=\"approve\""],
+}
+
+
+def _mail_dir(tab, kind, text, *, home_default=False):
+    folder = (tab["state"].parent / "home" / "Library" / "Application Support" / "session-atlas"
+              / "agent-mail-args") if home_default else tab["state"].parent / "mail"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / kind).write_text(text, encoding="utf-8")
+    if not home_default:
+        tab["env"]["OBS_AGENT_MAIL_ARGS_DIR"] = str(folder)
+    return folder
+
+
+def test_claude_gets_the_mail_words_first_and_intact(tab):
+    (tab["state"].parent / "args").mkdir()
+    (tab["state"].parent / "args" / "claude").write_text("--chrome\n", encoding="utf-8")
+    _mail_dir(tab, "claude", " ".join(shlex.quote(w) for w in MAIL_WORDS["claude"]) + "\n")
+    call, _ = tab["run"]("claude", "cl-mail", "new", PARENT)
+    assert call[:2] == MAIL_WORDS["claude"]
+    assert call[2] == "--chrome"
+    assert call[-2:] == ["--session-id", PARENT]
+
+
+def test_codex_gets_the_mail_words_before_the_subcommand(tab):
+    _rollout(tab["codex"], TID, _current(TID, str(tab["work"])))
+    _mail_dir(tab, "codex", " ".join(shlex.quote(w) for w in MAIL_WORDS["codex"]) + "\n")
+    call, _ = tab["run"]("codex", "cx-mail", "resume", TID)
+    assert call[:4] == MAIL_WORDS["codex"]
+    assert call[-2:] == ["resume", TID]
+
+
+def test_an_empty_mail_file_adds_nothing(tab):
+    _mail_dir(tab, "claude", "\n")
+    _mail_dir(tab, "codex", "  \n")
+    call, _ = tab["run"]("claude", "cl-none", "new", PARENT)
+    assert call[0] == "--settings"
+    _rollout(tab["codex"], TID, _current(TID, str(tab["work"])))
+    assert tab["run"]("codex", "cx-none", "resume", TID)[0] == ["resume", TID]
+
+
+def test_the_default_mail_folder_has_a_space_in_its_path_and_still_works(tab):
+    _mail_dir(tab, "claude", " ".join(shlex.quote(w) for w in MAIL_WORDS["claude"]) + "\n", home_default=True)
+    call, _ = tab["run"]("claude", "cl-home", "new", PARENT)
+    assert call[:2] == MAIL_WORDS["claude"]
+
+
+def test_mail_words_are_never_expanded_by_the_shell(tab):
+    _mail_dir(tab, "claude", "'--x=$HOME `id`'\n")
+    call, _ = tab["run"]("claude", "cl-raw", "new", PARENT)
+    assert call[0] == "--x=$HOME `id`"

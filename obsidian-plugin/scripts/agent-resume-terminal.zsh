@@ -39,14 +39,21 @@ fi
 # A file rather than an environment variable, so tabs opened earlier see it too.
 AGENT_ARGS_DIR="${OBS_AGENT_TERMINAL_ARGS_DIR:-$HOME/Library/Application Support/session-atlas/agent-args}"
 
-extra_args() {
+# Agent Mail: the MCP server Atlas bundles, as launch words the plugin keeps in one line per agent.
+MAIL_ARGS_DIR="${OBS_AGENT_MAIL_ARGS_DIR:-$HOME/Library/Application Support/session-atlas/agent-mail-args}"
+
+args_from() {
   local line=""
-  [[ -r "$AGENT_ARGS_DIR/$1" ]] && line="$(<"$AGENT_ARGS_DIR/$1")"
+  [[ -r "$1/$2" ]] && line="$(<"$1/$2")"
   reply=()
   [[ -n "${line//[[:space:]]/}" ]] || return 0
   # Words follow shell rules (quotes work) without expansions: (z) only splits.
   reply=("${(@Q)${(z)line}}")
 }
+
+extra_args() { args_from "$AGENT_ARGS_DIR" "$1"; }
+
+mail_args() { args_from "$MAIL_ARGS_DIR" "$1"; }
 
 valid_instance() {
   [[ "$1" =~ '^[A-Za-z0-9_.-]{1,96}$' ]]
@@ -245,9 +252,11 @@ run_claude() {
   # records a session only for a process that descends from this script.
   export OBS_AGENT_TAB_PID="$$"
 
-  local -a reply
+  local -a reply mail
+  mail_args claude
+  mail=("${reply[@]}")
   extra_args claude
-  local -a flags=("${reply[@]}" --settings "$(hook_settings)")
+  local -a flags=("${mail[@]}" "${reply[@]}" --settings "$(hook_settings)")
 
   if [[ -n "$session_id" ]] && job="$(claude_live_job "$session_id")"; then
     attach_claude_job "$instance" "$job"
@@ -313,9 +322,11 @@ run_codex() {
   # No hook and none of the tab variables: Codex runs no hook here, and a Claude Code the agent
   # starts from a command must not record its session as this tab's (the vault's project hook would).
   # track_codex_thread (codex_tracked) follows the thread the tab's codex holds open instead.
-  local -a reply
+  local -a reply mail
+  mail_args codex
+  mail=("${reply[@]}")
   extra_args codex
-  local -a flags=("${reply[@]}")
+  local -a flags=("${mail[@]}" "${reply[@]}")
 
   # New Codex CLIs share an app-server that owns every rollout. Keep our tabs independently
   # observable and controllable; older CLIs without this flag keep their ordinary launch.

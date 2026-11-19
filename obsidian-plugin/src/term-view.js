@@ -8,7 +8,6 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import * as os from "os";
-import * as path from "path";
 import { themeFromCss, applyTheme, followCodexSurface, followTextContrast } from "./term-theme";
 import { spawnPty } from "./pty";
 import { AGENT_VIEW_TYPE, DEFAULT_FONT_SIZE } from "./constants";
@@ -16,7 +15,7 @@ import { registry, keepHeldTabs, holdForReclaim } from "./held";
 import { selectWithModifier, isCopyKey, copySelection, pasteClipboard, menuItems, copyTarget, writeClipboard } from "./term-copy";
 import { pathLinkProvider, pathClicks, localTarget } from "./term-links";
 import { resolvePath } from "./open-path";
-import { shellQuote } from "./agents";
+import { shellQuote, agentTabEnv } from "./agents";
 import { normalizeCodexHome } from "./codex-hook";
 
 import { pasteImageEvent } from "./term-paste";
@@ -176,9 +175,9 @@ class AgentTerminalView extends ItemView {
       pty.resize(term.cols, term.rows);
     } else {
       const shell = settings.shellPath || process.env.SHELL || DEFAULT_SHELL;
-      // The tab script reads extra agent arguments from this install's data folder.
-      const env = Object.assign({}, process.env, { TERM: "xterm-256color", COLORTERM: "truecolor",
-        OBS_AGENT_TERMINAL_ARGS_DIR: path.join(this.plugin.dataDir(), "agent-args") });
+      // The tab script reads extra agent arguments and the Agent Mail flags from this install's data folder.
+      const env = Object.assign({}, process.env, { TERM: "xterm-256color", COLORTERM: "truecolor" },
+        agentTabEnv(this.plugin.dataDir()));
       if (!env.LANG) env.LANG = "en_US.UTF-8";      // launched from the Dock, Obsidian has no locale
       const codexHome = this.state.kind === "codex" && normalizeCodexHome(settings.codexHome);
       const command = codexHome ? `export CODEX_HOME=${shellQuote(codexHome)}; ${this.state.command}` : this.state.command;

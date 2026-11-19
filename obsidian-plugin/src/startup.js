@@ -11,6 +11,9 @@ import { AGENT_VIEW_TYPE } from "./constants";
 // tab waits for this one's agent to start (a login shell first): its script must see what runs where.
 const LOAD_GAP_MS = 1500;
 const AGENT_START_MS = 10000;
+// After an in-place reload Obsidian rebuilds the plugin's tabs only once loading is over.
+const RESTORE_WAIT_MS = 10000;
+const RESTORE_STEP_MS = 250;
 const AGENT = /(^|\/)(claude|codex)( |$)/;
 
 /**
@@ -113,6 +116,28 @@ class StartupMethods {
       await new Promise((resolve) => window.setTimeout(resolve, 300));
     }
     return false;
+  }
+
+  /**
+   * Loads the restored agent tabs once they are in the layout. At Obsidian's start they already are;
+   * after an in-place reload (an update) they appear a moment later, so a single early pass found none
+   * and every background tab stayed unloaded, out of Agent Mail's reach, until clicked.
+   */
+  async loadAgentTabsWhenRestored(waitMs = RESTORE_WAIT_MS, stepMs = RESTORE_STEP_MS) {
+    const end = Date.now() + waitMs;
+    let total = 0;
+    for (;;) {
+      if (this._loaded === false) return total;
+      if (deferredAgentLeaves(this.app && this.app.workspace).length) {
+        // Tabs rebuilt while a sweep ran are picked up by the next one.
+        const loaded = await this.loadAgentTabs();
+        if (!loaded) return total;                     // loading is off or already under way
+        total += loaded;
+        continue;
+      }
+      if (Date.now() >= end) return total;
+      await new Promise((resolve) => window.setTimeout(resolve, stepMs));
+    }
   }
 
   /** Loads the restored agent tabs one by one; the tab in front stays in front. */

@@ -183,6 +183,8 @@ function advancedDefinitions(tab) {
         text.setValue(plugin.settings[key] || "").onChange(async value => {
           plugin.settings[key] = value.trim();
           await plugin.saveData(plugin.settings);
+          // Agent Mail's launch flags name the Python that runs the mail server.
+          if (key === "pythonPath" && typeof plugin.writeMailArgs === "function") await plugin.writeMailArgs();
         })),
     })) };
 }

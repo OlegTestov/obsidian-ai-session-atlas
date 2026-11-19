@@ -119,6 +119,12 @@ function agentArgs(scriptPath, kind, instance, seed) {
   return ["-l", "-i", "-c", parts.join(" ")];
 }
 
+/** Where the tab script finds the extra arguments and the Agent Mail flags of this install. */
+function agentTabEnv(dataDir) {
+  return { OBS_AGENT_TERMINAL_ARGS_DIR: path.join(dataDir, "agent-args"),
+           OBS_AGENT_MAIL_ARGS_DIR: path.join(dataDir, "agent-mail-args") };
+}
+
 function newInstanceId(kind) {
   const random = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
     ? crypto.randomUUID().replace(/-/g, "").slice(0, 16)
@@ -245,4 +251,4 @@ class AgentMethods {
   }
 }
 
-export { AgentMethods, parseLaunch, agentArgs, shellQuote, shellWords, AGENTS, SCRIPT_NAME };
+export { AgentMethods, parseLaunch, agentArgs, agentTabEnv, shellQuote, shellWords, AGENTS, SCRIPT_NAME };

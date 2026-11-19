@@ -2584,6 +2584,46 @@ describe("Codex resume from the catalog and after a restart", () => {
   });
 });
 
+describe("Agent Mail launch flags at start", () => {
+  it("onload prepares the flags once the layout is ready, before background tabs load", async () => {
+    const p = new SessionAtlasPlugin();
+    const ready = [];
+    let written = 0;
+    const order = [];
+    p.writeMailArgs = async () => { written++; await new Promise((r) => setTimeout(r, 20)); order.push("flags"); };
+    p.loadAgentTabsWhenRestored = async () => { order.push("tabs"); return 0; };
+    p.app = { plugins: { enabledPlugins: new Set() },
+              workspace: { on: () => null, onLayoutReady: (fn) => ready.push(fn), getLeavesOfType: () => [] } };
+    await p.onload();
+    assert.equal(written, 0);
+    for (const fn of ready.filter((f) => String(f).includes("writeMailArgs"))) await fn();
+    assert.equal(written, 1);
+    assert.deepEqual(order, ["flags", "tabs"]);
+  });
+});
+
+describe("Agent Mail is turned on once for earlier installs", () => {
+  const start = async (stored) => {
+    const p = new SessionAtlasPlugin();
+    p.stored = stored;
+    p.writeMailArgs = async () => {};
+    p.app = { plugins: { enabledPlugins: new Set() },
+              workspace: { on: () => null, onLayoutReady: () => {}, getLeavesOfType: () => [] } };
+    await p.onload();
+    return p;
+  };
+  it("a saved off from before 2.13 becomes on, and the choice is saved", async () => {
+    const p = await start({ wakeOnMail: false, agentArgs: { claude: "", codex: "" } });
+    assert.equal(p.settings.wakeOnMail, true);
+    assert.equal(p.stored.mailOnByDefault, true);
+    assert.equal(p.stored.wakeOnMail, true);
+  });
+  it("an off chosen after that stays off", async () => {
+    const p = await start({ wakeOnMail: false, mailOnByDefault: true, agentArgs: { claude: "", codex: "" } });
+    assert.equal(p.settings.wakeOnMail, false);
+  });
+});
+
 describe("Codex new sessions from the catalog", () => {
   const ID = "6e4043ad-81c1-49a2-87f4-47c469933cf3";
   const P = agents.parseLaunch;

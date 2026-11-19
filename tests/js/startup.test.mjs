@@ -100,6 +100,56 @@ describe("restored agent tabs load without being shown", () => {
     assert.equal(c.loads, 0);
   });
 
+  it("tabs that appear after load (an in-place reload) are waited for, then loaded", async () => {
+    const a = leaf("claude", "claude-a");
+    let leaves = [];
+    let looks = 0;
+    host = Object.assign(Object.create(StartupMethods.prototype), { settings: {},
+      app: { workspace: { iterateAllLeaves: (fn) => { if (++looks === 3) leaves = [a]; leaves.forEach(fn); } } } });
+    host.loadAgentTabs = async () => { leaves.forEach((l) => l.loadIfDeferred()); return leaves.length; };
+    assert.equal(await StartupMethods.prototype.loadAgentTabsWhenRestored.call(host, 1000, 1), 1);
+    assert.equal(a.loads, 1);
+  });
+
+  it("tabs rebuilt while a sweep runs are loaded by the next sweep", async () => {
+    const a = leaf("claude", "claude-a");
+    const b = leaf("claude", "claude-b");
+    let leaves = [a];
+    host = Object.assign(Object.create(StartupMethods.prototype), { settings: {},
+      app: { workspace: { iterateAllLeaves: (fn) => leaves.forEach(fn) } } });
+    host.loadAgentTabs = async () => {
+      const todo = leaves.filter((l) => l.isDeferred);
+      for (const l of todo) await l.loadIfDeferred();
+      if (b.loads === 0) leaves = [a, b];                      // b appears during the first sweep
+      return todo.length;
+    };
+    assert.equal(await StartupMethods.prototype.loadAgentTabsWhenRestored.call(host, 1000, 1), 2);
+    assert.deepEqual([a.loads, b.loads], [1, 1]);
+  });
+
+  it("a sweep that loads nothing (loading off) ends the wait", async () => {
+    const a = leaf("claude", "claude-a");
+    let sweeps = 0;
+    host = Object.assign(Object.create(StartupMethods.prototype), { settings: {},
+      app: { workspace: { iterateAllLeaves: (fn) => [a].forEach(fn) } }, loadAgentTabs: async () => { sweeps++; return 0; } });
+    assert.equal(await StartupMethods.prototype.loadAgentTabsWhenRestored.call(host, 1000, 1), 0);
+    assert.equal(sweeps, 1);
+  });
+
+  it("with no agent tab the wait ends, and an unloaded plugin stops waiting", async () => {
+    let called = 0;
+    host = Object.assign(Object.create(StartupMethods.prototype), { settings: {},
+      app: { workspace: { iterateAllLeaves: () => {} } }, loadAgentTabs: async () => ++called });
+    const t0 = Date.now();
+    assert.equal(await StartupMethods.prototype.loadAgentTabsWhenRestored.call(host, 30, 5), 0);
+    assert.ok(Date.now() - t0 >= 30);
+    host._loaded = false;
+    const t1 = Date.now();
+    assert.equal(await StartupMethods.prototype.loadAgentTabsWhenRestored.call(host, 5000, 5), 0);
+    assert.ok(Date.now() - t1 < 1000);
+    assert.equal(called, 0);
+  });
+
   it("only agent tabs with an id count as restorable", () => {
     const ws = { iterateAllLeaves: (fn) => [leaf("claude", "x"), leaf("claude", ""), leaf("shell", "y")].forEach(fn) };
     assert.equal(deferredAgentLeaves(ws).length, 1);

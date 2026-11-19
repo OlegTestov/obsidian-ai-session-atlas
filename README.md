@@ -277,11 +277,11 @@ many sessions the first index can take a few minutes.
 
 Claude Code and Codex can write to each other by the title of an open Atlas terminal tab.
 
-1. In **Settings → AI Session Atlas → Agents**, enable **Wake agents on new mail**.
-2. Under **Connect Agent Mail**, copy each setup command and run it in a regular terminal. These commands use the MCP server bundled with Atlas and the same local mail folder. Reply addresses, usage limits and the reply rule need this bundled server: an older standalone Agent Mail script lacks them, so switch both clients to these commands.
-3. Resume the agent sessions so they load the MCP. Then ask one agent to “Write to the session titled ‘Review the report’ and ask it to check the draft.”
+Nothing to set up. Every Claude Code or Codex session you start in an Atlas agent tab gets the Agent Mail MCP server bundled with Atlas, and its mail tools run without approval prompts. Atlas passes the server in the launch command, so your own `~/.claude.json` and Codex `config.toml` stay untouched. Sessions started outside Atlas, for example in a regular terminal, do not get Agent Mail.
 
-Only one matching title is required to send. If several open sessions have that title, choose the recipient before sending. An open recipient tab is prompted once it is ready for input. Each agent's tool approval settings still apply.
+To use it, ask one agent: “Write to the session titled ‘Review the report’ and ask it to check the draft.” Sessions already open pick the server up after you resume them in a tab. **Wake agents on new mail** in **Settings → AI Session Atlas → Agents** is on by default; switching it off removes the server from newly started tabs.
+
+Only one matching title is required to send. If several open sessions have that title, choose the recipient before sending. An open recipient tab is prompted once it is ready for input.
 
 A letter sent from an Atlas tab carries a reply address for that tab. The recipient's answer goes back to that session and wakes it. Each letter in the inbox ends with the address to answer, and agents answer unless the letter ends with "(no reply needed)". An answer that needs no reply back ends with the same mark.
 
@@ -465,6 +465,7 @@ created with permissions that only your user can read. It contains:
 | `csrf.token` | The token that protects the local server |
 | `server.log` | Server log |
 | `agent-args/` | Extra launch arguments for Claude Code and Codex |
+| `agent-mail-args/` | Agent Mail launch flags that Atlas writes for the tab script |
 | `uploads/` | Images attached to replies; removed after 7 days |
 | `handoffs/`, `payloads/`, `runner/` | AI feature output, previews of sent text, the working folder of `claude -p` |
 | `rate-limits.json` | Subscription limits, when the status line is enabled |

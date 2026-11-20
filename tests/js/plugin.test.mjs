@@ -2947,12 +2947,90 @@ describe("tabs closed with the plugin: the agents are offered back", () => {
     revealLeaf() {}, setActiveLeaf() {},
   } };
   const delays = [];
+  const timers = new Map();
+  let nextTimer = 0;
   const win = getGlobal("window");
   const realSetTimeout = win.setTimeout;
-  before(() => { win.setTimeout = (fn, ms) => { delays.push(ms); return realSetTimeout(() => {}, 0); }; });
+  const realClearTimeout = win.clearTimeout;
+  before(() => {
+    win.setTimeout = (fn, ms) => {
+      delays.push(ms);
+      timers.set(++nextTimer, fn);
+      return nextTimer;
+    };
+    win.clearTimeout = (id) => { timers.delete(id); };
+  });
   after(() => {
     win.setTimeout = realSetTimeout;
+    win.clearTimeout = realClearTimeout;
     for (const key of ["claude-h1", "claude-h2", "claude-h3", "claude-h4"]) reg().delete(key);
+  });
+
+  describe("reclaim timer", () => {
+    const key = "claude-reclaim";
+
+    function hold(t, doc) {
+      const previousDocument = getGlobal("document");
+      setGlobal("document", doc);
+      t.after(() => {
+        setGlobal("document", previousDocument);
+        reg().delete(key);
+        timers.clear();
+        delays.length = 0;
+      });
+      const pty = fakePty(7107);
+      held.holdForReclaim(key, pty, { instance: key });
+      assert.deepEqual(delays, [held.RECLAIM_MS]);
+      return pty;
+    }
+
+    function fireTimer() {
+      assert.equal(timers.size, 1);
+      const [id, fn] = timers.entries().next().value;
+      timers.delete(id);
+      fn();
+    }
+
+    it("ends an unclaimed process on the first fire when there is no document", (t) => {
+      const pty = hold(t, undefined);
+      fireTimer();
+      assert.equal(pty.killed, true);
+      assert.deepEqual(delays, [held.RECLAIM_MS]);
+    });
+
+    it("re-arms while hidden and ends the process on the next fire once visible", (t) => {
+      const doc = { hidden: true };
+      const pty = hold(t, doc);
+      fireTimer();
+      assert.equal(pty.killed, false);
+      assert.deepEqual(delays, [held.RECLAIM_MS, held.RECLAIM_MS]);
+      doc.hidden = false;
+      fireTimer();
+      assert.equal(pty.killed, true);
+    });
+
+    it("ends the process while still hidden when the original hold reaches the cap", (t) => {
+      const start = held.OFFER_HOLD_MS * 2;
+      let now = start;
+      t.mock.method(Date, "now", () => now);
+      const pty = hold(t, { hidden: true });
+      now += held.RECLAIM_MS;
+      fireTimer();
+      assert.equal(pty.killed, false);
+      now = start + held.OFFER_HOLD_MS;
+      fireTimer();
+      assert.equal(pty.killed, true);
+      assert.equal(timers.size, 0);
+    });
+
+    it("keeps a process in the layout by cancelling the re-armed timer", (t) => {
+      const pty = hold(t, { hidden: true });
+      fireTimer();
+      const workspace = { iterateAllLeaves: (fn) => fn(agentLeaf(key)) };
+      assert.deepEqual(held.keepHeldTabs(workspace), [key]);
+      assert.equal(timers.size, 0);
+      assert.equal(pty.killed, false);
+    });
   });
 
   it("a tab closed by the unload holds its process for the reclaim time", () => {

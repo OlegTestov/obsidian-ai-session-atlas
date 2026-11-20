@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.13.1] - 2026-11-20
+
+### Fixed
+
+- An update or reload while the Obsidian window is hidden no longer ends running agents in background tabs. Their processes wait until the window is shown, up to 30 minutes.
+
 ## [2.13.0] - 2026-11-19
 
 ### Added

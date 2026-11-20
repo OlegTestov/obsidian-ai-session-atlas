@@ -5,7 +5,7 @@
 import { Notice } from "obsidian";
 import { AGENT_VIEW_TYPE } from "./constants";
 
-// Time for the new plugin copy to load and pick its tabs up; after that an unclaimed process ends.
+// Time for the new plugin copy to load and pick its tabs up.
 const RECLAIM_MS = 120000;
 // While offered, a process waits this long for an answer: long enough to notice, short enough that
 // a forgotten agent does not keep working out of sight.
@@ -34,12 +34,22 @@ function wantedTabs(workspace) {
   return wanted;
 }
 
-/** A tab closed by the plugin's unload: its process waits RECLAIM_MS for the next plugin copy. */
+/** A tab closed by the plugin's unload: its process waits for the next plugin copy. */
 function holdForReclaim(key, pty, state) {
   pty.onData(null);
   pty.onExit(null);
-  const timer = window.setTimeout(() => releaseHeld(key), RECLAIM_MS);
-  registry().set(key, { pty, timer, state: Object.assign({}, state), held: true });
+  const deadline = Date.now() + OFFER_HOLD_MS;
+  const held = { pty, timer: null, state: Object.assign({}, state), held: true };
+  function reclaim() {
+    // Obsidian defers layout readiness while the window is hidden.
+    if (typeof document !== "undefined" && document.hidden && Date.now() < deadline) {
+      held.timer = window.setTimeout(reclaim, RECLAIM_MS);
+      return;
+    }
+    releaseHeld(key);
+  }
+  held.timer = window.setTimeout(reclaim, RECLAIM_MS);
+  registry().set(key, held);
 }
 
 /**

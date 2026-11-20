@@ -49,6 +49,7 @@ class FakeBase {
 const modals = [];
 const menus = [];
 const notices = [];
+const registeredIcons = [];
 const noticeObjects = [];
 const lastNotice = () => noticeObjects[noticeObjects.length - 1];
 // Obsidian's interface language, as getLanguage() reports it.
@@ -115,7 +116,7 @@ const stubs = {
       addSeparator() { this.items.push({ title: "---" }); return this; }
       showAtMouseEvent(e) { this.shownAt = e; }
     },
-    addIcon: () => {},
+    addIcon: (id, content) => registeredIcons.push([id, content]),
     getLanguage: () => obsidianLanguage,
     TFile: class { constructor(path) { this.path = path; } },
     Setting: class {},
@@ -1996,7 +1997,11 @@ describe("agent terminal view", () => {
     assert.equal(layoutSaves, 1);
     assert.equal(headerText, tv.getDisplayText());
   });
-  it("a background job: another icon and a hint on it; back to the robot when the job ends", () => {
+  it("uses the Claude mark before the tab state is restored", () => {
+    const tv = new AgentTerminalView({}, alone);
+    assert.equal(tv.getIcon(), "atlas-claude");
+  });
+  it("shows the background job icon and hint, then restores the agent mark when the job ends", () => {
     let headerUpdates = 0;
     const classes = new Set();
     const attrs = {};
@@ -2005,7 +2010,7 @@ describe("agent terminal view", () => {
                    tabHeaderInnerIconEl: { setAttribute: (k, v) => { attrs[k] = v; }, removeAttribute: (k) => { delete attrs[k]; } } };
     const tv = new AgentTerminalView(leaf, alone);
     tv.state = { kind: "claude" };
-    assert.equal(tv.getIcon(), "bot");
+    assert.equal(tv.getIcon(), "atlas-claude");
     tv.setBackgroundJob("ab12cd34");
     tv.setBackgroundJob("ab12cd34");
     assert.equal(tv.getIcon(), "server");
@@ -2014,12 +2019,12 @@ describe("agent terminal view", () => {
     assert.match(attrs["aria-label"], /ab12cd34/);
     tv.setBackgroundJob(null);
     tv.setBackgroundJob(undefined);
-    assert.equal(tv.getIcon(), "bot");
+    assert.equal(tv.getIcon(), "atlas-claude");
     assert.equal(headerUpdates, 2);
     assert.ok(!classes.has("sa-background-session"));
     assert.equal(attrs["aria-label"], undefined);
     tv.state = { kind: "codex" };
-    assert.equal(tv.getIcon(), "codex-bot");
+    assert.equal(tv.getIcon(), "atlas-codex");
   });
   it("the tab's view closes (a plugin reload keeps the header): the mark goes with it", async () => {
     const classes = new Set();
@@ -2053,10 +2058,45 @@ describe("plugin start-up", () => {
     assert.equal(started, 1);
   });
   it("one plugin: catalog, Claude Code and Codex buttons; default settings", () => {
-    assert.equal(alone.ribbons.map((r) => r.icon).join(), "library,bot,codex-bot");
+    assert.equal(alone.ribbons.map((r) => r.icon).join(), "library,atlas-claude,atlas-codex");
     assert.equal(alone.settings.explorerClicks, false);   // changes core explorer clicks: opt-in
     assert.equal(alone.settings.language, "auto");          // as in Obsidian
     assert.equal(alone.settings.terminalFontSize, 12);
+  });
+});
+
+describe("agent marks", () => {
+  it("registers the two centered paths with the current color", () => {
+    const start = registeredIcons.length;
+    new SessionAtlasPlugin().addAgentButtons();
+    const marks = registeredIcons.slice(start);
+    assert.deepEqual(marks.map(([id]) => id), ["atlas-claude", "atlas-codex"]);
+    const sourcePaths = {
+      "atlas-claude": { prefix: "m4.7144 15.9555 4.7174-2.6471.079-.2307-", length: 1811 },
+      "atlas-codex": { prefix: "M22.2819 9.8211a5.9847 5.9847 0 0 0-.515", length: 1460 },
+    };
+    for (const [id, svg] of marks) {
+      const match = /^<path fill="currentColor" transform="translate\(8 8\) scale\(3\.5\)" d="([^"]+)"\/>$/.exec(svg);
+      assert.ok(match, `${id} should be a centered path filled with currentColor`);
+      assert.equal(match[1].slice(0, 40), sourcePaths[id].prefix, id);
+      assert.equal(match[1].length, sourcePaths[id].length, id);
+    }
+  });
+  it("leaves both marks in the theme's icon colour, like the other ribbon icons", () => {
+    const css = fs.readFileSync(path.join(ROOT, "obsidian-plugin", "styles.css"), "utf8");
+    assert.doesNotMatch(css, /atlas-(claude|codex)/);
+  });
+  it("uses no retired Codex icon ID in source files", () => {
+    const oldReferences = [];
+    for (const dir of ["atlas", "obsidian-plugin", "tools", "web"]) {
+      const files = fs.readdirSync(path.join(ROOT, dir), { recursive: true, withFileTypes: true });
+      for (const file of files) {
+        if (!file.isFile() || !/\.(?:[cm]?js|py|zsh|html|css)$/.test(file.name)) continue;
+        const filename = path.join(file.parentPath, file.name);
+        if (fs.readFileSync(filename, "utf8").includes("codex-bot")) oldReferences.push(path.relative(ROOT, filename));
+      }
+    }
+    assert.deepEqual(oldReferences.sort(), []);
   });
 });
 

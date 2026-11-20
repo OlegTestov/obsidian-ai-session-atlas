@@ -2,6 +2,7 @@
 // Obsidian's Menu cannot hold a text field, so this is a small popover of its own. Changes apply as
 // you type or click; Escape, Enter or a click outside closes it.
 import { setIcon } from "obsidian";
+import { AGENT_ICONS } from "./agent-icons";
 import { COLORS, MAX_NAME, cleanName, editorTop } from "./groups-model";
 
 const EDITOR = "sa-group-editor";
@@ -85,7 +86,7 @@ function openGroupEditor(plugin, id, anchor, { focusName = false } = {}) {
     return row;
   };
   for (const kind of ["claude", "codex"]) {
-    if (plugin.agentEnabled(kind)) action(kind === "claude" ? "bot" : "codex-bot", t(`group.editor.new.${kind}`),
+    if (plugin.agentEnabled(kind)) action(AGENT_ICONS[kind], t(`group.editor.new.${kind}`),
                                           () => plugin.openInGroup(kind, id));
   }
   action(group().collapsed ? "chevrons-left-right" : "chevrons-right-left",

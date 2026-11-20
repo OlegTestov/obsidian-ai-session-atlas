@@ -7,6 +7,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.13.2] - 2026-11-20
+
+### Changed
+
+- The Claude Code and Codex buttons and tabs show the Claude and OpenAI marks, so you can tell the agents apart at a glance. Both marks use the theme's icon colour, like the other icons.
+
 ## [2.13.1] - 2026-11-20
 
 ### Fixed

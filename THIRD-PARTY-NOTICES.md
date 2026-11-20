@@ -29,3 +29,9 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
+
+## Simple Icons (Claude and OpenAI marks)
+
+[Simple Icons](https://simpleicons.org) 13.21.0 uses the [CC0 1.0 Universal](https://creativecommons.org/publicdomain/zero/1.0/) public domain dedication.
+
+Claude is a trademark of Anthropic, PBC. OpenAI and Codex are trademarks of OpenAI. The marks are shown only to show which agent runs a tab; no endorsement is implied.

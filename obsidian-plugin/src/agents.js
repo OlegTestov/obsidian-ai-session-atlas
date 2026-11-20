@@ -2,23 +2,17 @@
 // Every agent tab opens through one script (agent-resume-terminal.zsh): the tab has its own id,
 // the script remembers which session ran in it and brings it back after an Obsidian restart.
 // Mixed into the plugin class.
-import { Notice, addIcon } from "obsidian";
+import { Notice } from "obsidian";
 import * as path from "path";
 import * as fsSync from "fs";
 import { AGENT_VIEW_TYPE, SESSION_ID } from "./constants";
+import { AGENT_ICONS, registerAgentIcons } from "./agent-icons";
 
 const SCRIPT_NAME = "agent-resume-terminal.zsh";
 const AGENTS = { claude: "Claude Code", codex: "Codex" };
 // A Claude Code background job, as `claude attach` takes it (the first 8 hex digits of its session).
 const JOB_ID = /^[0-9a-f]{8}$/;
 const AND = Symbol("&&");
-const CODEX_ICON =
-  '<g fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">'
-  + '<path d="M50 24V12" /><path d="M38 12h24" /><rect x="20" y="28" width="60" height="50" rx="10" />'
-  + '<path d="M10 45v16" /><path d="M90 45v16" />'
-  + '<circle cx="38" cy="50" r="4" fill="currentColor" stroke="none" />'
-  + '<circle cx="62" cy="50" r="4" fill="currentColor" stroke="none" />'
-  + '<path d="M38 62c6 8 18 8 24 0" /></g>';
 
 /** POSIX quoting, the same as shlex.quote on the server. */
 function shellQuote(text) {
@@ -134,13 +128,11 @@ function newInstanceId(kind) {
 
 class AgentMethods {
   addAgentButtons() {
-    addIcon("codex-bot", CODEX_ICON);
-    this.agentRibbons = {
-      claude: this.addRibbonIcon("bot", this.t("agent.claude"), () => this.openAgent("claude")),
-      codex: this.addRibbonIcon("codex-bot", this.t("agent.codex"), () => this.openAgent("codex")),
-    };
+    registerAgentIcons();
+    this.agentRibbons = {};
     // A disabled agent has no button and no palette command; enabling applies at once, without a restart.
     for (const kind of Object.keys(AGENTS)) {
+      this.agentRibbons[kind] = this.addRibbonIcon(AGENT_ICONS[kind], this.t(`agent.${kind}`), () => this.openAgent(kind));
       this.addCommand({ id: kind === "claude" ? "open-claude-code-terminal" : "open-codex-terminal",
                         name: this.t(`agent.${kind}.command`),
                         checkCallback: (checking) => {

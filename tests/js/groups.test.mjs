@@ -12,9 +12,10 @@ const realLoad = Module._load;
 class Menu {}
 class View { onTabMenu(menu) { menu.native = (menu.native || 0) + 1; } }
 class Modal { constructor(app) { this.app = app; } open() { this.onOpen && this.onOpen(); } }
-Module._load = (r, p, i) => (r === "obsidian" ? { Menu, Modal, View, setIcon() {} } : realLoad(r, p, i));
+Module._load = (r, p, i) => (r === "obsidian" ? { Menu, Modal, View, setIcon(el, icon) { el.icon = icon; } } : realLoad(r, p, i));
 const model = loadSrc("groups-model");
 const { GroupMethods } = loadSrc("groups");
+const { openGroupEditor } = loadSrc("groups-editor");
 const { ConfirmCloseModal } = loadSrc("guard");
 const { translate } = loadSrc("i18n");
 const { GroupNavigationMethods } = loadSrc("groups-navigation");
@@ -22,6 +23,36 @@ const { GroupDragMethods } = loadSrc("groups-drag");
 Module._load = realLoad;
 const { COLORS, GONE_KEEP_MS, cleanGroups, nextColor, createGroup, runs, joinIndex, changedLeaves, dropChanges, prune, liveGroups,
         tabOutside, editorTop } = model;
+
+it("shows the matching agent mark on each group editor action for a new tab", () => {
+  const element = (opts) => ({
+    ...opts,
+    children: [],
+    classList: { toggle() {} },
+    setAttribute() {}, setCssProps() {}, addEventListener() {}, focus() {},
+    createEl(_tag, options) {
+      const child = element(options);
+      this.children.push(child);
+      return child;
+    },
+    createDiv(options) { return this.createEl("div", options); },
+    createSpan(options) { return this.createEl("span", options); },
+  });
+  const doc = {
+    body: element(), querySelectorAll: () => [], addEventListener() {},
+    defaultView: { innerWidth: 800, innerHeight: 600, addEventListener() {} },
+  };
+  const anchor = { ownerDocument: doc, getBoundingClientRect: () => ({ left: 20, top: 10, bottom: 30 }) };
+  const plugin = {
+    groups: { groups: { g: { name: "Group", color: "blue" } } },
+    t: (key) => translate("en", key), agentEnabled: () => true, register() {},
+  };
+  const editor = openGroupEditor(plugin, "g", anchor);
+  const actions = editor.children.find((child) => child.cls === "sa-group-editor-actions");
+  const icons = Object.fromEntries(actions.children.map(({ children: [icon, label] }) => [label.text, icon.icon]));
+  assert.equal(icons["New Claude Code tab"], "atlas-claude");
+  assert.equal(icons["New Codex tab"], "atlas-codex");
+});
 
 describe("group model", () => {
   it("next/previous tab skips folded groups, wraps, and keeps explicit navigation separate", () => {

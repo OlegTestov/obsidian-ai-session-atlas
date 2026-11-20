@@ -16,6 +16,7 @@ import { selectWithModifier, isCopyKey, copySelection, pasteClipboard, menuItems
 import { pathLinkProvider, pathClicks, localTarget } from "./term-links";
 import { resolvePath } from "./open-path";
 import { shellQuote, agentTabEnv } from "./agents";
+import { AGENT_ICONS } from "./agent-icons";
 import { normalizeCodexHome } from "./codex-hook";
 
 import { pasteImageEvent } from "./term-paste";
@@ -78,7 +79,8 @@ class AgentTerminalView extends ItemView {
   }
   getIcon() {
     if (this.backgroundJob) return BACKGROUND_ICON;
-    return this.state.kind === "codex" ? "codex-bot" : "bot";
+    const kind = this.state.kind === "codex" ? "codex" : "claude";
+    return AGENT_ICONS[kind];
   }
 
   /** The background job this tab shows (bg-session.js), or null: the tab's icon and hint follow it. */

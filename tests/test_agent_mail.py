@@ -301,6 +301,9 @@ class Cli(Base):
 
 
 class Mcp(Base):
+    OPENCODE_ID = "ses_e452b92b8ffeCjupJ3yDzE90bN"
+    OPENCODE_BOX = "atlas-o-ses_e452b92b8ffecjupj3ydze90bn"
+
     def rpc(self, msgs, name="codex"):
         lines = "\n".join(json.dumps(m) for m in msgs) + "\n"
         out = subprocess.run(
@@ -403,6 +406,75 @@ class Mcp(Base):
         self.assertFalse(result.get("isError"))
         self.assertEqual([m["text"] for m in self.m.inbox(codex["mailbox"])], ["selected"])
 
+    def test_open_tabs_lists_opencode_with_its_original_id(self):
+        tab = self.opencode_tab("Review")
+        self.snapshot([tab])
+        self.assertEqual(self.m.open_tabs(), [tab])
+
+    def test_the_longest_opencode_id_fits_the_mailbox_name_limit(self):
+        sid = "ses_" + "A" * 28
+        tab = dict(self.opencode_tab("Longest"), id=sid, mailbox=f"atlas-o-{sid.lower()}")
+        self.snapshot([tab])
+        self.assertEqual(len(tab["mailbox"]), 40)
+        self.assertEqual(self.m.mailbox_for_title("Longest"), tab["mailbox"])
+        self.m.send("claude", tab["mailbox"], "fits")
+        self.assertEqual([m["text"] for m in self.m.inbox(tab["mailbox"])], ["fits"])
+
+    def test_open_tabs_rejects_invalid_opencode_routes(self):
+        tab = self.opencode_tab("Review")
+        bad_ids = {
+            "missing prefix": self.OPENCODE_ID[4:],
+            "too short": "ses_" + "a" * 19,
+            "too long": "ses_" + "a" * 29,
+            "with a dash": "ses_" + "a" * 19 + "-",
+            "UUID": self.tab("claude", "Review", "1")["id"],
+        }
+        cases = {name: dict(tab, id=sid, mailbox=f"atlas-o-{sid.lower()}") for name, sid in bad_ids.items()}
+        cases["mixed-case mailbox"] = dict(tab, mailbox=f"atlas-o-{self.OPENCODE_ID}")
+        cases["opencode id for claude"] = dict(tab, agent="claude", mailbox=f"atlas-c-{self.OPENCODE_ID}")
+        for name, candidate in cases.items():
+            with self.subTest(name):
+                self.snapshot([candidate])
+                self.assertEqual(self.m.open_tabs(), [])
+
+    def test_send_to_opencode_filters_out_a_claude_tab_with_the_same_title(self):
+        claude = self.tab("claude", "Shared title", "1")
+        opencode = self.opencode_tab("Shared title")
+        self.snapshot([claude, opencode])
+        (result,) = self.calls([
+            ("mail_send", {"to_title": "Shared title", "to_agent": "opencode", "text": "selected"}),
+        ])
+        self.assertFalse(result.get("isError"), result)
+        self.assertEqual([m["text"] for m in self.m.inbox(opencode["mailbox"])], ["selected"])
+        self.assertFalse((Path(self.tmp) / claude["mailbox"]).exists())
+
+    def test_mcp_lists_opencode_in_tab_agent_arguments(self):
+        (result,) = self.rpc([{"jsonrpc": "2.0", "id": 1, "method": "tools/list"}])
+        properties = {t["name"]: t["inputSchema"]["properties"] for t in result["result"]["tools"]}
+        self.assertEqual(properties["mail_send"]["to_agent"]["enum"], ["claude", "codex", "opencode"])
+        self.assertEqual(
+            properties["mail_register"]["session_id"]["description"], "Your Claude Code, Codex or opencode session id"
+        )
+        with self.assertRaisesRegex(ValueError, r"to_agent must be .*claude.*codex.*opencode"):
+            self.m.mailbox_for_title("Review", "unknown")
+
+    def test_register_keeps_the_mixed_case_opencode_session_id(self):
+        self.assertEqual(self.m.register(self.OPENCODE_BOX, self.OPENCODE_ID), self.OPENCODE_ID)
+        self.assertEqual((Path(self.tmp) / self.OPENCODE_BOX / "session").read_text(), self.OPENCODE_ID + "\n")
+        for invalid in (self.OPENCODE_ID + " bad", self.OPENCODE_ID + "/bad"):
+            with self.subTest(invalid), self.assertRaisesRegex(ValueError, "bad session id"):
+                self.m.register(self.OPENCODE_BOX, invalid)
+
+    def test_own_route_matches_opencode_and_ignores_a_claude_ancestor(self):
+        claude = dict(self.tab("claude", "Claude", "1"), pid=4242)
+        opencode = self.opencode_tab("Review")
+        self.snapshot([claude, opencode])
+        with patch.object(self.m, "_ancestor_pids", return_value=[4242]):
+            self.assertEqual(self.m._own_route("opencode"), opencode)
+        self.snapshot([claude, dict(opencode, pid=4243)])
+        with patch.object(self.m, "_ancestor_pids", return_value=[4242]):
+            self.assertIsNone(self.m._own_route("opencode"))
+
     def test_renamed_expired_closed_and_untrusted_routes(self):
         old = self.tab("claude", "Old", "1")
         first = self.snapshot([old])
@@ -498,6 +570,9 @@ class Mcp(Base):
         sid = f"00000000-0000-0000-0000-00000000000{digit}"
         prefix = {"claude": "c", "codex": "x"}[agent]
         return {"id": sid, "agent": agent, "title": title, "mailbox": f"atlas-{prefix}-{sid.replace('-', '')}"}
+
+    def opencode_tab(self, title):
+        return {"id": self.OPENCODE_ID, "agent": "opencode", "title": title, "mailbox": self.OPENCODE_BOX, "pid": 4242}
 
     def snapshot(self, rows, digit="1"):
         folder = Path(self.tmp) / ".atlas-tabs"

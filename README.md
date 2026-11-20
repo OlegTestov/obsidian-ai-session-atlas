@@ -276,6 +276,7 @@ many sessions the first index can take a few minutes.
 ### Agent Mail
 
 Claude Code and Codex can write to each other by the title of an open Atlas terminal tab.
+Another app that uses Agent Mail can list its opencode tabs too, and mail reaches them the same way.
 
 Nothing to set up. Every Claude Code or Codex session you start in an Atlas agent tab gets the Agent Mail MCP server bundled with Atlas, and its mail tools run without approval prompts. Atlas passes the server in the launch command, so your own `~/.claude.json` and Codex `config.toml` stay untouched. Sessions started outside Atlas, for example in a regular terminal, do not get Agent Mail.
 

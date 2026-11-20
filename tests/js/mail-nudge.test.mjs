@@ -12,7 +12,7 @@ const notices = [];
 Module._load = (name, ...args) => name === "obsidian"
   ? { Notice: class { constructor(...a) { notices.push(a); } } } : realLoad(name, ...args);
 const { MailNudger, scanMail } = loadSrc("mail-nudge");
-const { tabRoutes } = loadSrc("mail-routes");
+const { ROUTE, tabRoutes } = loadSrc("mail-routes");
 const { TerminalMethods } = loadSrc("terminal");
 const { InputMethods } = loadSrc("input");
 const { PASTE_START, PASTE_END } = loadSrc("constants");
@@ -531,6 +531,23 @@ test("the default mail folder is still created for the routes", async t => {
   r.plugin.settings.agentMailRoot = "";
   await r.poll();
   assert.deepEqual(fs.readdirSync(home), [".atlas-tabs"]);
+});
+
+test("tab mailbox routes recognize Claude Code, Codex and opencode", () => {
+  for (const mailbox of [
+    "atlas-c-2ac2350c2c704ff1a54324733c73e16f",
+    "atlas-x-01a1eb54e7627fa292fd81e593efa0be",
+    "atlas-o-ses_e452b92b8ffecjupj3ydze90bn",
+    `atlas-o-ses_${"a".repeat(20)}`,
+    `atlas-o-ses_${"a".repeat(28)}`,
+  ]) assert.equal(ROUTE.test(mailbox), true, mailbox);
+  for (const mailbox of [
+    "atlas-o-ses_e452b92b8ffeCjupJ3yDzE90bN",
+    "atlas-o-2ac2350c-2c70-4ff1-a543-24733c73e16f",
+    "atlas-o-2ac2350c2c704ff1a54324733c73e16f",
+    `atlas-o-ses_${"a".repeat(19)}`,
+    `atlas-o-ses_${"a".repeat(29)}`,
+  ]) assert.equal(ROUTE.test(mailbox), false, mailbox);
 });
 
 test("a route carries the agent pid only when it is an integer above 1", () => {

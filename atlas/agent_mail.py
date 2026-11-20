@@ -34,7 +34,8 @@ TAB_DIR = ".atlas-tabs"
 TAB_TTL = 30  # Session Atlas refreshes its open-tab snapshots every 5 seconds.
 TAB_LIMIT = 2 * 1024 * 1024
 UUID_RE = re.compile(r"[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}")
-TAB_PREFIX = {"claude": "c", "codex": "x"}
+OPENCODE_ID_RE = re.compile(r"ses_[A-Za-z0-9]{20,28}")  # atlas-o-ses_ + 28 = the 40-character name limit
+TAB_PREFIX = {"claude": "c", "codex": "x", "opencode": "o"}
 TITLE_STATUS = re.compile(r"^[✳◐◓◑◒\u2800-\u28ff] ")
 
 
@@ -126,7 +127,7 @@ def send(sender, to, text, thread=None):
 def register(name, session_id):
     """Bind a mailbox to a session so a terminal host can prompt the agent to read it."""
     name, sid = _name(name), (session_id or "").strip()
-    if not re.match(r"^[A-Za-z0-9-]{8,80}$", sid):
+    if not re.match(r"^[A-Za-z0-9_-]{8,80}$", sid):
         raise ValueError(f"bad session id {sid!r}")
     touch(name)
     tmp = os.path.join(HOME, name, ".session.tmp")
@@ -195,6 +196,15 @@ def _title_key(title):
     return unicodedata.normalize("NFC", " ".join(title.split())).casefold()
 
 
+def _tab_mailbox(agent, sid):
+    if not isinstance(agent, str) or agent not in TAB_PREFIX or not isinstance(sid, str):
+        return None
+    prefix = TAB_PREFIX[agent]
+    if agent == "opencode":
+        return f"atlas-{prefix}-{sid.lower()}" if OPENCODE_ID_RE.fullmatch(sid) else None
+    return f"atlas-{prefix}-{sid.replace('-', '')}" if UUID_RE.fullmatch(sid) else None
+
+
 def _read_snapshot(file):
     fd = os.open(file.path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd, "rb") as fh:
@@ -231,17 +241,10 @@ def open_tabs():
                     if not isinstance(tab, dict):
                         continue
                     agent, sid, title = tab.get("agent"), tab.get("id"), tab.get("title")
-                    if (
-                        agent not in ("claude", "codex")
-                        or not isinstance(sid, str)
-                        or not UUID_RE.fullmatch(sid)
-                        or not isinstance(title, str)
-                        or not 0 < len(title) <= 1000
-                        or not _title_key(title)
-                    ):
+                    if not isinstance(title, str) or not 0 < len(title) <= 1000 or not _title_key(title):
                         continue
-                    mailbox = f"atlas-{TAB_PREFIX[agent]}-{sid.replace('-', '')}"
-                    if tab.get("mailbox") != mailbox:
+                    mailbox = _tab_mailbox(agent, sid)
+                    if mailbox is None or tab.get("mailbox") != mailbox:
                         continue
                     if mailbox not in by_mailbox or by_mailbox[mailbox][0] <= seen:
                         by_mailbox[mailbox] = (seen, tab)
@@ -261,8 +264,8 @@ def _matches_title(tab, key):
 def mailbox_for_title(title, agent=None):
     if not isinstance(title, str) or not 0 < len(title) <= 1000 or not _title_key(title):
         raise ValueError("provide the terminal tab title in to_title")
-    if agent not in (None, "claude", "codex"):
-        raise ValueError("to_agent must be claude or codex")
+    if agent not in (None, "claude", "codex", "opencode"):
+        raise ValueError("to_agent must be claude, codex or opencode")
     key = _title_key(title)
     matches = [tab for tab in open_tabs() if _matches_title(tab, key) and (agent is None or tab["agent"] == agent)]
     if not matches:
@@ -429,7 +432,7 @@ TOOLS = [
                 },
                 "to_agent": {
                     "type": "string",
-                    "enum": ["claude", "codex"],
+                    "enum": ["claude", "codex", "opencode"],
                     "description": "Optional agent filter when the user names the recipient's agent type",
                 },
                 "text": {"type": "string", "description": "Message text"},
@@ -461,7 +464,7 @@ TOOLS = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "session_id": {"type": "string", "description": "Your Claude Code or Codex session id"},
+                "session_id": {"type": "string", "description": "Your Claude Code, Codex or opencode session id"},
                 "as": {"type": "string", "description": "Mailbox name; defaults to AGENT_MAIL_NAME"},
             },
             "required": ["session_id"],

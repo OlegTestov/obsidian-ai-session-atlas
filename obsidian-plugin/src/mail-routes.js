@@ -5,7 +5,7 @@ import { randomUUID } from "crypto";
 
 const DIRECTORY = ".atlas-tabs";
 const UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/;
-const ROUTE = /^atlas-[cx]-[0-9a-f]{32}$/;
+const ROUTE = /^atlas-(?:[cx]-[0-9a-f]{32}|o-ses_[a-z0-9]{20,28})$/;
 const PREFIX = { claude: "c", codex: "x" };
 
 function tabRoutes(sessions, tabs, limitForTab = () => null) {

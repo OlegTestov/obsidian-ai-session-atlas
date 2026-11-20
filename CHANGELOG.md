@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.14.0] - 2026-11-20
+
+### Added
+
+- Agent Mail accepts opencode tabs that another app using Agent Mail lists, so Claude Code, Codex and opencode agents can mail each other.
+- The What's new window shows the Claude and Codex marks from 2.13.2.
+
 ## [2.13.2] - 2026-11-20
 
 ### Changed

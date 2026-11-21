@@ -39,6 +39,40 @@ def process_table() -> dict[int, tuple]:
     return table
 
 
+def process_start_iso(lstart: str | None) -> str | None:
+    """Convert the UTC start time returned by the process table."""
+    try:
+        when = datetime.strptime(" ".join((lstart or "").split()), "%a %b %d %H:%M:%S %Y")
+    except ValueError:
+        return None
+    return when.replace(tzinfo=timezone.utc).isoformat()
+
+
+def pending_card(agent: str, pid: int, table: dict, cwd: str) -> dict | None:
+    """An interactive process that hasn't written a conversation yet."""
+    from .relocate import host_app
+
+    lstart = table[pid][1]
+    started = process_start_iso(lstart)
+    if not started:
+        return None
+    return {
+        "session_id": f"pending-{agent}-{pid}-" + "-".join(lstart.split()),
+        "pending": True,
+        "agent": agent,
+        "pid": pid,
+        "ancestors": ancestors(pid, table),
+        "host_app": host_app(pid, table),
+        "status": "idle",
+        "activity": "idle",
+        "cwd": cwd,
+        "started_at": started,
+        "process_started_at": started,
+        "last_message_at": None,
+        "indexed": False,
+    }
+
+
 # A Claude Code background command (Monitor, background Bash) is a child shell with an env snapshot.
 # MCP servers are child processes too, but they run their own command.
 SHELL_TASK_MARK = "/.claude/shell-snapshots/snapshot-"

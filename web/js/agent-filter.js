@@ -28,7 +28,7 @@ function agentShort(s) {
 // plan-mode dialog is Claude Code's only.
 function agentControls(s) {
   const agent = AtlasLogic.agentOf(s);
-  return { commands: true, plan: agent === "claude", agent };
+  return { commands: !s.pending, plan: agent === "claude", agent };
 }
 
 // Codex writes no approval into its rollout, so the server sees a waiting Codex session as busy or
@@ -36,7 +36,7 @@ function agentControls(s) {
 // Claude dialog, and only then is the dialog read. Messages queued in the terminal UI are on its
 // screen only. The server's own row stays untouched. screen: {state, queued} from the plugin.
 function withTabScreen(s, screen) {
-  if (AtlasLogic.agentOf(s) !== "codex" || !screen) return s;
+  if (s.pending || AtlasLogic.agentOf(s) !== "codex" || !screen) return s;
   const extra = {};
   if (screen.state === "waiting") {
     Object.assign(extra, { status: "waiting", activity: "waiting",

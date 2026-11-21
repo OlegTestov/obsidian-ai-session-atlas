@@ -20,6 +20,29 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 MUT = [
+ ("pending card: a shared-daemon client gets a placeholder that never resolves", "atlas/codex_procs.py",
+  "    return not shared_daemon or \"--no-daemon\" in words", "    return True"),
+ ("pending card: a --no-daemon tab loses its placeholder while the daemon runs", "atlas/codex_procs.py",
+  "    return not shared_daemon or \"--no-daemon\" in words", "    return not shared_daemon"),
+ ("pending card: a --remote client gets a placeholder that never resolves", "atlas/codex_procs.py",
+  "    if any(w == \"--remote\" or w.startswith(\"--remote=\") for w in words):\n        return False\n", ""),
+ ("pending card: no placeholder before the first rollout", "atlas/codex_live.py",
+  "    for pid, cwd in sorted(pending_cwds.items()):", "    for pid, cwd in []:"),
+ ("pending card: hide interactive sessions outside Atlas", "atlas/codex_live.py",
+  "        if made:\n            out.append(made)", '        if made and not made["host_app"]:\n            out.append(made)'),
+ ("pending card: use a real thread id for the placeholder", "atlas/active.py",
+  'f"pending-{agent}-{pid}-" + "-".join(lstart.split())', '"019e0000-aaaa-7000-8000-000000000001"'),
+ ("pending card: omit the process working folder", "atlas/codex_procs.py",
+  'if fd == "cwd":', 'if fd == "txt":'),
+ ("pending card: scan exec and app-server too", "atlas/codex_procs.py",
+  "return word not in NOT_INTERACTIVE", "return True"),
+ ("pending card: do not reuse the lsof poll", "atlas/codex_live.py",
+  "home=home, pending_cwds=pending_cwds", "home=home, fresh=True, pending_cwds=pending_cwds"),
+ ("pending card: keep both the rollout and its placeholder", "atlas/codex_procs.py",
+  "elif pending_cwds is not None and folder and not had_rollout \\",
+  "if pending_cwds is not None and folder and (path or not had_rollout) \\"),
+ ("pending card: show a new placeholder during /new", "atlas/codex_procs.py",
+  "bool(path or all_files.get(pid) or (previous and previous[3]))", "bool(path or all_files.get(pid))"),
  ('review: warm-up counts the view without background runs', 'atlas/server.py', 'key_for("7d", True, None, lang)', 'key_for("7d", False, None, lang)'),
  ('defaults: AI features off without a setting', 'atlas/config.py', '"llm_enabled": True,', '"llm_enabled": False,'),
  ('stats: background cost counts interactive rows too', 'atlas/stats.py', 'if r.get("bg"):', 'if True:'),
@@ -735,11 +758,11 @@ MUT = [
  ("codex: active: an option's value read as the subcommand", "atlas/codex_procs.py",
   "            skip = word in VALUE_FLAGS", "            skip = False"),
  ("codex: active: a rollout outside the Codex home accepted", "atlas/codex_procs.py",
-  " and _inside(path, home) and ", " and "),
+  "for path in paths if _inside(path, home)", "for path in paths"),
  ("codex: active: lsof runs on every poll", "atlas/codex_procs.py",
   "if fresh or key not in _map_cache or now - _map_cache[key][0] > MAP_TTL]", "if True]"),
  ("codex: active: no command-line fallback without lsof", "atlas/codex_procs.py",
-  "(0.0, _from_argv(table[pid][2], home))", "(0.0, None)"),
+  "path = _from_argv(table[pid][2], home)\n                _map_cache", "path = None\n                _map_cache"),
  ("codex: active: a subagent rollout becomes the card", "atlas/codex_procs.py",
   'own = [p for p in paths if not session_meta(p).get("subagent")] or paths', "own = paths"),
  ("codex: active: a running turn shown idle", "atlas/codex_tail.py",
@@ -1402,6 +1425,12 @@ MUT = [
   " or not 0 < ms < 4e12:", ":"),
 ]
 JS_MUT = [
+ ("codex: the hook review footer is unknown", "obsidian-plugin/src/dialog-codex.js",
+  "|enter confirm · esc skip|", "|"),
+ ("codex: a footer is looked for only in the bottom rows", "obsidian-plugin/src/dialog-codex.js",
+  "  const end = lastFilled(rows);\n  for (let i = end - 1;", "  const end = rows.length;\n  for (let i = end - 1;"),
+ ("codex: a selected option counts as the composer", "obsidian-plugin/src/dialog-codex.js",
+  "if (COMPOSER.test(rows[i]) && !OPTION.test(rows[i])) return i;", "if (COMPOSER.test(rows[i])) return i;"),
  ("reload: a failed group save leaves the request stuck", "obsidian-plugin/src/reload.js",
   "        stop();\n        this.reloading = false;\n", "        stop();\n"),
  ("reload: schedules work while hidden", "obsidian-plugin/src/reload.js",
@@ -1418,6 +1447,23 @@ JS_MUT = [
   '      doc.removeEventListener("visibilitychange", schedule);\n', ""),
  ("reload: tries to unload again after an interrupted save", "obsidian-plugin/src/reload.js",
   "if (cancelled || doc.hidden) {", "if (doc.hidden) {"),
+ ("pending card: show the normal card's actions", "web/js/active-cards.js",
+  "if (s.pending) return pendingActiveCard(s);", "if (false) return pendingActiveCard(s);"),
+ ("pending card: use the English title in Russian", "web/js/lang-active.js",
+  '"Новая сессия {agent}"', '"New {agent} session"'),
+ ("pending card: expose a command picker before the first message", "web/js/agent-filter.js",
+  "commands: !s.pending", "commands: true"),
+ ("pending card: the card's draft is lost when the real card arrives", "web/js/active-order.js",
+  "if (map.has(s.session_id) && !map.has(next.session_id)) map.set(next.session_id, map.get(s.session_id));",
+  "if (map.has(s.session_id) && !map.has(next.session_id)) continue;"),
+ ("pending card: put the first thread at the end", "web/js/active-order.js",
+  "frozenOrder[slot] = next.session_id;", "frozenOrder.push(next.session_id);"),
+ ("pending card: move the first turn to another section", "web/js/active-order.js",
+  'if (firstTurnSlots.get(s.session_id) === activity) return "idle";', ""),
+ ("pending card: allow thread actions on the placeholder", "obsidian-plugin/src/input.js",
+  'allowPending && data.sessionId.startsWith("pending-")', 'data.sessionId.startsWith("pending-")'),
+ ("pending card: accept a recycled process for input", "obsidian-plugin/src/terminal.js",
+  '        || id !== `pending-codex-${pid}-${fields.slice(0, 5).join("-")}`) return null;', ") return null;"),
  ("review213: restored tabs get a single sweep", "obsidian-plugin/src/startup.js",
   "        total += loaded;\n        continue;\n", "        total += loaded;\n        return total;\n"),
  ("review213: an unloaded instance still writes the mail flags", "obsidian-plugin/src/mail-launch.js",
@@ -2090,9 +2136,9 @@ JS_MUT = [
  ("page: 1M window shown as 1000k", "web/js/logic.js",
   'return n >= 1e6 ? (n / 1e6)', 'return n >= 1e9 ? (n / 1e6)'),
  ("plugin: command response is not read", "obsidian-plugin/src/input.js",
-  'if (command && !images.length\n        && (codex ? this.codexScreenCommand(command[1]) : SCREEN_COMMANDS.has(command[1]))) {', 'if (false) {'),
+  'if (command && !state.pending && !images.length\n        && (codex ? this.codexScreenCommand(command[1]) : SCREEN_COMMANDS.has(command[1]))) {', 'if (false) {'),
  ("plugin: screen is read after any message", "obsidian-plugin/src/input.js",
-  'if (command && !images.length\n        && (codex ? this.codexScreenCommand(command[1]) : SCREEN_COMMANDS.has(command[1]))) {', 'if (!images.length) {'),
+  'if (command && !state.pending && !images.length\n        && (codex ? this.codexScreenCommand(command[1]) : SCREEN_COMMANDS.has(command[1]))) {', 'if (!images.length) {'),
  ("dialog: panel not recognized", "obsidian-plugin/src/dialog.js",
   'if (PANEL_RULE.test(rows[i])) { panel = i; break; }', ''),
  ("dialog: command echo stays in the reply", "obsidian-plugin/src/dialog.js",
@@ -2109,7 +2155,7 @@ JS_MUT = [
   "if (!(await seen((lines) => squash(composerText(lines)) === squash(text)))) {",
   "if (false) {"),
  ("codex: text typed into an unknown screen", "obsidian-plugin/src/input.js",
-  '    if (state.agent === "codex" && !state.status) return reply(false, this.t("input.codexScreen"));', ""),
+  '(!state.status || (state.pending && state.status !== "idle"))', '(state.pending && state.status !== "idle")'),
  ("codex: an approval on the tab does not notify", "obsidian-plugin/src/notify.js",
   'out.push(waiting ? { ...s, status: "waiting", activity: "waiting" } : s);', "out.push(s);"),
  ("codex: a dialog without the footer hint", "obsidian-plugin/src/dialog-codex.js",
@@ -2118,9 +2164,9 @@ JS_MUT = [
  ("page: 11 inflected like 1", "web/js/logic.js",
   'if (m10 === 1 && m100 !== 11) return one;', 'if (m10 === 1) return one;'),
  ("codex: page: Claude-only controls on Codex cards", "web/js/agent-filter.js",
-  'return { commands: true, plan: agent === "claude", agent };', 'return { commands: true, plan: true, agent };'),
+  'return { commands: !s.pending, plan: agent === "claude", agent };', 'return { commands: !s.pending, plan: true, agent };'),
  ("codex: page: no slash commands on Codex cards", "web/js/agent-filter.js",
-  'return { commands: true, plan: agent === "claude", agent };', 'return { commands: agent === "claude", plan: agent === "claude", agent };'),
+  'return { commands: !s.pending, plan: agent === "claude", agent };', 'return { commands: !s.pending && agent === "claude", plan: agent === "claude", agent };'),
  ("codex: page: \"$\" lists slash commands", "web/js/logic.js",
   'const mine = list.filter(c => (c.sigil || "/") === m[1]);', "const mine = list;"),
  ("codex: page: /model efforts without --reasoning", "web/js/active-commands.js",
@@ -2675,8 +2721,9 @@ def _run(cmd):
         return 124
 
 
-def run_python():
-    return _run([sys.executable, "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider"])
+def run_python(name=None):
+    focused = ["tests/test_codex_active.py", "-k", "pending_codex"] if (name or "").startswith("pending card:") else []
+    return _run([sys.executable, "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider", *focused])
 
 
 SELECTOR_MUTATIONS = {
@@ -2690,6 +2737,8 @@ def run_node(path, name=None):
     # or a bundled server on the host. Its pure selector test catches both mutations directly.
     tests = (["--test-name-pattern=cleanup selects only", "tests/js/indexer-cleanup.test.mjs"]
              if name in SELECTOR_MUTATIONS else js_tests(path))
+    if (name or "").startswith("pending card:") and path.startswith("obsidian-plugin/"):
+        tests = ["--test-name-pattern=pending Codex input", "tests/js/plugin.test.mjs"]
     # Force-exit: a mutant may leave a timer running. It can cut the TAP tail on macOS, so only the
     # exit code is read here (npm test runs without it to keep the counts whole).
     return _run(["node", "--test", "--test-force-exit", "--test-timeout=120000", *tests])
@@ -2745,7 +2794,8 @@ def main():
                 continue
         if args.check:
             continue
-        ok = mutate(path, old, new, functools.partial(run_node, path, name) if is_js else run_python)
+        run = functools.partial(run_node, path, name) if is_js else functools.partial(run_python, name)
+        ok = mutate(path, old, new, run)
         caught += ok
         missed += not ok
         print(f"  {'caught' if ok else 'MISSED':12} {name}", flush=True)

@@ -4,11 +4,11 @@ import { api, expect, ids, run, test } from "./fixtures.mjs";
 
 test("a resumed daemon client appears once; other daemon-held threads are not guessed", async ({ page, open }) => {
   const daemon = spawn("/bin/bash", ["-c",
-    'exec -a "codex app-server --listen unix:// --managed-daemon" sleep 60 < "$1" 3< "$2"',
-    "daemon", run.corpus.files.codexLedger, run.corpus.files.codexFork],
+    'exec -a "$1 app-server --listen unix:// --managed-daemon" sleep 60 < "$2" 3< "$3"',
+    "daemon", run.codexProcess, run.corpus.files.codexLedger, run.corpus.files.codexFork],
     { detached: true, stdio: "ignore" });
   const client = spawn("/bin/bash", ["-c", 'exec -a "$1" sleep 60',
-    "client", `codex resume ${ids.codexLedger}`], { detached: true, stdio: "ignore" });
+    "client", `${run.codexProcess} resume ${ids.codexLedger}`], { detached: true, stdio: "ignore" });
   try {
     await expect.poll(async () => (await api("/api/active")).sessions
       .filter(s => s.session_id === ids.codexLedger).length, { timeout: 15000 }).toBe(1);

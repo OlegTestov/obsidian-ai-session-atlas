@@ -14,6 +14,26 @@ import { terminalRenderer } from "../../esbuild.config.mjs";
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const PYTHON = process.env.E2E_PYTHON || "python3";
 const RESERVED = new Set([8787, 8788]);      // the real catalog and the dev install
+// A pre-prompt process has no rollout to identify its Codex home. Give this run's stand-ins their
+// own argv[0] and keep ambient Codex processes out of the fixture server's process table.
+const FIXTURE_SERVER = `
+import sys
+from atlas import active, cli, codex_procs
+
+fixture_codex = sys.argv.pop(1)
+process_table = active.process_table
+
+def fixture_process_table():
+    table = {}
+    for pid, row in process_table().items():
+        command = row[2].split(None, 1)
+        if not command or command[0] == fixture_codex or not codex_procs.BINARY.search(command[0]):
+            table[pid] = row
+    return table
+
+active.process_table = fixture_process_table
+raise SystemExit(cli.main())
+`;
 // argv: Codex home, thread id, goal, queued text. Schemas as codex-cli 0.167 creates them.
 const CODEX_STATE = `
 import json, os, sqlite3, sys
@@ -54,13 +74,13 @@ async function freePort() {
 
 /**
  * A stand-in agent process: `bash` (the "terminal tab") runs a `sleep` whose argv[0] is the agent
- * name, so `ps` lists it as `codex 3600` / `claude 3600`. Codex's one also holds its rollout open
+ * name, so `ps` lists it as `/…/codex 3600` / `claude 3600`. Codex's one also holds its rollout open
  * read-only, which is how the server maps a live `codex` to its thread (lsof).
  */
 function startAgent(name, holdOpen) {
-  const script = holdOpen ? `(exec -a ${name} sleep 3600 < "$1") & echo $!; wait`
-    : `(exec -a ${name} sleep 3600) & echo $!; wait`;
-  const shell = spawn("/bin/bash", ["-c", script, "agent", holdOpen || ""],
+  const script = holdOpen ? '(exec -a "$1" sleep 3600 < "$2") & echo $!; wait'
+    : '(exec -a "$1" sleep 3600) & echo $!; wait';
+  const shell = spawn("/bin/bash", ["-c", script, "agent", name, holdOpen || ""],
                       { detached: true, stdio: ["ignore", "pipe", "inherit"] });
   return new Promise((resolve, reject) => {
     let out = "";
@@ -185,7 +205,8 @@ export default async function globalSetup() {
     // Live sessions: a Claude Code process with its sessions/<pid>.json, a Codex one holding its rollout.
     const claudeProc = await startAgent("claude");
     cleanup.push(() => process.kill(-claudeProc.shell, "SIGKILL"));
-    const codexProc = await startAgent("codex", corpus.files.codexLive);
+    const codexProcess = path.join(root, "codex");
+    const codexProc = await startAgent(codexProcess, corpus.files.codexLive);
     cleanup.push(() => process.kill(-codexProc.shell, "SIGKILL"));
     // Its /goal and a message queued through the app server, in the tables codex-cli 0.167 writes.
     execFileSync(PYTHON, ["-c", CODEX_STATE, corpus.codexHome, IDS.codexLive, PHRASES.codexGoal,
@@ -200,7 +221,7 @@ export default async function globalSetup() {
 
     const port = await freePort();
     const log = fs.openSync(path.join(root, "server.log"), "a");
-    const server = spawn(PYTHON, ["-m", "atlas.cli", "serve", "--port", String(port)],
+    const server = spawn(PYTHON, ["-c", FIXTURE_SERVER, codexProcess, "serve", "--port", String(port)],
                          { cwd: app, env: { ...env, PYTHONPATH: app }, stdio: ["ignore", log, log], detached: true });
     cleanup.push(() => process.kill(-server.pid, "SIGTERM"));
     const base = `http://127.0.0.1:${port}`;
@@ -224,7 +245,7 @@ export default async function globalSetup() {
       return live.codex_limits && live.codex_limits.source === "live";
     }, "Codex limits read from the stand-in app server", 15000);
 
-    const state = { base, port, root, corpus, ids: IDS, pids: { claude: claudeProc, codex: codexProc },
+    const state = { base, port, root, corpus, ids: IDS, codexProcess, pids: { claude: claudeProc, codex: codexProc },
                     codexStandInLog: codexStandIn.log };
     fs.writeFileSync(path.join(root, "state.json"), JSON.stringify(state));
     process.env.E2E_STATE = path.join(root, "state.json");

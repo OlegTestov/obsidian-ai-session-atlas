@@ -170,6 +170,25 @@ class TerminalMethods {
     return { agent: "codex", sessionIds: ids, sessionId: ids[0], status: codexScreenState(this.screenLines(leaf)) };
   }
 
+  /** A card can type into its new Codex tab before that process has a thread id. */
+  readPendingState(pid, id, leaf) {
+    if (this.tabAgent(leaf) !== "codex") return null;
+    let fields;
+    try {
+      fields = childProcess.execFileSync("ps", ["-o", "lstart=,comm=", "-p", String(pid)], {
+        encoding: "utf8", timeout: 2000, env: { ...process.env, TZ: "UTC", LC_ALL: "C" },
+      }).trim().split(/\s+/);
+    } catch {
+      return null;
+    }
+    const binary = path.basename(fields.slice(5).join(" "));
+    if (!/^codex(?:-(?:aarch64|x86_64)-(?:apple-darwin|unknown-linux-musl))?$/.test(binary)
+        || id !== `pending-codex-${pid}-${fields.slice(0, 5).join("-")}`) return null;
+    // The id binds this exact process, so its card keeps working once the first message created
+    // the thread, until the page swaps in the real card.
+    return { pending: true, agent: "codex", sessionIds: [id], status: codexScreenState(this.screenLines(leaf)) };
+  }
+
   /** The executable's base name: "codex" for the native binary, also when npm's wrapper started it. */
   processName(pid) {
     try {

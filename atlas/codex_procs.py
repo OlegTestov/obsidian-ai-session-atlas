@@ -38,7 +38,7 @@ def _run(cmd: list[str], **kw):
     return subprocess.run(cmd, **kw)
 
 
-_map_cache: dict[tuple, tuple] = {}         # (pid, start) → (checked at, rollout path or None)
+_map_cache: dict[tuple, tuple] = {}         # (pid, start) → (checked at, rollout path, pending cwd, had rollout)
 _open_cache: dict[tuple, list] = {}         # (pid, start) → every rollout it held open at that check
 _meta_cache: dict[str, dict] = {}           # rollout path → its session_meta
 _find_cache: dict[str, str] = {}            # thread id → rollout path
@@ -73,28 +73,45 @@ def _inside(path: str, home: str) -> bool:
     return real == root or real.startswith(root.rstrip(os.sep) + os.sep)
 
 
-def open_rollouts(pids, run=None, home: str | None = None) -> dict[int, list[str]] | None:
-    """One `lsof` for all PIDs: {pid: [rollout paths]}. None: lsof is missing, slow or failed."""
+def _process_files(pids, run) -> tuple[dict, dict] | None:
+    """One lsof for all PIDs: rollouts and cwd by PID."""
     pids = sorted(set(pids))
     if not pids:
-        return {}
-    home = home or index.codex_home()
+        return {}, {}
     try:
-        out = (run or _run)([LSOF, "-w", "-n", "-P", "-F", "pn", "-p", ",".join(map(str, pids))],
+        out = (run or _run)([LSOF, "-w", "-n", "-P", "-F", "pfn", "-p", ",".join(map(str, pids))],
                   capture_output=True, text=True, timeout=LSOF_TIMEOUT).stdout
     except (OSError, subprocess.SubprocessError):
         return None
     found: dict[int, list[str]] = {}
+    cwd: dict[int, str] = {}
     pid = None
+    fd = ""
     for line in (out or "").splitlines():
         if line.startswith("p") and line[1:].isdigit():
             pid = int(line[1:])
             found.setdefault(pid, [])
+            fd = ""
+        elif line.startswith("f"):
+            fd = line[1:]
         elif line.startswith("n") and pid is not None:
             path = line[1:]
-            if codex_parse.session_id_of(path) and _inside(path, home) and path not in found[pid]:
+            if fd == "cwd":
+                if os.path.isabs(path):
+                    cwd[pid] = path
+            elif codex_parse.session_id_of(path) and path not in found[pid]:
                 found[pid].append(path)
-    return found
+    return found, cwd
+
+
+def _rollouts_in_home(found: dict, home: str) -> dict:
+    return {pid: [path for path in paths if _inside(path, home)] for pid, paths in found.items()}
+
+
+def open_rollouts(pids, run=None, home: str | None = None) -> dict[int, list[str]] | None:
+    """None means lsof is missing, slow or failed."""
+    files = _process_files(pids, run)
+    return _rollouts_in_home(files[0], home or index.codex_home()) if files is not None else None
 
 
 def session_meta(path: str) -> dict:
@@ -177,8 +194,8 @@ def _from_argv(command: str, home: str) -> str | None:
 
 
 def rollouts_for(table: dict, run=None, home: str | None = None, fresh: bool = False,
-                 now: float | None = None) -> dict[int, str]:
-    """pid → rollout path of every interactive `codex` that has one open."""
+                 now: float | None = None, pending_cwds: dict[int, str] | None = None) -> dict[int, str]:
+    """Map interactive Codex processes to rollouts and optionally collect cwd for pending cards."""
     home = home or index.codex_home()
     now = time.monotonic() if now is None else now
     live = interactive_pids(table)
@@ -192,22 +209,51 @@ def rollouts_for(table: dict, run=None, home: str | None = None, fresh: bool = F
                    and len(row[2].split()) > 1 and BINARY.search(row[2].split()[0])
                    and row[2].split()[1] == "app-server"]
         candidates = daemons if any(_from_argv(table[p][2], home) for p in stale) else []
-        found = open_rollouts(stale + candidates, run, home)
-        shared = {p for pid in candidates for p in (found or {}).get(pid, [])}
+        files = _process_files(stale + candidates, run)
+        all_files, cwd = files if files is not None else ({}, {})
+        found = _rollouts_in_home(all_files, home)
+        shared = {p for pid in candidates for p in found.get(pid, [])}
         for pid in stale:
-            if found is not None:
+            if files is not None:
                 path = main_rollout(found.get(pid, []))
                 resumed = _from_argv(table[pid][2], home) if not path else None
                 if resumed in shared and not session_meta(resumed).get("subagent"):
                     path = resumed
-                _map_cache[keys[pid]] = (now, path)
+                previous = _map_cache.get(keys[pid])
+                had_rollout = bool(path or all_files.get(pid) or (previous and previous[3]))
+                _map_cache[keys[pid]] = (now, path, cwd.get(pid), had_rollout)
                 _open_cache[keys[pid]] = list(found.get(pid, []))
             elif keys[pid] not in _map_cache:      # keep an older answer; retried next time
-                _map_cache[keys[pid]] = (0.0, _from_argv(table[pid][2], home))
+                path = _from_argv(table[pid][2], home)
+                _map_cache[keys[pid]] = (0.0, path, None, bool(path))
     for key in [k for k in _map_cache if k not in keys.values()]:
         del _map_cache[key]                         # the process is gone
         _open_cache.pop(key, None)
-    return {pid: _map_cache[key][1] for pid, key in keys.items() if _map_cache[key][1]}
+    # A client of the shared daemon or of a --remote server never holds its rollout, so its
+    # placeholder would never turn into a card. Atlas tabs start Codex with --no-daemon.
+    shared_daemon = any(len(row) > 2 and _is_shared_daemon(row[2]) for row in table.values())
+    paths = {}
+    for pid, key in keys.items():
+        _, path, folder, had_rollout = _map_cache[key]
+        if path:
+            paths[pid] = path
+        elif pending_cwds is not None and folder and not had_rollout \
+                and _owns_rollouts(table[pid][2], shared_daemon):
+            pending_cwds[pid] = folder
+    return paths
+
+
+def _owns_rollouts(command: str, shared_daemon: bool) -> bool:
+    words = command.split()
+    if any(w == "--remote" or w.startswith("--remote=") for w in words):
+        return False
+    return not shared_daemon or "--no-daemon" in words
+
+
+def _is_shared_daemon(command: str) -> bool:
+    parts = command.split()
+    return len(parts) > 1 and bool(BINARY.search(parts[0])) and parts[1] == "app-server" \
+        and "--managed-daemon" in parts
 
 
 def subagent_rollouts(pid: int, table: dict, session_id: str) -> list[str]:

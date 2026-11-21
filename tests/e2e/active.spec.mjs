@@ -46,6 +46,63 @@ test("both live sessions show by default with badges and statuses", async ({ pag
   expect([...asked].sort()).toEqual(["account/rateLimits/read", "initialize", "initialized"]);
 });
 
+test("a pending Codex card keeps its slot when the first rollout appears", async ({ page, lang }) => {
+  const started = "2026-11-01T10:00:00+00:00";
+  const pendingId = "pending-codex-7101-Sun-Nov-1-10:00:00-2026";
+  const pending = { session_id: pendingId, agent: "codex", pending: true, status: "idle",
+    pid: 7101, ancestors: [7001], cwd: "/tmp/project with spaces", started_at: started, process_started_at: started };
+  const real = { ...pending, pending: false, session_id: ids.codexLive, title: "First prompt", status: "busy" };
+  const peer = (id, time) => ({ session_id: id, agent: "claude", status: "idle",
+    title: id, started_at: `2026-11-01T${time}:00:00+00:00` });
+  let sessions = [peer("first", "11"), pending, peer("last", "09")];
+  await page.route("**/api/active?*", route => route.fulfill({ json: { sessions } }));
+  await page.route("**/api/active/feed/**", route => route.fulfill({ json: { turns: [] } }));
+  await page.route(`${run.base}/pending-host.html`, route => route.fulfill({
+    contentType: "text/html", body: `<iframe id="atlas" style="width:100vw;height:100vh;border:0"
+      src="/?lang=${lang}#view=active"></iframe><script>
+      window.actions = [];
+      addEventListener("message", e => {
+        if (e.data.type === "list-tabs") e.source.postMessage({ source:"session-atlas-host", type:"tabs",
+          tabs:[{ ptyPid:7001, agent:"codex", inline:true }] }, "*");
+        if (["focus-tab", "close-tab", "send-text"].includes(e.data.type)) window.actions.push(e.data);
+      });
+    </script>`,
+  }));
+  await page.goto(`${run.base}/pending-host.html`);
+  const frame = page.frameLocator("#atlas");
+  const card = frame.locator(`.acard[data-id="${pendingId}"]`);
+  const [title, status, go, close, terminal] = lang === "ru"
+    ? ["Новая сессия Codex", "ждёт первого сообщения", "Перейти", "Закрыть", "Терминал"]
+    : ["New Codex session", "waiting for the first message", "Go", "Close", "Terminal"];
+  await expect(card.locator(".head .t")).toHaveText(title);
+  await expect(card.locator(".head .state")).toHaveText(status);
+  await expect(card.locator(".d")).toHaveText(pending.cwd);
+  await expect(card.locator(".agent-badge")).toHaveText("Codex");
+  await expect(card.locator(".when")).toHaveText(/\d{2}:\d{2}/);
+  await expect(card.getByRole("button")).toHaveText([go, close]);
+  await card.getByRole("button", { name: go, exact: true }).click();
+  await expect.poll(() => page.evaluate(() => window.actions.map(a => [a.type, a.ptyPid]))).toEqual([["focus-tab", 7001]]);
+
+  await frame.locator('.mode button[data-mode="full"]').click();
+  await expect(card.locator(".head button")).toHaveCount(3);
+  await expect(card.getByRole("button", { name: terminal, exact: true })).toBeVisible();
+  await expect(card.locator(".answer textarea")).toBeEnabled();
+  await expect(card.locator(".card-view-picker, .card-view-body")).toHaveCount(0);
+  const grid = frame.locator("#active-grid");
+  await grid.evaluate((node, [before, after]) => {
+    window.pendingFrames = [];
+    new MutationObserver(() => window.pendingFrames.push(
+      [...node.querySelectorAll(".acard")].map(c => c.dataset.id).filter(id => id === before || id === after)))
+      .observe(node, { childList: true, subtree: true });
+  }, [pendingId, real.session_id]);
+  sessions = [sessions[2], real, sessions[0]];
+  await expect(frame.locator(`.acard[data-id="${real.session_id}"]`)).toHaveClass(/\bbusy\b/, { timeout: 12000 });
+  await expect(card).toHaveCount(0);
+  const order = await grid.locator(".acard").evaluateAll(cards => cards.map(c => c.dataset.id));
+  expect(order).toEqual(["first", real.session_id, "last"]);
+  expect(await grid.evaluate(() => window.pendingFrames.every(ids => ids.length === 1))).toBe(true);
+});
+
 test("a Codex card shows its /goal and the message queued for after the turn", async ({ page, open }) => {
   await open("active");
   await page.locator("#active-filters .mode button[data-mode=full]").click();   // replies and the queue

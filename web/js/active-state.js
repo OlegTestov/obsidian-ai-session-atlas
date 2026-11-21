@@ -19,6 +19,7 @@ let hostReady = false;          // the plugin answered, so Go to and Close are a
 let hostHealth = null;          // {ok, reason} from the plugin: whether the terminal link works
 let tabsAskedAt = null;         // when the tabs were requested and no answer has come yet
 let activeTimer = null;
+let activeSeq = 0;
 let activeUpdated = null;
 let activeLimits = null;        // subscription limits from the Claude Code status line
 let activeCodexLimits = null;   // Codex limits: from Codex itself or its newest token count
@@ -95,7 +96,7 @@ window.addEventListener("message", e => {
     const draft = sentDrafts.get(d.nonce);
     sentDrafts.delete(d.nonce);
     if (d.ok) {
-      if (draft) justSent.set(sid, Object.assign({ at: new Date().toISOString() }, draft));
+      if (draft && !draft.pending) justSent.set(sid, Object.assign({ at: new Date().toISOString() }, draft));
       if (draft) rememberSent(draft.text);
       drafts.delete(sid);
       saveDrafts();
@@ -179,11 +180,15 @@ registerView("active", { tab: "#view-active", panel: "#active",
 
 async function loadActive() {
   window.clearTimeout(activeTimer);
+  const seq = ++activeSeq;
   try {
     // Codex's own usage read is asked for only while Codex cards are shown.
     const data = await api(AtlasLogic.activeUrl(agentPick.active));
+    if (seq !== activeSeq) return;
+    const previous = activeSessions;
     activeRaw = data.sessions || [];
     activeSessions = screenSessions();
+    replacePendingSlots(previous, activeSessions);
     activeLimits = data.limits || null;
     activeCodexLimits = data.codex_limits || null;
     recentClosed = data.recent_closed || [];
@@ -192,6 +197,7 @@ async function loadActive() {
     AtlasLogic.pruneClosedNotes(closedNotes, recentClosed.map(c => c.session_id), Date.now());
     activeUpdated = new Date();
   } catch (e) {
+    if (seq !== activeSeq) return;
     // If the server is down, cards stay as they are and the banner on top reports it.
     if (!serverDown || !activeSessions.length) {
       const grid = $("#active-grid");

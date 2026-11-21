@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import time
 import urllib.request
 from datetime import datetime, timezone
 
@@ -32,7 +33,7 @@ def _fresh_caches():
 
 
 class FakeLsof:
-    """Answers `lsof -F pn -p <pids>` from {pid: [paths]}; counts calls."""
+    """Answers the single lsof call from {pid: [paths]}; counts calls."""
 
     def __init__(self, open_files: dict[int, list[str]], fail=None):
         self.open_files, self.fail, self.calls = open_files, fail, []
@@ -210,6 +211,77 @@ def claude_dir(tmp_path):
 def _cards(atlas_env, claude_dir, t, fake, conn=None):
     return active.list_active(conn or _conn(atlas_env), sessions_dir=str(claude_dir),
                               projects_root=str(atlas_env["projects"]), table=t, run=fake)
+
+
+def test_pending_codex_matches_claude_before_any_transcript(atlas_env, claude_dir):
+    claude_id = "11111111-2222-3333-4444-555555555555"
+    (claude_dir / "201.json").write_text(json.dumps(
+        {"pid": 201, "sessionId": claude_id, "kind": "interactive", "entrypoint": "cli",
+         "status": "idle", "procStart": START}))
+    t = table((101, CODEX), (102, "codex exec x"), (103, "codex app-server"), (201, "claude"))
+    fake = FakeLsof({101: [], 102: [], 103: []})
+    by = {c["agent"]: c for c in _cards(atlas_env, claude_dir, t, fake)}
+    assert by["claude"]["session_id"] == claude_id and not by["claude"]["indexed"]
+    c = by["codex"]
+    assert c["pending"] is True and c["session_id"] == "pending-codex-101-Thu-Sep-1-10:00:00-2026"
+    assert not codex_procs.UUID.fullmatch(c["session_id"])
+    assert c["pid"] == 101 and c["ancestors"] == [50] and c["host_app"] == "iTerm"
+    assert c["status"] == c["activity"] == "idle" and c["cwd"] == "/Users/u"
+    assert c["started_at"] == c["process_started_at"] == "2026-09-01T10:00:00+00:00"
+    assert not c["indexed"] and c["last_message_at"] is None
+    assert len(fake.calls) == 1 and fake.calls[0][-1] == "101"
+
+
+def test_pending_codex_is_replaced_after_poll_and_gone_on_exit(
+        atlas_env, claude_dir, write_rollout, monkeypatch):
+    now = time.monotonic()
+    monkeypatch.setattr(codex_procs.time, "monotonic", lambda: now)
+    t = table((101, CODEX), (102, CODEX))
+    fake = FakeLsof({101: [], 102: []})
+    before = _cards(atlas_env, claude_dir, t, fake)
+    assert len(before) == 2 and all(c["pending"] for c in before)
+    fake.open_files[101] = [write_rollout([cx_meta(TID), *turn()], thread_id=TID)]
+    assert _cards(atlas_env, claude_dir, t, fake) == before
+    assert len(fake.calls) == 1
+    now += codex_procs.MAP_TTL + 1
+    del t[102]
+    after = _cards(atlas_env, claude_dir, t, fake)
+    assert len(after) == 1 and after[0]["session_id"] == TID and not after[0].get("pending")
+    assert after[0]["title"] == "поправь тесты"
+    assert after[0]["process_started_at"] == before[0]["process_started_at"]
+    assert len(fake.calls) == 2
+    # /new can leave a gap between rollouts. A process that already had a thread isn't a new tab.
+    now += codex_procs.MAP_TTL + 1
+    fake.open_files[101] = []
+    assert _cards(atlas_env, claude_dir, t, fake) == []
+    now += codex_procs.MAP_TTL + 1
+    fake.open_files[101] = [write_rollout([cx_meta(SUB), *turn()], thread_id=SUB)]
+    assert [c["session_id"] for c in _cards(atlas_env, claude_dir, t, fake)] == [SUB]
+    # Even the same PID can show a new placeholder once it's a new process.
+    t[101] = (50, "Thu Sep 1 10:00:01 2026", CODEX)
+    fake.open_files[101] = []
+    restarted, = _cards(atlas_env, claude_dir, t, fake)
+    assert restarted["pending"] and restarted["session_id"] != before[0]["session_id"]
+
+
+def test_pending_codex_only_for_processes_that_own_their_rollout(atlas_env, claude_dir):
+    daemon = f"{CODEX} app-server --listen unix:// --managed-daemon"
+    t = table((101, CODEX), (102, f"{CODEX} --no-daemon"), (103, daemon))
+    fake = FakeLsof({101: [], 102: [], 103: []})
+    assert [c["pid"] for c in _cards(atlas_env, claude_dir, t, fake)] == [102]
+    del t[103]
+    assert sorted(c["pid"] for c in _cards(atlas_env, claude_dir, t, fake)) == [101, 102]
+    t[104] = (50, START, f"{CODEX} --remote unix:///tmp/s")
+    t[105] = (50, START, f"{CODEX} --remote=unix:///tmp/s")
+    fake.open_files.update({104: [], 105: []})
+    assert sorted(c["pid"] for c in _cards(atlas_env, claude_dir, t, fake)) == [101, 102]
+
+
+def test_pending_codex_requires_a_confirmed_empty_process(atlas_env, claude_dir, tmp_path):
+    foreign = tmp_path / "elsewhere" / f"rollout-2026-09-01T10-00-00-{TID}.jsonl"
+    t = table((101, CODEX), (102, CODEX))
+    assert _cards(atlas_env, claude_dir, t, FakeLsof({}, fail=OSError())) == []
+    assert _cards(atlas_env, claude_dir, t, FakeLsof({101: [str(foreign)]})) == []
 
 
 def test_codex_card_has_the_claude_card_keys(atlas_env, write_session, write_rollout, claude_dir):

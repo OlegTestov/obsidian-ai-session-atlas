@@ -36,6 +36,8 @@
       "active.status.idle": "waiting",
       "active.status.idleHint": "The agent is done and waiting for your message",
       // card
+      "active.pendingTitle": "New {agent} session",
+      "active.pendingStatus": "waiting for the first message",
       "active.openInSearch": "Open the card in search",
       "active.notIndexed": "Session is not indexed yet",
       "active.noDescription": "A description appears once the session's topic is set.",
@@ -294,6 +296,8 @@
       "active.status.waitingHint": "Открыт вопрос или запрос разрешения — ответь кнопкой в карточке или во вкладке",
       "active.status.idle": "ждёт",
       "active.status.idleHint": "Агент закончил и ждёт твоего сообщения",
+      "active.pendingTitle": "Новая сессия {agent}",
+      "active.pendingStatus": "ждёт первого сообщения",
       // card
       "active.openInSearch": "Открыть карточку в поиске",
       "active.notIndexed": "Сессия ещё не в индексе",

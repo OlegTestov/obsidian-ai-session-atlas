@@ -2404,7 +2404,10 @@ describe("Codex screens", () => {
   const states = { idle: "idle", idle_draft: "idle", idle_after_turn: "idle", interrupted: "idle", esc_idle: "idle",
                    status: "idle", busy: "busy", busy_queued: "busy", busy_queued_tab: "busy", exec: "waiting", exec_moved: "waiting",
                    exec_long: "waiting", edit: "waiting", question: "waiting", question_multi: "waiting",
-                   plan_implement: "waiting", rate_limit: "waiting" };
+                   plan_implement: "waiting", rate_limit: "waiting",
+                   // Reconstructed from a codex-cli 0.171 report: the start-up hook review, drawn at the top of a
+                   // fresh pane and at the bottom.
+                   hooks_review_top: "waiting", hooks_review_bottom: "waiting" };
   it("every captured screen is in the test", () => {
     assert.deepEqual(Object.keys(cx).sort(), Object.keys(states).sort());
   });
@@ -2412,6 +2415,15 @@ describe("Codex screens", () => {
     it(`${name}: ${state}`, () => assert.equal(codexSrc.codexScreenState(cx[name]), state));
   }
   const P = codexSrc.parseCodexDialog;
+  it("hook review: three options, never read as the composer", () => {
+    for (const screen of [cx.hooks_review_top, cx.hooks_review_bottom]) {
+      assert.deepEqual(P(screen).options.map((o) => o.n), [1, 2, 3]);
+      assert.equal(codexSrc.composerText(screen), null);
+    }
+    // A view with a footer this parser does not know yet is still no composer to type into.
+    const unknown = cx.hooks_review_bottom.map((l) => l.replace("enter confirm · esc skip", "enter accept · esc dismiss"));
+    assert.equal(codexSrc.codexScreenState(unknown), null);
+  });
   it("command approval: kind, question, details, options without key hints", () => {
     const d = P(cx.exec);
     assert.equal(d.kind, "permission");
@@ -2532,6 +2544,38 @@ describe("Codex tab: answers, reply, stop", () => {
     plugin.parentPid = (pid) => parents[pid] || 0;
     plugin.processName = (pid) => (pid === 7101 ? "codex" : "zsh");
     plugin.codexSessionIds = (pid) => (pid === 7101 ? ids : []);
+  });
+
+  it("pending Codex input verifies the tab and process birth and is limited to typing", async () => {
+    const sessionId = "pending-codex-7101-Thu-Sep-1-10:00:00-2026";
+    const child = require("child_process");
+    const exec = child.execFileSync;
+    const previousIds = ids;
+    let lstart = "Thu Sep  1 10:00:00 2026";
+    child.execFileSync = (file, args, opts) => file === "ps" && args.includes("lstart=,comm=")
+      ? `${lstart} /opt/homebrew/bin/codex\n`
+      : exec(file, args, opts);
+    const data = { ...base, sessionId };
+    try {
+      cscreen = cx.idle;
+      ids = [];
+      assert.equal((await plugin.checkTarget(data, true)).state.pending, true);
+      assert.ok((await plugin.checkTarget(data)).error);
+      assert.ok((await plugin.checkTarget({ ...data, ptyPid: 6002 }, true)).error);
+      expectReply(await send("send-text", { sessionId, text: "first prompt" }, 400),
+                  "sent", true, ["first prompt", "\r"]);
+      expectReply(await on(cx.exec, () => send("send-text", { sessionId, text: "first prompt" })), "sent", false, []);
+      // The first message creates the thread; the card keeps typing until the real card replaces it.
+      ids = [CODEX_ID];
+      assert.equal((await plugin.checkTarget(data, true)).state.pending, true);
+      ids = [];
+      lstart = "Thu Sep  1 10:00:01 2026";
+      assert.ok((await plugin.checkTarget(data, true)).error);
+    } finally {
+      ids = previousIds;
+      cscreen = cx.idle;
+      child.execFileSync = exec;
+    }
   });
 
   it("read: the approval in the card's shape", async () => {

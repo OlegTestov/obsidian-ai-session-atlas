@@ -144,12 +144,13 @@ function renderActive(skipKey, force) {
   lastRenderAt = Date.now();
   // On top, who waits for you (open dialogs first); below, who is working.
   // Background goes with working: the turn ended, but a monitor, agent or /loop wakes it, not you.
-  const act = s => s.activity || s.status;
-  const isWorking = s => act(s) === "busy" || act(s) === "background";
+  const isWorking = activity => activity === "busy" || activity === "background";
   // Order comes from arrangeSessions: pinned, then by start; freshness does not reorder.
-  const decide = shown.filter(s => act(s) === "waiting");
-  const waitingYou = shown.filter(s => !isWorking(s) && act(s) !== "waiting");
-  const working = shown.filter(isWorking);
+  const decide = [], waitingYou = [], working = [];
+  for (const s of shown) {
+    const activity = sectionActivity(s);
+    (activity === "waiting" ? decide : isWorking(activity) ? working : waitingYou).push(s);
+  }
   // A long dialog scrolls inside itself: the reader's place in it survives the redraw too.
   // A dialog that changed its view (another question tab) starts at the top.
   const dialogTops = new Map([...grid.querySelectorAll(".acard > .dialog")].map(d =>

@@ -69,6 +69,7 @@ document.addEventListener("keydown", e => {
   if (document.querySelector(".ms-pop:not(.hidden), .lay-pop:not(.hidden)")) return;
   const ids = cardEls().map(c => c.dataset.id);
   if (!ids.length) return;
+  const selected = activeSessions.find(s => s.session_id === selectedCard);
   if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "j", "k"].includes(e.key)) {
     e.preventDefault();
     selectedCard = AtlasLogic.nextCard(ids, selectedCard, e.key, columnsAt(selectedCard));
@@ -80,12 +81,12 @@ document.addEventListener("keydown", e => {
     const card = cardEls().find(c => c.dataset.id === selectedCard);
     const go = card && [...card.querySelectorAll("button")].find(b => b.textContent === i18n("active.go"));
     if (go && !go.disabled) { e.preventDefault(); go.click(); }
-  } else if (e.key === "p" && selectedCard) {
+  } else if (e.key === "p" && selected && !selected.pending) {
     e.preventDefault();
     togglePin(selectedCard);
-  } else if (e.key === "h" && selectedCard) {
-    const s = activeSessions.find(x => x.session_id === selectedCard);
-    if (s) { e.preventDefault(); hideCard(s); }
+  } else if (e.key === "h" && selected && !selected.pending) {
+    e.preventDefault();
+    hideCard(selected);
   } else if (e.key === "f" && selectedCard) {
     e.preventDefault();
     if (activeMode !== "full") document.querySelector('.mode button[data-mode="full"]')?.click();

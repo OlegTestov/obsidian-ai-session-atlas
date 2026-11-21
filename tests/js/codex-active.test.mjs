@@ -7,6 +7,81 @@ import { loadPage, pageOrder, readScript } from "./helpers/page.mjs";
 
 const upTo = (name) => pageOrder().slice(0, pageOrder().indexOf(name) + 1);
 
+describe("pending Codex cards", () => {
+  const started = "2026-09-01T10:00:00+00:00";
+  const pending = { agent: "codex", session_id: "pending-example", pending: true, pid: 101, ancestors: [7],
+    process_started_at: started, started_at: started, status: "idle", cwd: "/tmp/project with spaces" };
+
+  for (const [locale, title, waiting, go, close, terminal] of [
+    ["en", "New Codex session", "waiting for the first message", "Go", "Close", "Terminal"],
+    ["ru", "Новая сессия Codex", "ждёт первого сообщения", "Перейти", "Закрыть", "Терминал"],
+  ]) {
+    test(`the ${locale} pending card renders process details and tab actions only`, () => {
+      const page = loadPage();
+      page.I18N.setLang(locale);
+      page.document.createElement = tag => ({
+        tag, children: [], dataset: {}, attrs: {},
+        classList: { add() {} },
+        append(...nodes) { this.children.push(...nodes); },
+        appendChild(node) { this.children.push(node); return node; },
+        replaceChildren(...nodes) { this.children = nodes; },
+        setAttribute(key, value) { this.attrs[key] = value; },
+        addEventListener() {},
+      });
+      const run = code => vm.runInContext(code, page);
+      run(`var pending = ${JSON.stringify(pending)}; svgIcon = () => "";
+           answerForm = () => el("textarea", "answer"); hostTabs = new Map([[7, "Codex"]]);`);
+      const nodes = node => typeof node === "object" ? [node, ...node.children.flatMap(nodes)] : [];
+      const compact = nodes(run("activeCard(pending)"));
+      assert.equal(compact.find(n => n.className === "t").textContent, title);
+      assert.ok(compact.find(n => n.className === "state").children.includes(waiting));
+      assert.equal(compact.find(n => n.className === "d").textContent, pending.cwd);
+      assert.match(compact.find(n => n.className?.startsWith("when")).textContent, /\d/);
+      assert.deepEqual(compact.filter(n => n.tag === "button").map(n => n.textContent), [go, close]);
+      const full = nodes(run('activeMode = "full"; hostInlineTabs.add(7); activeCard(pending)'));
+      assert.deepEqual(full.filter(n => n.tag === "button").map(n => n.attrs["aria-label"] || n.textContent),
+                       [terminal, go, close]);
+      assert.equal(full.filter(n => n.tag === "textarea").length, 1);
+      assert.equal(run('hostTabs.clear(); activeCard(pending)').children.flatMap(nodes)
+        .filter(n => n.tag === "button" || n.tag === "textarea").length, 0);
+    });
+  }
+
+  test("the first rollout inherits the frozen slot and section of its exact process", () => {
+    const page = loadPage();
+    const run = code => vm.runInContext(code, page);
+    run(`var pending = ${JSON.stringify(pending)};
+         var a = { session_id: "a", status: "idle" }, b = { session_id: "b", status: "idle" };
+         var real = { ...pending, pending: false, session_id: "real", status: "busy" };
+         frozenOrder = ["a", pending.session_id, "b"];
+         selectedCard = pending.session_id;
+         cardViews.set(pending.session_id, "terminal");
+         replacePendingSlots([a, pending, b], [b, a, real]);`);
+    assert.deepEqual(Array.from(run("AtlasLogic.applyFrozenOrder([b, a, real], frozenOrder).frozen")), ["a", "real", "b"]);
+    assert.equal(run("sectionActivity(real)"), "idle");
+    assert.equal(run("selectedCard"), "real");
+    assert.equal(run("cardViewMode('real')"), "terminal");
+    assert.equal(run("cardViewMode(pending.session_id)"), "turns");
+    assert.equal(run("sectionActivity({ ...real, status: 'waiting' })"), "waiting");
+    run(`drafts.set(pending.session_id, "half-typed"); attachments.set(pending.session_id, [{ path: "/a.png" }]);
+         sendState.set(pending.session_id, { note: "x" }); var real2 = { ...real, session_id: "real2" };
+         replacePendingSlots([pending], [real2]);`);
+    assert.equal(run("drafts.get('real2')"), "half-typed");
+    assert.equal(run("attachments.get('real2').length"), 1);
+    assert.equal(run("sendState.get('real2').note"), "x");
+    assert.equal(run("drafts.has(pending.session_id) || attachments.has(pending.session_id) || sendState.has(pending.session_id)"), false);
+    assert.equal(run(`frozenOrder = [pending.session_id];
+       replacePendingSlots([pending], [{ ...real, process_started_at: "different" }]); frozenOrder[0]`),
+       pending.session_id);
+  });
+
+  test("pending waits for its first message even if the tab screen has a prompt or queue", () => {
+    const page = loadPage(upTo("agent-filter.js"));
+    assert.equal(page.withTabScreen(pending, { state: "waiting", queued: ["x"] }), pending);
+    assert.equal(page.agentControls(pending).commands, false);
+  });
+});
+
 describe("Codex cards", () => {
   const p = loadPage(upTo("agent-filter.js"));
 

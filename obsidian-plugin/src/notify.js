@@ -115,7 +115,7 @@ class NotifyMethods {
       this.offerHeldTabs();             // a placeholder tab closed before it loaded leaves its process held
       const data = await this.fetchActive();
       if (!data || !Array.isArray(data.sessions)) return;
-      const sessions = await this.withCodexScreens(data.sessions);
+      const sessions = await this.withCodexScreens(data.sessions.filter(s => !s?.pending));
       const { next, started, waiting } = waitingTransitions(this.lastActivity || new Map(), sessions);
       this.lastActivity = next;
       this.setWaitingCount(waiting);

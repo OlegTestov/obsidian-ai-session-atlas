@@ -25,7 +25,7 @@ function openTerminalMirror(plugin, event, data) {
     if (current()) source.postMessage(message, plugin.atlasOrigin(), port ? [port] : []);
     else port?.close();
   };
-  plugin.checkTarget(data).then(({ tab }) => {
+  plugin.checkTarget(data, true).then(({ tab }) => {
     const view = tab?.leaf.view;
     const pty = view?.pty;
     if (!current() || !pty || pty.exited || !view.term || !view.mirrorSubscribers) return reply(null);
@@ -42,7 +42,7 @@ function openTerminalMirror(plugin, event, data) {
       pending: on => { view.pendingMirrorInput = Math.max(0, (view.pendingMirrorInput || 0) + (on ? 1 : -1)); },
       writeInput: text => { plugin.touchInput(tab.leaf); pty.write(text); },
       verify: async () => {
-        const again = await plugin.checkTarget(data);
+        const again = await plugin.checkTarget(data, true);
         return again.tab?.leaf.view === view && view.pty === pty;
       },
       fit: (cols, rows) => view.fitMirror(cols, rows),

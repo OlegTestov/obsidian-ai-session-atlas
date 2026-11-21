@@ -11,23 +11,13 @@ import glob
 import os
 import sqlite3
 import time
-from datetime import datetime, timezone
 
 from . import active, codex_procs, codex_state, codex_tail, codex_usage, codex_waits, index, openai_costs, search
+from .agents import CODEX
 
-AGENT = "codex"
 TITLE_CHARS = 80
 RECENT_FILES = 40             # rollouts checked for the newest rate limits, newest first
 _last_live: list[str] = []    # rollouts of the last pass: their tails hold the freshest limits
-
-
-def _iso_lstart(lstart: str | None) -> str | None:
-    """`ps` start time, printed in UTC (`process_table` sets TZ=UTC)."""
-    try:
-        when = datetime.strptime(" ".join((lstart or "").split()), "%a %b %d %H:%M:%S %Y")
-    except ValueError:
-        return None
-    return when.replace(tzinfo=timezone.utc).isoformat()
 
 
 def _cost_now(model: str | None, total: dict | None) -> float | None:
@@ -77,12 +67,12 @@ def card(conn: sqlite3.Connection, pid: int, path: str, table: dict, state: dict
                   "agents": live_subagents(pid, table, sid, home=home), "wake_at": None, "crons": 0,
                   "goal": (state.get("goals") or {}).get(sid)}
     context = codex_tail.context_tokens(t["usage"])
-    started = _iso_lstart(table.get(pid, (0, ""))[1])
+    started = active.process_start_iso(table.get(pid, (0, ""))[1])
     waited = codex_waits.waiting(sid, path, t["status"])
     status = "waiting" if waited else t["status"]
     return {
         "session_id": sid,
-        "agent": AGENT,
+        "agent": CODEX,
         "pid": pid,
         "ancestors": active.ancestors(pid, table),
         "host_app": host_app(pid, table),
@@ -130,8 +120,9 @@ def card(conn: sqlite3.Connection, pid: int, path: str, table: dict, state: dict
 
 def list_live(conn: sqlite3.Connection, table: dict, run=None,
               home: str | None = None) -> list[dict]:
-    """Cards of live interactive Codex threads; one per thread even if two processes hold it."""
-    paths = codex_procs.rollouts_for(table, run=run, home=home)
+    """Cards of live interactive Codex processes, with at most one card per thread."""
+    pending_cwds: dict[int, str] = {}
+    paths = codex_procs.rollouts_for(table, run=run, home=home, pending_cwds=pending_cwds)
     ids = sorted({sid for sid in map(codex_procs.thread_id, paths.values()) if sid})
     state = {"goals": codex_state.goals(ids, home), "queued": codex_state.queued(ids, home)}
     out, seen = [], set()
@@ -139,6 +130,10 @@ def list_live(conn: sqlite3.Connection, table: dict, run=None,
         made = card(conn, pid, path, table, state, home)
         if made and made["session_id"] not in seen:
             seen.add(made["session_id"])
+            out.append(made)
+    for pid, cwd in sorted(pending_cwds.items()):
+        made = active.pending_card(CODEX, pid, table, cwd)
+        if made:
             out.append(made)
     _last_live[:] = list(paths.values())
     return out

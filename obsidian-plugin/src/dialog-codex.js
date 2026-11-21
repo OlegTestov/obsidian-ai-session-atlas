@@ -5,7 +5,8 @@
 // codexScreens, codexBackground), 0.160.0 for the rest; approvals on 0.167.0 (codexApproval).
 
 // The selection views end with one of these hints; without it a numbered list is just text.
-const FOOTER = /^\s*(Press enter to confirm or esc to cancel|enter select · esc back|enter\/esc confirm|tab to add notes \| enter to submit)/;
+// "enter confirm · esc skip": the start-up hook review of codex-cli 0.171 ("Hooks need review").
+const FOOTER = /^\s*(Press enter to confirm or esc to cancel|enter select · esc back|enter\/esc confirm|enter confirm · esc skip|tab to add notes \| enter to submit)/;
 const OPTION = /^(\s*)(›\s+)?(\d{1,2})\.\s+(\S.*?)\s*$/;
 const KEY_HINT = /\s+\((esc|tab|[a-z])\)$/;
 const ASK = /^\s*Would you like to (.+\?)\s*$/;
@@ -30,8 +31,16 @@ const KINDS = [
 
 const clean = (lines) => (Array.isArray(lines) ? lines : []).map((l) => String(l || "").replace(/\s+$/, ""));
 
+/** Rows up to the last non-blank one: a fresh pane draws a view at the top with blank rows below. */
+function lastFilled(rows) {
+  let end = rows.length;
+  while (end > 0 && !rows[end - 1].trim()) end--;
+  return end;
+}
+
 function footerRow(rows) {
-  for (let i = rows.length - 1; i >= 0 && rows.length - i <= 4; i--) {
+  const end = lastFilled(rows);
+  for (let i = end - 1; i >= 0 && end - i <= 4; i--) {
     if (FOOTER.test(rows[i])) return i;
   }
   return -1;
@@ -130,7 +139,8 @@ function parseCodexDialog(lines) {
 /** The composer row ("› …") near the bottom, or -1; checked only when no selection view is open. */
 function composerRow(rows) {
   for (let i = rows.length - 1; i >= 0 && rows.length - i <= 10; i--) {
-    if (COMPOSER.test(rows[i])) return i;
+    // "› 1. Review hooks" is the selected option of a view, not the composer.
+    if (COMPOSER.test(rows[i]) && !OPTION.test(rows[i])) return i;
   }
   return -1;
 }

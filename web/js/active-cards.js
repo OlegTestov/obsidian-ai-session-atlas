@@ -12,6 +12,7 @@ function decisionStrip(s) {
 }
 
 function activeCard(s) {
+  if (s.pending) return pendingActiveCard(s);
   const full = activeMode === "full";
   const act = s.activity || s.status;
   const card = el("article", "acard" + (act === "busy" ? " busy" : act === "background" ? " busy bg"
@@ -103,32 +104,8 @@ function activeCard(s) {
     : s.cost_now != null ? i18n("active.costCodex", { cost: s.cost_now.toFixed(2) })
     : i18n("active.costCodexNone");
 
-  const go = el("button", "primary", i18n("active.go"));
-  const close = el("button", null, i18n("active.close"));
-  go.title = i18n("active.goHint");
-  close.title = i18n("active.closeHint");
-  go.disabled = close.disabled = !pid;
-  if (!pid) go.title = close.title = hostReady
-    ? (s.host_app ? i18n("active.notInTabApp", { app: s.host_app }) : i18n("active.notInTab"))
-    : i18n("active.buttonsInObsidian");
   const heldPid = pid ? null : heldFor(s);
-  if (heldPid) {
-    // The tab closed with the plugin but the agent runs: Go to opens a tab on the same process.
-    go.disabled = false;
-    go.title = i18n("active.heldGoHint");
-    go.addEventListener("click", () => {
-      tellTabHost("focus-tab", { ptyPid: heldPid });
-      window.setTimeout(loadActive, 1500);
-    });
-  }
-  if (pid) {
-    go.addEventListener("click", () => tellTabHost("focus-tab", { ptyPid: pid }));
-    close.addEventListener("click", () => {
-      // Obsidian itself shows the confirmation: the same dialog as the tab's close button.
-      tellTabHost("close-tab", { ptyPid: pid, title: s.title || s.session_id });
-      window.setTimeout(loadActive, 1500);
-    });
-  }
+  const [go, close] = tabButtons(s, pid, heldPid, s.title || s.session_id);
 
   if (full) {
     // Detailed: buttons in the header row, dates and money on one line to leave room for the reply.
@@ -175,6 +152,80 @@ function activeCard(s) {
     card.appendChild(dialog);
   }
   card.appendChild(foot);
+  return card;
+}
+
+function tabButtons(s, pid, heldPid, title) {
+  const go = el("button", "primary", i18n("active.go"));
+  const close = el("button", null, i18n("active.close"));
+  go.title = i18n("active.goHint");
+  close.title = i18n("active.closeHint");
+  go.disabled = close.disabled = !pid;
+  if (!pid) go.title = close.title = hostReady
+    ? (s.host_app ? i18n("active.notInTabApp", { app: s.host_app }) : i18n("active.notInTab"))
+    : i18n("active.buttonsInObsidian");
+  if (heldPid) {
+    go.disabled = false;
+    go.title = i18n("active.heldGoHint");
+  }
+  if (pid || heldPid) go.addEventListener("click", () => {
+    tellTabHost("focus-tab", { ptyPid: pid || heldPid });
+    if (heldPid) window.setTimeout(loadActive, 1500);
+  });
+  if (pid) close.addEventListener("click", () => {
+    // Obsidian shows the same confirmation as the tab's close button.
+    tellTabHost("close-tab", { ptyPid: pid, title });
+    window.setTimeout(loadActive, 1500);
+  });
+  return [go, close];
+}
+
+function pendingActiveCard(s) {
+  const card = el("article", "acard pending");
+  card.dataset.id = s.session_id;
+  const pid = tabFor(s);
+  const heldPid = pid ? null : heldFor(s);
+  const title = i18n("active.pendingTitle", { agent: agentName(s.agent) });
+  const head = el("div", "head");
+  const status = el("span", "state");
+  status.append(el("span", "dot"), i18n("active.pendingStatus"));
+  head.append(el("div", "t", title), status);
+  card.appendChild(head);
+  if (s.cwd) {
+    const folder = el("div", "d", s.cwd);
+    folder.title = s.cwd;
+    card.appendChild(folder);
+  }
+  const tags = el("div", "tags");
+  tags.appendChild(agentBadge(s));
+  const full = activeMode === "full";
+  card.append(tags, infoLine(full ? "info" : "when", [shortStart(s.started_at)].filter(Boolean), null));
+  const [go, close] = tabButtons(s, pid, heldPid, title);
+  if (full) {
+    if (hostInlineTabs.has(pid)) {
+      const open = cardViewMode(s.session_id) === "terminal";
+      const terminal = el("button", "mini", i18n("feed.view.terminal"));
+      terminal.setAttribute("aria-pressed", String(open));
+      terminal.addEventListener("click", () => {
+        if (open) cardViews.delete(s.session_id);
+        else cardViews.set(s.session_id, "terminal");
+        renderActive(null, true);
+        if (!open) cardPanels.get(s.session_id)?.focus();
+      });
+      head.appendChild(terminal);
+      if (open) card.appendChild(el("div", "card-view-slot"));
+    }
+    if (pid || heldPid) head.appendChild(iconify(go, GO_SVG, i18n("active.go")));
+    if (pid) {
+      head.appendChild(iconify(close, CLOSE_SVG, i18n("active.close")));
+      card.appendChild(answerForm(s, pid));
+    }
+  } else if (pid || heldPid) {
+    const foot = el("div", "foot");
+    foot.appendChild(go);
+    if (pid) foot.appendChild(close);
+    card.appendChild(foot);
+  }
   return card;
 }
 
@@ -395,7 +446,7 @@ function answerForm(s, pid) {
   picker.addEventListener("change", () => { attachImages(sid, [...picker.files]); picker.value = ""; });
 
   const controls = agentControls(s);
-  if (controls.agent === "codex") ensureCommands("codex");        // its /model picker needs the models
+  if (controls.commands && controls.agent === "codex") ensureCommands("codex"); // its /model picker needs the models
   const submit = () => {
     const text = area.value;
     // "/effort" and "/model" without an argument would open a picker in the tab, so buttons pick here.
@@ -405,7 +456,7 @@ function answerForm(s, pid) {
     if ((!text.trim() && !images.length) || send.disabled) return;
     const nonce = Math.random().toString(36).slice(2);
     pendingSends.set(nonce, sid);
-    sentDrafts.set(nonce, { text, images: images.length });
+    sentDrafts.set(nonce, { text, images: images.length, pending: s.pending });
     setSendNote(sid, i18n("active.sending"), "");
     commandOutputs.delete(sid);                 // a new reply replaces the previous one
     tellTabHost("send-text", { ptyPid: pid, claudePid: s.pid, sessionId: sid, text, images, nonce });

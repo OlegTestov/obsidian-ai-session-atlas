@@ -98,7 +98,7 @@ function sendSeen(id, at) {
 
 /** You opened the card: the plugin hears it even before it marked it, and the mark goes at once. */
 function seeCard(id) {
-  if (!id) return;
+  if (!id || activeSessions.some(s => s.pending && s.session_id === id)) return;
   const marked = hostUnread.delete(id);
   const clicked = Date.now();
   // Clicks inside an unmarked card repeat: one message per 5 s, the last click still reaches the plugin

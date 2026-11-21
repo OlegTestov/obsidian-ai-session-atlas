@@ -40,7 +40,7 @@ class InputMethods {
    * holds open). {error} or {tab, state}. Status is not checked here: a dialog blocks text input
    * but is required for a dialog answer.
    */
-  async checkTarget(data) {
+  async checkTarget(data, allowPending = false) {
     if (!Number.isInteger(data.ptyPid) || data.ptyPid <= 1
         || !Number.isInteger(data.claudePid) || data.claudePid <= 1
         || typeof data.sessionId !== "string") {
@@ -51,7 +51,9 @@ class InputMethods {
     if (!this.isDescendant(data.claudePid, data.ptyPid)) {
       return { error: this.t("input.otherSession") };
     }
-    const state = this.readAgentState(data.claudePid, tab.leaf);
+    const state = allowPending && data.sessionId.startsWith("pending-")
+      ? this.readPendingState(data.claudePid, data.sessionId, tab.leaf)
+      : this.readAgentState(data.claudePid, tab.leaf);
     if (!state || !state.sessionIds.includes(data.sessionId)) return { error: this.t("input.noSession") };
     return { tab, state };
   }
@@ -70,13 +72,15 @@ class InputMethods {
     if (!text.trim() && !images.length) return reply(false, this.t("input.empty"));
     if (text.length > MAX_SEND_CHARS) return reply(false, this.t("input.tooLong"));
 
-    const { error, tab, state } = await this.checkTarget(data);
+    const { error, tab, state } = await this.checkTarget(data, true);
     if (error) return reply(false, error);
     if (state.status === "waiting") {
       return reply(false, this.t("input.inDialog"));
     }
     // A Codex screen that is neither the composer nor a turn at work: Enter could confirm something.
-    if (state.agent === "codex" && !state.status) return reply(false, this.t("input.codexScreen"));
+    if (state.agent === "codex" && (!state.status || (state.pending && state.status !== "idle"))) {
+      return reply(false, this.t("input.codexScreen"));
+    }
     const stdin = await this.ptyInput(tab.leaf);
     if (!stdin) return reply(false, this.t("input.noInput"));
     // An image path pasted on its own becomes an [Image #N] attachment. Codex takes it only quoted
@@ -93,7 +97,7 @@ class InputMethods {
     }, ENTER_DELAY_MS + IMAGE_ENTER_DELAY_MS * images.length);
     reply(true);
     const command = /^\/([a-z][a-z-]*)(\s|$)/.exec(text.trim());
-    if (command && !images.length
+    if (command && !state.pending && !images.length
         && (codex ? this.codexScreenCommand(command[1]) : SCREEN_COMMANDS.has(command[1]))) {
       window.setTimeout(() => {
         const out = codex ? this.codexCommandOutput(tab, text.trim())

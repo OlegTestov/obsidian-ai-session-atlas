@@ -7,6 +7,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.15.0] - 2026-11-21
+
+### Added
+
+- A new Codex tab shows a "New Codex session" card in Active before the first message. You can open the tab or type into it from the card; after the first message the normal card takes its place.
+
+### Changed
+
+- The What's new window shows the new Codex card and the 2.14.1 mail fix.
+
+### Fixed
+
+- Codex's start-up question "Hooks need review" (codex-cli 0.171) is read as a question, not as an empty prompt, so text from a card or a mail wake-up is never typed into it.
+
 ## [2.14.1] - 2026-11-21
 
 ### Fixed

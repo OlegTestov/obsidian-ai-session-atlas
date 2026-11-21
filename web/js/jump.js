@@ -6,7 +6,7 @@ let jumpItems = [];
 let jumpActive = 0;
 
 function jumpSources() {
-  const live = activeSessions.map(s => ({
+  const live = activeSessions.filter(s => !s.pending).map(s => ({
     kind: "live", id: s.session_id, title: s.title || s.session_id.slice(0, 8),
     sub: [s.topic, ...(s.projects || []), ...(s.domains || [])].filter(Boolean).join(" "),
     note: (STATUS[s.activity || s.status] || STATUS.idle).label,

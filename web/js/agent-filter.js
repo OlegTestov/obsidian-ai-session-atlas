@@ -9,26 +9,26 @@ const AGENT_VIEWS = ["search", "active", "stats"];
 const agentPick = (() => {
   const saved = loadStored(AGENTS_KEY, {});
   const out = {};
-  AGENT_VIEWS.forEach(v => { out[v] = AtlasLogic.agentSelection(saved && saved[v]); });
+  AGENT_VIEWS.forEach(v => { out[v] = AtlasLogic.savedAgentSelection(saved && saved[v]); });
   return out;
 })();
 const agentUI = {};                  // view → {btn, pop, list, fill}
 
 function agentName(agent) {
-  if (agent === "claude") return i18n("agent.claude");
-  return agent === "codex" ? i18n("agent.codex") : String(agent);
+  return AtlasLogic.findAgent(agent)?.label || i18n("agent.unknown");
 }
 
 // Reply author on cards and in the feed: "Claude" or "Codex".
 function agentShort(s) {
-  return i18n(AtlasLogic.agentOf(s) === "codex" ? "agent.codexShort" : "agent.claudeShort");
+  return AtlasLogic.findAgent(AtlasLogic.agentOf(s))?.short || i18n("agent.unknown");
 }
 
 // Each agent's own slash commands and argument pickers (the server lists them per agent); the
 // plan-mode dialog is Claude Code's only.
 function agentControls(s) {
   const agent = AtlasLogic.agentOf(s);
-  return { commands: !s.pending, plan: agent === "claude", agent };
+  const commands = AtlasLogic.requireAgent(agent, { claude: true, codex: true }, "card input");
+  return { commands: commands && !s.pending, plan: agent === "claude", agent };
 }
 
 // Codex writes no approval into its rollout, so the server sees a waiting Codex session as busy or
@@ -50,7 +50,7 @@ function withTabScreen(s, screen) {
 
 function agentBadge(s) {
   const a = AtlasLogic.agentOf(s);
-  const b = el("span", "agent-badge " + a, agentName(a));
+  const b = el("span", AtlasLogic.findAgent(a) ? "agent-badge " + a : "agent-badge", agentName(a));
   b.title = i18n("agent.badgeHint", { agent: agentName(a) });
   return b;
 }
@@ -70,7 +70,9 @@ function agentPassesView(view, s) {
 
 function setAgents(view, list) {
   agentPick[view] = AtlasLogic.agentSelection(list);
-  store(AGENTS_KEY, agentPick);
+  store(AGENTS_KEY, Object.fromEntries(AGENT_VIEWS.map(v => [
+    v, AtlasLogic.storedAgentSelection(agentPick[v]),
+  ])));
   refreshAgentButton(view);
 }
 

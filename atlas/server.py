@@ -54,6 +54,7 @@ TURN_ID = re.compile(r"[A-Za-z0-9_.:+#-]{1,80}")
 TIMESTAMP = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9:.]{5,15}(?:Z|[+-][0-9:]{4,5})?")
 # Paths that call the model: they answer 403 when AI features are off.
 LLM_PATHS = {"/api/job", "/api/classify", "/api/auto-classify"}
+AI_PREVIEWS = {"/api/preview", "/api/classify/preview"}
 WEB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "web")
 
 ALLOWED_HOSTS = {f"127.0.0.1:{PORT}", f"localhost:{PORT}"}
@@ -349,10 +350,11 @@ class Handler(BaseHTTPRequestHandler):
             if url.path.startswith("/static/"):
                 return self._static(url.path[len("/static/"):])
             if url.path == "/api/commands":
-                if (query.get("agent") or [""])[0] == "codex":
-                    return self._json(200, {"commands": codex_commands.all_commands(),
-                                            "models": codex_commands.models()})
-                return self._json(200, {"commands": commands.all_commands()})
+                catalogs = {agents.CLAUDE: lambda: {"commands": commands.all_commands()},
+                            agents.CODEX: lambda: {"commands": codex_commands.all_commands(),
+                                                   "models": codex_commands.models()}}
+                kind = (query.get("agent") or [agents.CLAUDE])[0]
+                return self._json(200, catalogs[agents.require(kind, catalogs, "command catalog")]())
             if url.path == "/health":
                 from . import APP
                 return self._json(200, {"ok": True, "app": APP, "port": PORT,
@@ -374,7 +376,12 @@ class Handler(BaseHTTPRequestHandler):
                     catch_up(now=True)
                 if url.path == "/api/index-status":           # the checks screen in settings
                     count = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
-                    return self._json(200, {"sessions": count, "indexing": catch_up()})
+                    status = {"sessions": count, "indexing": catch_up()}
+                    try:
+                        runner.configured_agent()
+                    except runner.InvalidAIAgent as exc:
+                        status.update(ai_agent=exc.choice, ai_agent_error=str(exc))
+                    return self._json(200, status)
                 if url.path == "/api/sessions":
                     indexing = catch_up()
                     return self._json(200, dict(self._list(conn, query), indexing=indexing))
@@ -397,13 +404,17 @@ class Handler(BaseHTTPRequestHandler):
                                             "indexing": indexing})
                 if url.path.startswith("/api/active/feed/"):
                     sid = url.path.rsplit("/", 1)[-1]
-                    if not actions.valid_session_id(sid):
+                    kind = agents.session_agent(conn, sid)
+                    if not agents.valid_id(kind if kind is not None else agents.CLAUDE, sid):
                         return self._json(400, {"error": msg("server.bad_session_id")})
+                    if kind is not None:
+                        agents.require(kind, (agents.CLAUDE, agents.CODEX), "active feed")
                     path = active.live_transcript(conn, sid, index.PROJECTS_ROOT)
+                    kind = kind if kind is not None else agents.transcript_agent(path)
                     if not path:
                         return self._json(404, {"error": msg("server.no_session")})
                     if (query.get("view") or [""])[0] == "files":
-                        return self._json(200, dict(touched.session_files(path), session_id=sid,
+                        return self._json(200, dict(touched.session_files(path, agent=kind), session_id=sid,
                                                     home=os.path.expanduser("~")))
                     turns = (query.get("turns") or [str(feed.DEFAULT_TURNS)])[0]
 
@@ -416,14 +427,19 @@ class Handler(BaseHTTPRequestHandler):
                     page = feed.feed_page(path, int(turns) if turns.isdigit() else feed.DEFAULT_TURNS,
                                           with_events=(query.get("view") or [""])[0] == "steps",
                                           before=stamp("before"), since=stamp("since"),
-                                          before_id=turn_id("before_id"), since_id=turn_id("since_id"))
+                                          before_id=turn_id("before_id"), since_id=turn_id("since_id"), agent=kind)
                     return self._json(200, dict(page, session_id=sid))
                 if url.path.startswith("/api/active/plan/"):
                     sid = url.path.rsplit("/", 1)[-1]
-                    if not actions.valid_session_id(sid):
+                    kind = agents.session_agent(conn, sid)
+                    if not agents.valid_id(kind if kind is not None else agents.CLAUDE, sid):
                         return self._json(400, {"error": msg("server.bad_session_id")})
-                    found = plans.plan_text(active.live_transcript(conn, sid, index.PROJECTS_ROOT),
-                                            (query.get("path") or [None])[0])
+                    if kind is not None:
+                        agents.require(kind, (agents.CLAUDE, agents.CODEX), "active plan")
+                    path = active.live_transcript(conn, sid, index.PROJECTS_ROOT)
+                    kind = kind if kind is not None else agents.transcript_agent(path)
+                    found = (plans.plan_text(path, (query.get("path") or [None])[0])
+                             if kind == agents.CLAUDE else None)
                     return self._json(200 if found else 404, found or {"error": msg("server.plan_not_found")})
                 if url.path == "/api/workdirs":
                     return self._json(200, {"workdirs": [dict(w, text=folders.field_text(w["path"]))
@@ -441,6 +457,8 @@ class Handler(BaseHTTPRequestHandler):
             finally:
                 conn.close()
             self._json(404, {"error": msg("server.no_path")})
+        except agents.UnknownAgent as exc:
+            self._json(400, {"error": str(exc)})
         except Exception as exc:
             # The traceback goes to the server log, the page gets only the error itself.
             traceback.print_exc(file=sys.stderr)
@@ -456,12 +474,16 @@ class Handler(BaseHTTPRequestHandler):
         session_id = body.get("session_id", "")
         conn = db.connect()
         try:
-            if url.path != "/api/override" and session_id and \
-                    not actions.valid_session_id(session_id):
-                return self._json(400, {"error": msg("session_id.invalid")})
-            if url.path in LLM_PATHS and not (url.path == "/api/auto-classify"
-                                              and body.get("enabled") is False):
-                runner.require_llm()
+            if url.path != "/api/override" and session_id:
+                # On conversion POSTs body.agent is the target. The catalog owns the source kind.
+                kind = agents.session_agent(conn, session_id)
+                if not agents.valid_id(kind if kind is not None else agents.CLAUDE, session_id):
+                    return self._json(400, {"error": msg("session_id.invalid")})
+            if not (url.path == "/api/auto-classify" and body.get("enabled") is False):
+                if url.path in LLM_PATHS:
+                    runner.require_llm()        # "AI off" first, as before the registry
+                if url.path in LLM_PATHS or url.path in AI_PREVIEWS:
+                    runner.configured_agent()
             handler = {
                 "/api/preview": self._preview, "/api/job": self._start_job,
                 "/api/cancel": self._cancel, "/api/terminal": self._terminal,
@@ -484,6 +506,8 @@ class Handler(BaseHTTPRequestHandler):
             if handler is None:
                 return self._json(404, {"error": msg("server.no_path")})
             return handler(conn, body)
+        except agents.UnknownAgent as exc:
+            self._json(400, {"error": str(exc)})
         except runner.EgressDenied as exc:
             self._json(403, {"error": str(exc)})
         except Exception as exc:
@@ -504,7 +528,9 @@ class Handler(BaseHTTPRequestHandler):
                 '<script nonce="__NONCE__" src="/static/card-terminal-renderer.js"></script>'
             )
         html = html.replace("__TERMINAL_ASSETS__", terminal_assets)
-        html = html.replace("__NONCE__", nonce).replace("__TOKEN__", csrf_token())
+        registry = json.dumps([dict(agents.get(kind)) for kind in agents.all()]).replace("<", "\\u003c")
+        html = (html.replace("__NONCE__", nonce).replace("__TOKEN__", csrf_token())
+                .replace("__AGENTS__", registry))
         self._send(200, html.encode(), "text/html; charset=utf-8", nonce=nonce)
 
     def _static(self, name: str) -> None:
@@ -647,7 +673,7 @@ class Handler(BaseHTTPRequestHandler):
     def _terminal(self, conn, body) -> None:
         cwd = actions.resume_cwd(conn, body["session_id"])
         command, cwd = (body.get("command"), cwd) if body.get("command") else actions.session_resume_command(
-            conn, cwd, body["session_id"], agents.session_agent(conn, body["session_id"]))
+            conn, cwd, body["session_id"], agents.session_agent(conn, body["session_id"]) or agents.CLAUDE)
         if not cwd or not command:
             return self._json(400, {"error": msg("server.no_workdir")})
         ok, message = actions.open_in_terminal(cwd, command)
@@ -726,13 +752,13 @@ class Handler(BaseHTTPRequestHandler):
         """Move an iTerm/VS Code session to an Obsidian tab: end it there, return `resume`."""
         sid = body.get("session_id", "")
         try:
-            stopped = relocate.stop_for_move(sid, body.get("pid"))
+            stopped = relocate.stop_for_move(sid, body.get("pid"), agent=agents.session_agent(conn, sid))
         except relocate.RelocateError as exc:
             return self._json(400, {"error": str(exc)})
         # A Codex thread not indexed yet has no catalog row: its folder comes from the rollout.
         cwd = actions.resume_cwd(conn, sid) or stopped.pop("cwd", None)
         stopped.pop("cwd", None)
-        agent = stopped.get("agent") or agents.session_agent(conn, sid)
+        agent = stopped.get("agent") or agents.session_agent(conn, sid) or agents.CLAUDE
         _active_cached["sessions"] = None          # the active list has changed
         _background_cached["jobs"] = None
         # A parked session goes on in its background job: the tab attaches to it.

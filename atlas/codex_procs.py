@@ -14,7 +14,7 @@ import shutil
 import subprocess
 import time
 
-from . import codex_parse, index
+from . import agents, codex_parse, index
 
 # The native binary; a platform-suffixed copy runs under the npm wrapper.
 BINARY = re.compile(r"(?:^|/)codex(?:-(?:aarch64|x86_64)-(?:apple-darwin|unknown-linux-musl))?$")
@@ -26,7 +26,6 @@ NOT_INTERACTIVE = {"exec", "e", "review", "login", "logout", "mcp", "mcp-server"
 VALUE_FLAGS = {"-m", "--model", "-c", "--config", "-C", "--cd", "-p", "--profile", "-s", "--sandbox",
                "-a", "--ask-for-approval", "-i", "--image", "--add-dir", "--enable", "--disable",
                "--local-provider", "--oss-provider", "--remote"}
-UUID = re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b")
 LSOF = shutil.which("lsof") or "/usr/sbin/lsof"
 LSOF_TIMEOUT = 3.0
 # `/new` and `/resume` inside the terminal UI switch the thread without a new process.
@@ -131,13 +130,13 @@ def session_meta(path: str) -> dict:
     parent = meta.get("parent_thread_id") if subagent else None
     meta = {"id": str(meta.get("id") or meta.get("session_id") or codex_parse.session_id_of(path) or ""),
             "cwd": meta.get("cwd"), "timestamp": meta.get("timestamp"), "subagent": subagent,
-            "parent": str(parent).lower() if parent else None}
+            "parent": str(parent) if parent else None}
     _meta_cache[path] = meta
     return meta
 
 
 def thread_id(path: str) -> str | None:
-    return (session_meta(path).get("id") or codex_parse.session_id_of(path) or "").lower() or None
+    return session_meta(path).get("id") or codex_parse.session_id_of(path)
 
 
 def main_rollout(paths: list[str]) -> str | None:
@@ -154,8 +153,8 @@ def main_rollout(paths: list[str]) -> str | None:
 
 def find_rollout(session_id: str, home: str | None = None) -> str | None:
     """The rollout of a thread id: live by date folder or archived. Cached while the file exists."""
-    sid = (session_id or "").lower()
-    if not UUID.fullmatch(sid):
+    sid = (session_id or "")
+    if not agents.valid_id(agents.CODEX, sid):
         return None
     home = home or index.codex_home()
     cached = _find_cache.get(sid)
@@ -170,11 +169,13 @@ def find_rollout(session_id: str, home: str | None = None) -> str | None:
 
 def all_rollouts(session_id: str, home: str | None = None) -> list[str]:
     """Every file of the thread: a live one in sessions/ and an archived copy may both exist."""
+    if not agents.valid_id(agents.CODEX, session_id):
+        return []
     home = glob.escape(home or index.codex_home())
-    name = f"rollout-*-{glob.escape(session_id.lower())}.jsonl"
+    name = f"rollout-*-{glob.escape(session_id)}.jsonl"
     found = glob.glob(os.path.join(home, "sessions", "**", name), recursive=True)
     found += glob.glob(os.path.join(home, "archived_sessions", name))
-    return sorted(p for p in found if codex_parse.session_id_of(p) == session_id.lower())
+    return sorted(p for p in found if codex_parse.session_id_of(p) == session_id)
 
 
 def _from_argv(command: str, home: str) -> str | None:
@@ -187,7 +188,7 @@ def _from_argv(command: str, home: str) -> str | None:
         elif word.startswith("-"):
             skip = word in VALUE_FLAGS
         else:
-            if word == "resume" and i + 1 < len(parts) and UUID.fullmatch(parts[i + 1]):
+            if word == "resume" and i + 1 < len(parts) and agents.valid_id(agents.CODEX, parts[i + 1]):
                 return find_rollout(parts[i + 1], home)
             return None
     return None
@@ -262,7 +263,7 @@ def subagent_rollouts(pid: int, table: dict, session_id: str) -> list[str]:
     row = table.get(pid)
     paths = _open_cache.get((pid, row[1]), []) if row else []
     parents = {thread_id(p): session_meta(p).get("parent") for p in paths if session_meta(p).get("subagent")}
-    sid = (session_id or "").lower()
+    sid = (session_id or "")
 
     def under(tid: str) -> bool:
         seen = set()
@@ -286,7 +287,7 @@ def subagents_on_disk(session_id: str, home: str | None = None, now: float | Non
         paths += glob.glob(os.path.join(glob.escape(home), "sessions", day, "rollout-*.jsonl"))
     subs = [p for p in paths if session_meta(p).get("subagent")]
     parents = {thread_id(p): session_meta(p).get("parent") for p in subs}
-    sid = (session_id or "").lower()
+    sid = (session_id or "")
 
     def under(tid: str) -> bool:
         seen = set()
@@ -306,9 +307,9 @@ def owner(pid: int, session_id: str, table: dict, run=None, home: str | None = N
     home = home or index.codex_home()
     found = open_rollouts([pid], run, home)
     path = main_rollout(found.get(pid, [])) if found is not None else _from_argv(table[pid][2], home)
-    return bool(path) and thread_id(path) == (session_id or "").lower()
+    return bool(path) and thread_id(path) == (session_id or "")
 
 
 def running(session_id: str, table: dict, run=None, home: str | None = None) -> bool:
     paths = rollouts_for(table, run=run, home=home, fresh=True)
-    return any(thread_id(p) == (session_id or "").lower() for p in paths.values())
+    return any(thread_id(p) == (session_id or "") for p in paths.values())

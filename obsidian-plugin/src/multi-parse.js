@@ -9,7 +9,8 @@
 //   the Submit tab lists the answers ("Review your answers"), its 1 sends them all.
 import * as fs from "fs";
 import * as path from "path";
-import { PROJECTS_DIR, SESSION_ID } from "./constants";
+import { PROJECTS_DIR } from "./constants";
+import { validId } from "./agent-registry";
 import { squash } from "./dialog";
 
 const TAIL_BYTES = 524288;
@@ -76,7 +77,7 @@ function parseMultiScreen(rows) {
 
 /** The transcript of a session: <projects>/<any folder>/<id>.jsonl, or null. */
 function transcriptPath(sessionId, root = PROJECTS_DIR) {
-  if (!SESSION_ID.test(sessionId || "")) return null;
+  if (!validId("claude", sessionId || "")) return null;
   let dirs;
   try { dirs = fs.readdirSync(root); } catch { return null; }
   for (const dir of dirs) {

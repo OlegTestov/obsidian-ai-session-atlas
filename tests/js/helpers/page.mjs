@@ -58,7 +58,7 @@ function domStub() {
  * files: script names under web/js, in load order (default: everything index.html loads).
  * storage: what localStorage holds at page load, {key: string}.
  */
-export function loadPage(files = pageOrder(), { storage = {} } = {}) {
+export function loadPage(files = pageOrder(), { storage = {}, agents = JSON.parse(fs.readFileSync(path.join(ROOT, "atlas/agents.json"))) } = {}) {
   const noop = () => 0;
   const ctx = vm.createContext({
     URL,
@@ -66,6 +66,7 @@ export function loadPage(files = pageOrder(), { storage = {} } = {}) {
     TextEncoder,
     AbortController,
     ATLAS_TOKEN: "test-token",
+    ATLAS_AGENTS: agents,
     location: { search: "", hash: "", pathname: "/", href: "http://127.0.0.1/" },
     navigator: { language: "en", clipboard: { writeText: () => Promise.resolve() } },
     document: domStub(),

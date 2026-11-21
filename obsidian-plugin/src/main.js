@@ -13,6 +13,7 @@ import {
 } from "./constants";
 import { TerminalMethods } from "./terminal";
 import { codexQueued, codexScreenState } from "./dialog-codex";
+import { agentKinds } from "./agent-registry";
 import { InputMethods } from "./input";
 import { MultiQuestionMethods } from "./multi-answer";
 import { CodexInputMethods } from "./input-codex";
@@ -332,7 +333,7 @@ class SessionAtlasPlugin extends PluginData {
       held: this.heldTabs().map(({ ptyPid, title, agent }) => ({ ptyPid, title, agent })),
       health,
       // The page offers only the agents enabled here (Settings → Agents).
-      agents: { claude: this.agentEnabled("claude"), codex: this.agentEnabled("codex") },
+      agents: Object.fromEntries(agentKinds.map(kind => [kind, this.agentEnabled(kind)])),
       groups: true,                    // tabs can be put into session groups from the page
       unread: this.unreadIds(),        // sessions that finished while you were not looking
       front: this.atlasInFront(target),      // the page is read even when the keyboard focus is outside it

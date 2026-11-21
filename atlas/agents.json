@@ -1,0 +1,4 @@
+[
+  {"id": "claude", "label": "Claude Code", "short": "Claude", "mailPrefix": "c", "idPattern": "uuid"},
+  {"id": "codex", "label": "Codex", "short": "Codex", "mailPrefix": "x", "idPattern": "uuid"}
+]

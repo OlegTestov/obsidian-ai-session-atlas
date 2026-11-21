@@ -55,7 +55,7 @@ def goals(thread_ids: list[str], home: str | None = None) -> dict[str, str]:
     rows = _select(home or index.codex_home(), GOALS_DB,
                    "SELECT thread_id, objective, status FROM thread_goals WHERE thread_id IN ({marks})",
                    list(thread_ids))
-    return {str(t).lower(): str(o) for t, o, status in rows if status == SHOWN_GOAL and o}
+    return {str(t): str(o) for t, o, status in rows if status == SHOWN_GOAL and o}
 
 
 def _iso_ms(ms) -> str | None:
@@ -88,7 +88,7 @@ def queued(thread_ids: list[str], home: str | None = None) -> dict[str, list[dic
     for tid, payload, created in rows:
         text = _queued_text(payload)
         if text:
-            out.setdefault(str(tid).lower(), []).append({"text": text[:TEXT_CHARS], "at": _iso_ms(created)})
+            out.setdefault(str(tid), []).append({"text": text[:TEXT_CHARS], "at": _iso_ms(created)})
     return out
 
 

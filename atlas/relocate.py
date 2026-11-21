@@ -13,7 +13,7 @@ import re
 import signal
 import time
 
-from . import active, codex_procs
+from . import active, agents, codex_procs
 from .messages import msg
 
 EXIT_WAIT_SECONDS = 8.0
@@ -75,13 +75,18 @@ def _codex_owner(session_id: str, pid: int, table: dict, run) -> dict | None:
 
 
 def stop_for_move(session_id: str, pid, *, sessions_dir: str | None = None, table_fn=None,
-                  wait: float = EXIT_WAIT_SECONDS, sleep=time.sleep, run=None) -> dict:
+                  wait: float = EXIT_WAIT_SECONDS, sleep=time.sleep, run=None,
+                  agent: str | None = None) -> dict:
     """Checks that the PID is this exact live session outside Obsidian, then stops it."""
+    if agent is not None:
+        agents.require(agent, (agents.CLAUDE, agents.CODEX), "session relocation")
+        if not agents.valid_id(agent, session_id):
+            raise RelocateError(msg("session_id.invalid"))
     sessions_dir = sessions_dir or active.SESSIONS_DIR
     table_fn = table_fn or active.process_table
     if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 1:
         raise RelocateError(msg("relocate.bad_pid"))
-    data = _state(pid, sessions_dir)
+    data = _state(pid, sessions_dir) if agent in (None, agents.CLAUDE) else None
     table = table_fn()
     extra: dict = {}
     if data:
@@ -92,10 +97,10 @@ def stop_for_move(session_id: str, pid, *, sessions_dir: str | None = None, tabl
             raise RelocateError(msg("relocate.ended"))
     elif pid not in table:
         raise RelocateError(msg("relocate.ended"))
-    elif _attached(session_id, pid, table, sessions_dir):
+    elif agent in (None, agents.CLAUDE) and _attached(session_id, pid, table, sessions_dir):
         start = table[pid][1]        # an attach client: stopping it leaves the job running
     else:
-        codex = _codex_owner(session_id, pid, table, run)
+        codex = _codex_owner(session_id, pid, table, run) if agent in (None, agents.CODEX) else None
         if codex is None:
             raise RelocateError(msg("relocate.foreign_pid"))
         start = codex["start"]

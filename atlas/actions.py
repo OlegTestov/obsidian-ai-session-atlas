@@ -10,11 +10,8 @@ import subprocess
 import uuid
 from datetime import datetime, timezone
 
-from . import prompts
+from . import agents, prompts
 from .messages import msg
-
-UUID_RE = re.compile(r"^[0-9a-fA-F-]{36}$")
-
 
 JOB_KINDS = ("catalog_summary", "handoff", "classification")
 
@@ -23,8 +20,8 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-def valid_session_id(value: str) -> bool:
-    return bool(value and UUID_RE.match(value))
+def valid_session_id(value: str, agent: str = agents.CLAUDE) -> bool:
+    return agents.valid_id(agent, value)
 
 
 def resume_cwd(conn: sqlite3.Connection, session_id: str) -> str | None:
@@ -45,11 +42,12 @@ def resume_cwd(conn: sqlite3.Connection, session_id: str) -> str | None:
 
 
 def resume_command(cwd: str | None, session_id: str, fork: bool = False,
-                   agent: str | None = None) -> str | None:
+                   agent: str = agents.CLAUDE) -> str | None:
     """Every argument is POSIX-quoted: cd '<cwd>' breaks on an apostrophe in the path."""
-    if not cwd or not valid_session_id(session_id):
+    agent = agents.require(agent, (agents.CLAUDE, agents.CODEX), "resume")
+    if not cwd or not valid_session_id(session_id, agent):
         return None
-    if agent == "codex":
+    if agent == agents.CODEX:
         parts = ["codex", "fork" if fork else "resume", session_id]
     else:
         parts = ["claude", "--resume", session_id] + (["--fork-session"] if fork else [])
@@ -57,12 +55,13 @@ def resume_command(cwd: str | None, session_id: str, fork: bool = False,
 
 
 def session_resume_command(conn: sqlite3.Connection, cwd: str | None, session_id: str,
-                           agent: str | None = None) -> tuple[str | None, str | None]:
+                           agent: str = agents.CLAUDE) -> tuple[str | None, str | None]:
     """(command, cwd): `claude attach <job>` while the session runs in a background job (Claude Code
     refuses `--resume` then), otherwise the ordinary resume."""
     # jobs → active → search: imported when used.
     from . import jobs
-    claude = agent in (None, "claude") and valid_session_id(session_id)
+    agent = agents.require(agent, (agents.CLAUDE, agents.CODEX), "resume")
+    claude = agent == agents.CLAUDE and valid_session_id(session_id, agent)
     job = jobs.live_job(conn, session_id) if claude else None
     if job:
         cwd = cwd or (job["cwd"] if job["cwd"] and os.path.isdir(job["cwd"]) else None)
@@ -78,18 +77,20 @@ def prompt_word(prompt: str) -> str:
 
 def agent_command(cwd: str, agent: str, new_id: str | None, prompt: str = "") -> str:
     """Claude Code takes the new id up front; Codex picks its own thread id when it starts."""
-    parts = ["codex"] if agent == "codex" else ["claude", "--session-id", new_id or ""]
+    agent = agents.require(agent, (agents.CLAUDE, agents.CODEX), "new session launch")
+    parts = ["codex"] if agent == agents.CODEX else ["claude", "--session-id", new_id or ""]
     if prompt:
         parts.append(prompt_word(prompt))
     return f"cd {shlex.quote(cwd)} && " + " ".join(shlex.quote(p) for p in parts)
 
 
 def new_session_command(cwd: str | None, new_id: str, handoff_path: str,
-                        agent: str | None = None) -> str | None:
+                        agent: str = agents.CLAUDE) -> str | None:
     """The command carries the real first prompt, not just a promise of one in the docs."""
-    if not cwd or not valid_session_id(new_id):
+    agent = agents.require(agent, (agents.CLAUDE, agents.CODEX), "handoff launch")
+    if not cwd or not valid_session_id(new_id, agent):
         return None
-    return agent_command(cwd, agent or "claude", new_id, prompts.resume(handoff_path))
+    return agent_command(cwd, agent, new_id, prompts.resume(handoff_path))
 
 
 def open_in_terminal(cwd: str, command: str) -> tuple[bool, str]:
@@ -127,7 +128,11 @@ def rename_session(conn: sqlite3.Connection, session_id: str, title: str,
     title = " ".join((title or "").split())[:MAX_TITLE]
     if not title:
         raise ValueError(msg("rename.empty"))
-    if not valid_session_id(session_id):
+    row = conn.execute(
+        "SELECT source_path, agent FROM sessions WHERE session_id=?", (session_id,)
+    ).fetchone()
+    agent = agents.require(row["agent"], (agents.CLAUDE, agents.CODEX), "rename") if row else agents.CLAUDE
+    if not valid_session_id(session_id, agent):
         raise ValueError(msg("session_id.invalid"))
 
     conn.execute(
@@ -140,14 +145,10 @@ def rename_session(conn: sqlite3.Connection, session_id: str, title: str,
     written = False
     error = None
     if write_to_transcript:
-        row = conn.execute(
-            "SELECT source_path, agent FROM sessions WHERE session_id=?", (session_id,)).fetchone()
         if row is None:
             error = msg("rename.no_transcript")
-        elif row["agent"] == "codex":
+        elif agent == agents.CODEX:
             written, error = rename_in_codex(session_id, title)
-        elif row["agent"] != "claude":
-            error = msg("rename.no_transcript")
         else:
             try:
                 line = json.dumps({"type": "custom-title", "customTitle": title,
@@ -251,8 +252,9 @@ def is_cancelled(conn: sqlite3.Connection, job_id: str) -> bool:
 CODEX_HANDOFF_NAME = re.compile(r"^launch-[0-9A-Za-z-]{1,8}-[0-9a-f]{12}\.md$")
 
 
-def handoff_name(source_session_id: str, agent: str | None) -> str:
-    if agent == "codex":
+def handoff_name(source_session_id: str, agent: str) -> str:
+    agent = agents.require(agent, (agents.CLAUDE, agents.CODEX), "handoff launch")
+    if agent == agents.CODEX:
         return f"launch-{source_session_id[:8]}-{uuid.uuid4().hex[:12]}.md"
     return f"launch-{source_session_id[:8]}.md"
 
@@ -331,7 +333,8 @@ def actions_for(conn: sqlite3.Connection, session_id: str) -> dict:
         "SELECT last_activity_at, content_hash, agent FROM sessions WHERE session_id=?",
         (session_id,)).fetchone()
     agent = row["agent"] if row else None
-    resume, cwd = session_resume_command(conn, cwd, session_id, agent)
+    kind = agent if row else agents.CLAUDE
+    resume, cwd = session_resume_command(conn, cwd, session_id, kind)
     warnings = []
     if cwd is None:
         warnings.append(msg("actions.no_workdir"))
@@ -341,7 +344,7 @@ def actions_for(conn: sqlite3.Connection, session_id: str) -> dict:
         "content_hash": row["content_hash"] if row else None,
         "agent": agent,
         "resume_command": resume,
-        "fork_command": resume_command(cwd, session_id, fork=True, agent=agent),
+        "fork_command": resume_command(cwd, session_id, fork=True, agent=kind),
         "can_open_terminal": cwd is not None,
         "warnings": warnings,
         "lineage": lineage(conn, session_id),

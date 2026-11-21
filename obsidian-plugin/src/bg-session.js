@@ -6,7 +6,8 @@ import * as childProcess from "child_process";
 import * as fsSync from "fs";
 import * as path from "path";
 import { Notice } from "obsidian";
-import { AGENT_VIEW_TYPE, SESSIONS_DIR, SESSION_ID } from "./constants";
+import { AGENT_VIEW_TYPE, SESSIONS_DIR } from "./constants";
+import { validId } from "./agent-registry";
 import { ConfirmCloseModal } from "./guard";
 import { resumeIdentity } from "./bg-transcript";
 
@@ -233,7 +234,7 @@ class BackgroundTabMethods {
   /** The session id `claude --resume` takes for the job: its own, or its parent's (bg-transcript.js). */
   resumeIdentityOf(data) {
     const id = resumeIdentity(data);
-    return SESSION_ID.test(id || "") ? id : null;
+    return validId("claude", id || "") ? id : null;
   }
 
   /**

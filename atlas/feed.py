@@ -11,7 +11,7 @@ import json
 import os
 from collections import OrderedDict
 
-from . import active, codex_feed, codex_parse, steps as stepmod
+from . import active, agents, codex_feed, steps as stepmod
 from .messages import msg, plural as nplural
 
 DEFAULT_TURNS = 8
@@ -155,13 +155,13 @@ def build(records, with_events: bool = False) -> list[dict]:
     return turns
 
 
-def _window(path: str, size: int, window: int) -> list[dict]:
+def _window(path: str, size: int, window: int, agent: str = agents.CLAUDE) -> list[dict]:
     with open(path, "rb") as fh:
         fh.seek(max(0, size - window))
         lines = fh.read().split(b"\n")
     if window < size:
         lines = lines[1:]                 # the window's first line is cut
-    if codex_parse.session_id_of(path):
+    if agent == agents.CODEX:
         return codex_feed.records(lines)  # a Codex rollout, in the records `build` reads
     out = []
     for raw in lines:
@@ -176,11 +176,14 @@ def _window(path: str, size: int, window: int) -> list[dict]:
 
 def feed_page(path: str | None, turns: int = DEFAULT_TURNS, with_events: bool = False,
               before: str | None = None, since: str | None = None,
-              before_id: str | None = None, since_id: str | None = None) -> dict:
+              before_id: str | None = None, since_id: str | None = None, *,
+              agent: str | None = None) -> dict:
     """A page of the feed. before/before_id: turns earlier than that time/turn (scrolling up); since/since_id:
     the turns from that time/turn on, inclusive, because a live turn keeps growing (the open feed's live end).
     Keyed by turn id or time, not by index from the end: a live session's end keeps growing, so indexes
     would shift. An id works for turns without a time; one that is gone answers `reset` with the last page."""
+    agent = agents.transcript_agent(path) if agent is None else agent
+    agent = agents.require(agent, (agents.CLAUDE, agents.CODEX), "conversation feed")
     if not path:
         return {"turns": [], "has_more": False}
     turns = max(1, min(MAX_TURNS, int(turns)))
@@ -191,7 +194,7 @@ def feed_page(path: str | None, turns: int = DEFAULT_TURNS, with_events: bool = 
     cap = None if (before or since or before_id) else MAX_WINDOW    # scrolling up may reach the very beginning
     window = FIRST_WINDOW
     while True:
-        built = build(_window(path, size, window), with_events)
+        built = build(_window(path, size, window, agent), with_events)
         whole = window >= size
 
         def at(t: dict) -> str:

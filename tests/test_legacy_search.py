@@ -219,15 +219,17 @@ def test_failed_recovery_retries_only_failed_source_and_eventually_restores_it(w
     conn.commit()
     conn.close()
     conn = db.connect()
-    parse = store.parse_file
+    from atlas import parse
+
+    read = parse.parse_file
 
     def unreadable(path, *args, **kwargs):
         if path == bad:
             raise PermissionError("temporarily unreadable")
-        return parse(path, *args, **kwargs)
+        return read(path, *args, **kwargs)
 
     with monkeypatch.context() as m:
-        m.setattr(store, "parse_file", unreadable)
+        m.setattr(parse, "parse_file", unreadable)
         first = index.ensure_indexed(conn)
         assert first["errors"] == 1 and first["indexed"] == 1
         assert not index.reindex_due(conn)

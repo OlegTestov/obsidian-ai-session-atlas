@@ -132,7 +132,9 @@ window.addEventListener("message", e => {
   tabsAskedAt = null;
   // Plugins before Codex launches send no agents: Claude Code only.
   hostAgents = d.agents && typeof d.agents === "object"
-    ? { claude: d.agents.claude !== false, codex: d.agents.codex === true } : null;
+    ? Object.fromEntries(AtlasLogic.AGENTS.map(kind => [
+        kind, kind === "claude" ? d.agents[kind] !== false : d.agents[kind] === true,
+      ])) : null;
   if ($("#newsess").open) fillNewSessionAgents();
   refreshResumeWith();
   // Plugins before 1.5 send no reason: an answer means the link works.
@@ -154,7 +156,7 @@ function tabScreens(tabs) {
 
 // A Codex session whose tab shows a prompt waits for you: only the screen knows it. The tab's group comes along.
 function screenSessions() {
-  return activeRaw.map(s => {
+  return activeRaw.filter(s => AtlasLogic.findAgent(AtlasLogic.agentOf(s))).map(s => {
     const pid = tabFor(s);
     return withTabGroup(withTabScreen(s, pid ? hostScreens.get(pid) : null), pid);
   });

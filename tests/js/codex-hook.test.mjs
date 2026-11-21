@@ -16,7 +16,9 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-codex-hook-"));
 const dataDir = path.join(tmp, "Application Support", "it's session-atlas");
 const runtime = path.join(dataDir, "runtime");
 fs.mkdirSync(path.join(runtime, "atlas"), { recursive: true });
-fs.copyFileSync(path.join(ROOT, "atlas", "codex_hook.py"), path.join(runtime, "atlas", "codex_hook.py"));
+for (const name of ["codex_hook.py", "agents.py", "agents.json"]) {
+  fs.copyFileSync(path.join(ROOT, "atlas", name), path.join(runtime, "atlas", name));
+}
 const codexDir = path.join(tmp, "codex");
 const file = path.join(codexDir, "hooks.json");
 after(() => fs.rmSync(tmp, { recursive: true, force: true }));

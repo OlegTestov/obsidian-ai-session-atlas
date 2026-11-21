@@ -18,7 +18,8 @@ EXTRACTOR_VERSION = 1
 LOCAL_BACKENDS = {"ollama", "lmstudio", "llamacpp"}
 EXTERNAL_BACKEND = CLAUDE_BACKEND = "claude-cli"
 CODEX_BACKEND = "codex-cli"
-AGENT_NAMES = {CLAUDE_BACKEND: "Claude Code", CODEX_BACKEND: "Codex"}
+BACKENDS = {agents.CLAUDE: CLAUDE_BACKEND, agents.CODEX: CODEX_BACKEND}
+AGENT_NAMES = {backend: agents.label(kind) for kind, backend in BACKENDS.items()}
 
 DEFAULT_MODEL = "sonnet"
 DEFAULT_EFFORT = "medium"
@@ -70,11 +71,11 @@ PREVIEW_TAIL = 2_000
 
 def model_label(model: str, backend_name: str) -> str:
     """How the preview names the model: Codex's default has no name of its own."""
-    return codex_exec.model_label(model) if backend_name == CODEX_BACKEND else model
+    return codex_exec.model_label(model) if _backend_name(backend_name) == CODEX_BACKEND else model
 
 
 def agent_name(backend_name: str) -> str:
-    return AGENT_NAMES.get(backend_name, backend_name)
+    return AGENT_NAMES[_backend_name(backend_name)]
 
 
 def has_claude() -> bool:
@@ -85,21 +86,44 @@ def has_claude() -> bool:
     return True
 
 
+class InvalidAIAgent(agents.UnknownAgent):
+    def __init__(self, choice):
+        self.choice = choice
+        super().__init__(msg("server.invalid_ai_agent", value=repr(choice)))
+
+
+def configured_agent() -> str:
+    choice = config.get("ai_agent")
+    if not choice:                          # unset, empty or false meant auto before the registry
+        return "auto"
+    if not isinstance(choice, str) or (choice != "auto" and choice not in BACKENDS):
+        raise InvalidAIAgent(choice)
+    return choice
+
+
 def backend() -> str:
     """Which agent runs the AI features: `ai_agent` in config.json (auto | claude | codex).
     Auto: Claude Code when it is installed, else Codex when it is, else Claude Code (its error says why)."""
-    choice = config.get("ai_agent") or "auto"
-    if choice == "codex":
-        return CODEX_BACKEND
-    if choice == "claude" or has_claude():
+    choice = configured_agent()
+    if choice != "auto":
+        return BACKENDS[choice]
+    if has_claude():
         return CLAUDE_BACKEND
     return CODEX_BACKEND if codex_app.find_codex() else CLAUDE_BACKEND
+
+
+def _backend_name(name: str | None) -> str:
+    if name is None:
+        return backend()
+    if name not in AGENT_NAMES:
+        raise agents.UnknownAgent(f"Unknown AI backend: {name!r}")
+    return name
 
 
 def model_for(artifact_kind: str, backend_name: str | None = None) -> tuple[str, str]:
     """With force_1m set, models without a native 1M window get the [1m] suffix. Not every plan
     has it, so it is off by default. Codex has its own setting (`codex_exec.model_for`)."""
-    if (backend_name or backend()) == CODEX_BACKEND:
+    if _backend_name(backend_name) == CODEX_BACKEND:
         return codex_exec.model_for(artifact_kind)
     model, effort = _models().get(artifact_kind, (DEFAULT_MODEL, DEFAULT_EFFORT))
     if config.get("force_1m") and not has_1m_window(model):
@@ -346,7 +370,7 @@ def run_isolated(prompt: str, model: str = DEFAULT_MODEL, effort: str = DEFAULT_
     your environment and creates transcripts of its own. The Codex backend: `codex_exec.run`, where
     `schema` (JSON Schema of the answer) is enforced; `claude -p` follows the prompt alone."""
     require_llm()                  # last line of defense: every model call passes through here
-    if (backend_name or backend()) == CODEX_BACKEND:
+    if _backend_name(backend_name) == CODEX_BACKEND:
         try:
             return codex_exec.run(prompt, runner_cwd(), model, effort, timeout, schema)
         except codex_exec.TooLong as exc:

@@ -13,7 +13,7 @@ import glob
 import json
 import os
 
-from . import codex_feed, codex_parse
+from . import agents, codex_feed
 
 TOOL_MARK = b'"tool_use"'
 MAX_DIFF_LINES = 4000
@@ -109,11 +109,13 @@ def _scan(path: str) -> tuple[dict, str | None]:
     return files, cwd
 
 
-def session_files(path: str | None) -> dict:
+def session_files(path: str | None, *, agent: str | None = None) -> dict:
     """{cwd, files: [...]}: changed files first, newest first; then read-only ones."""
+    agent = agents.transcript_agent(path) if agent is None else agent
+    agent = agents.require(agent, (agents.CLAUDE, agents.CODEX), "touched files")
     if not path:
         return {"cwd": None, "files": []}
-    if codex_parse.session_id_of(path):
+    if agent == agents.CODEX:
         return codex_feed.session_files(path)
     merged: dict[str, dict] = {}
     main, cwd = _scan(path)

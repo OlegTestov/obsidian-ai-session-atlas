@@ -287,3 +287,50 @@ def test_exit_hint_uses_the_session_selected_inside_the_tab(tmp_path):
     restored = out[out.rfind(b"\x1b[?1049l"):]
     assert f"claude --resume {NEW}".encode() in restored
     assert OLD.encode() not in restored
+
+
+def test_standalone_launcher_starts_with_empty_path(tmp_path):
+    import shutil
+
+    scripts = tmp_path / "scripts"
+    shutil.copytree(SCRIPTS, scripts)
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".zshenv").write_text(
+        'claude() { print -r -- "agent-path=<$PATH> $*"; }\n'
+    )
+    sid = "01234567-89ab-cdef-0123-456789abcdef"
+    env = {"HOME": str(home), "ZDOTDIR": str(home), "PATH": "",
+           "OBS_AGENT_TERMINAL_STATE_DIR": str(tmp_path / "state"),
+           "OBS_AGENT_TERMINAL_NO_SHELL": "1"}
+    run = subprocess.run(
+        ["/bin/zsh", str(scripts / "agent-resume-terminal.zsh"), "claude", "pathless", "new", sid],
+        cwd=tmp_path, env=env, capture_output=True, text=True,
+    )
+    assert run.returncode == 0, run.stdout + run.stderr
+    assert "agent-path=<> " in run.stdout
+    assert f"--session-id {sid}" in run.stdout
+    assert not run.stderr
+
+
+def test_codex_quick_exit_uses_codex_id_grammar(tmp_path):
+    import shutil
+
+    env, work = _env(tmp_path)
+    _codex_stub(tmp_path, env, work)
+    scripts = tmp_path / "scripts"
+    shutil.copytree(SCRIPTS, scripts)
+    root = SCRIPTS.parents[1]
+    rows = json.loads((root / "atlas/agents.json").read_text())
+    next(row for row in rows if row["id"] == "claude")["idPattern"] = "^claude_[a-z0-9]+$"
+    registry = tmp_path / "agents.json"
+    registry.write_text(json.dumps(rows))
+    generated = subprocess.check_output(["node", str(root / "tools/agent_registry.mjs"), str(registry)])
+    (scripts / "agent-kinds.zsh").write_bytes(generated)
+
+    run = subprocess.run(
+        ["/bin/zsh", str(scripts / SCRIPT.name), "codex", "quick", "new", "", "first prompt"],
+        cwd=work, env=env, check=True, capture_output=True, text=True, timeout=20,
+    )
+    assert f"codex resume {NEW}" in run.stdout
+    assert f"codex\tquick\t{NEW}\t" in (tmp_path / "state/resume.tsv").read_text()

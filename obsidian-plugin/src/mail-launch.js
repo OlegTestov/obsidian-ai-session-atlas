@@ -3,12 +3,12 @@
 // Mixed into the plugin class; the tab script reads the line from agent-mail-args/<kind>.
 import * as path from "path";
 import * as fsSync from "fs";
-import { shellQuote } from "./agents";
+import { shellQuote, supportsTerminal } from "./agents";
+import { agentKinds } from "./agent-registry";
 import { mailRoot } from "./mail-nudge";
 
 const SERVER = "agent-mail";
 const TOOLS = ["mail_send", "mail_inbox", "mail_register", "mail_peers"];
-const KINDS = ["claude", "codex"];
 // A managed policy can forbid launch-time MCP configs; Claude Code then refuses to start at all.
 const CLAUDE_MANAGED = "/Library/Application Support/ClaudeCode/managed-settings.json";
 
@@ -57,7 +57,7 @@ class MailLaunchMethods {
       const dir = path.join(this.dataDir(), "agent-mail-args");
       fsSync.mkdirSync(dir, { recursive: true, mode: 0o700 });
       const blocked = sideloadBlocked(this.claudeManagedSettings);
-      for (const kind of KINDS) {
+      for (const kind of agentKinds.filter(supportsTerminal)) {
         const words = input && !(kind === "claude" && blocked) ? mailLaunchWords(kind, input) : [];
         fsSync.writeFileSync(path.join(dir, kind), words.map(shellQuote).join(" ") + "\n");
       }

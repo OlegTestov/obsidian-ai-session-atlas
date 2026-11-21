@@ -5,12 +5,13 @@ import json
 import os
 import subprocess
 import time
+import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 
 import pytest
 
-from atlas import active, codex_live, codex_procs, codex_tail, db, index
+from atlas import active, agents, codex_live, codex_procs, codex_tail, db, index
 from tests.conftest import cx, cx_agent, cx_context, cx_meta, cx_tokens, cx_user, user_text
 
 TID = "019e0000-aaaa-7000-8000-000000000001"
@@ -224,7 +225,7 @@ def test_pending_codex_matches_claude_before_any_transcript(atlas_env, claude_di
     assert by["claude"]["session_id"] == claude_id and not by["claude"]["indexed"]
     c = by["codex"]
     assert c["pending"] is True and c["session_id"] == "pending-codex-101-Thu-Sep-1-10:00:00-2026"
-    assert not codex_procs.UUID.fullmatch(c["session_id"])
+    assert not agents.valid_id("codex", c["session_id"])
     assert c["pid"] == 101 and c["ancestors"] == [50] and c["host_app"] == "iTerm"
     assert c["status"] == c["activity"] == "idle" and c["cwd"] == "/Users/u"
     assert c["started_at"] == c["process_started_at"] == "2026-09-01T10:00:00+00:00"
@@ -397,7 +398,10 @@ def test_active_route_filters_by_agent(atlas_env, write_session, write_rollout, 
     only = get("?agent=codex")
     assert [s["session_id"] for s in only["sessions"]] == [TID] and only["count"] == 1
     assert [s["agent"] for s in get("?agent=claude")["sessions"]] == ["claude"]
-    assert get("?agent=gemini")["count"] == 2                         # unknown values are ignored
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        get("?agent=gemini")
+    assert exc.value.code == 400
+    assert "gemini" in json.loads(exc.value.read())["error"]
 
 
 def test_a_run_with_empty_limit_windows_does_not_hide_older_limits(write_rollout):

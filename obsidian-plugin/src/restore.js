@@ -2,6 +2,7 @@
 // which sessions were open in its tabs and, after start, offers to bring back those that are not
 // alive. A session closed while Obsidian was running drops off the list by itself.
 import { HOST_SOURCE } from "./constants";
+import { restoreAgent } from "./agents";
 
 const RESTORE_MAX_AGE_MS = 3 * 24 * 3600 * 1000;
 // After Obsidian starts, agent tabs bring their sessions back themselves within a few seconds.
@@ -10,13 +11,14 @@ const RESTORE_MAX_AGE_MS = 3 * 24 * 3600 * 1000;
 const RESTORE_GRACE_MS = 20000;
 
 const sameIds = (a, b) => a.length === b.length
-  && a.every((x, i) => x.session_id === b[i].session_id);
+  && a.every((x, i) => x.session_id === b[i].session_id
+    && (x.agent ?? "claude") === (b[i].agent ?? "claude"));
 
 class RestoreMethods {
   /** Before the first poll: what was open last time are candidates until it is clear which are alive. */
   initRestore() {
     this.restorable = Array.isArray(this.settings && this.settings.openSessions)
-      ? this.settings.openSessions.slice() : [];
+      ? this.settings.openSessions.filter(row => restoreAgent(row.agent ?? "claude")) : [];
     this.restoreChecked = false;
   }
 
@@ -28,11 +30,13 @@ class RestoreMethods {
     this.restoreChecked = true;
     const open = [];
     for (const s of sessions) {
+      const agent = s.agent ?? "claude";
+      if (!restoreAgent(agent)) continue;
       // A process held without a tab (the plugin was toggled) is still ours: an Obsidian restart
       // would end it, and it must be offered back like an open tab.
       if ((await this.tabForSession(s)) || this.heldForSession(s)) {
         open.push({ session_id: s.session_id, title: String(s.title || "").slice(0, 200), at: now,
-                    agent: s.agent === "codex" ? "codex" : "claude" });
+                    agent });
       }
     }
     const saved = (this.settings && this.settings.openSessions) || [];
@@ -49,7 +53,7 @@ class RestoreMethods {
       type: "restorable",
       ready: !!this.restoreChecked && Date.now() - (this.loadedAt || 0) >= RESTORE_GRACE_MS,
       sessions: (this.restorable || []).map(({ session_id, title, at, agent }) =>
-        ({ session_id, title, at, agent: agent || "claude" })),
+        ({ session_id, title, at, agent: agent ?? "claude" })),
     }, this.atlasOrigin());
   }
 

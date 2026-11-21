@@ -16,7 +16,6 @@ import sqlite3
 import tempfile
 
 from . import active, agents, codex_app, codex_parse, codex_procs, db, index, search_rows, store
-from .actions import valid_session_id
 from .messages import msg
 
 HISTORY = "history.jsonl"            # Claude Code input history (up arrow)
@@ -107,15 +106,16 @@ def is_running(session_id: str, sessions_dir: str | None = None, table: dict | N
 def _is_codex(conn: sqlite3.Connection, session_id: str) -> bool:
     """By the catalog, or for a thread not indexed yet, by a rollout with that id."""
     agent = agents.session_agent(conn, session_id)
-    if agent:
-        return agent == agents.CODEX
-    return bool(codex_procs.all_rollouts(session_id))
+    if agent is None:
+        agent = agents.CODEX if codex_procs.all_rollouts(session_id) else agents.CLAUDE
+    agent = agents.require(agent, (agents.CLAUDE, agents.CODEX), "session deletion")
+    if not agents.valid_id(agent, session_id):
+        raise DeleteError(msg("session_id.invalid"))
+    return agent == agents.CODEX
 
 
 def footprint(conn: sqlite3.Connection, session_id: str) -> dict:
     """What will be deleted, for the confirmation dialog. Changes nothing."""
-    if not valid_session_id(session_id):
-        raise DeleteError(msg("session_id.invalid"))
     codex = _is_codex(conn, session_id)
     found = [("rollout", p) for p in codex_procs.all_rollouts(session_id)] + \
         [("rollout_subagent", p) for p in _codex_subagents(session_id)] if codex else _claude_paths(session_id)
@@ -143,7 +143,7 @@ def _codex_subagents(session_id: str) -> list[str]:
     """The thread's subagent rollouts (theirs too): part of its session, so they go with it."""
     paths = index.discover_codex(index.codex_home())
     children = index.codex_subagents(paths)
-    return sorted({c for p in paths if codex_parse.session_id_of(p) == session_id.lower()
+    return sorted({c for p in paths if codex_parse.session_id_of(p) == session_id
                    for c in children.get(p, [])})
 
 
@@ -181,7 +181,8 @@ def delete_session(conn: sqlite3.Connection, session_id: str) -> dict:
     plan = footprint(conn, session_id)
     if plan["running"]:
         raise DeleteError(msg("delete.running"))
-    codex = plan["agent"] == agents.CODEX
+    agent = agents.require(plan["agent"], (agents.CLAUDE, agents.CODEX), "session deletion")
+    codex = agent == agents.CODEX
     home = index.codex_home() if codex else claude_home()
     roots = (os.path.realpath(home), os.path.realpath(db.atlas_home()))
     for item in plan["items"]:

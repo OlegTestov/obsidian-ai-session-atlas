@@ -8,6 +8,9 @@ import * as http from "http";
 import * as os from "os";
 import * as path from "path";
 import EMBEDDED_PAYLOAD from "./payload";
+import { agentKinds } from "./agent-registry";
+
+const SHELL_KEYS = ["PATH", ...agentKinds, "CODEX_HOME"];
 
 const DATA_DIR = path.join(os.homedir(), "Library/Application Support/session-atlas");
 const DEV_DATA_DIR = path.join(os.homedir(), "Library/Application Support/session-atlas-dev");
@@ -47,8 +50,8 @@ function parseShellProbe(stdout) {
   const out = {};
   const marker = String(stdout || "").split("\n__ATLAS__").slice(1).join("\n");
   for (const line of marker.split("\n")) {
-    const m = /^(PATH|claude|codex|CODEX_HOME)=(.*)$/.exec(line.trim());
-    if (m && m[2] && !out[m[1]]) out[m[1]] = m[2];
+    const m = /^(\w+|[a-z][a-z0-9-]*)=(.*)$/.exec(line.trim());
+    if (m && SHELL_KEYS.includes(m[1]) && m[2] && !out[m[1]]) out[m[1]] = m[2];
   }
   return out;
 }
@@ -102,8 +105,9 @@ class RuntimeMethods {
   async shellProbe() {
     if (this.shellInfo) return this.shellInfo;
     const shell = process.env.SHELL && /\/(zsh|bash)$/.test(process.env.SHELL) ? process.env.SHELL : "/bin/zsh";
-    const script = 'printf "\\n__ATLAS__\\nPATH=%s\\nclaude=%s\\ncodex=%s\\nCODEX_HOME=%s\\n" "$PATH" '
-      + '"$(command -v claude 2>/dev/null)" "$(command -v codex 2>/dev/null)" "${CODEX_HOME-}"';
+    const format = ["", "__ATLAS__", ...SHELL_KEYS.map(key => key + "=%s"), ""].join("\\n");
+    const binaries = agentKinds.map(kind => `"$(command -v ${kind} 2>/dev/null)"`);
+    const script = `printf '${format}' "$PATH" ${binaries.join(" ")} ` + '"${CODEX_HOME-}"';
     const r = await run(shell, ["-l", "-i", "-c", script], { env: Object.assign({}, process.env, { TERM: "dumb" }) });
     this.shellInfo = parseShellProbe(r.stdout);
     return this.shellInfo;

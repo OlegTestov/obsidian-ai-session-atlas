@@ -16,7 +16,8 @@ def test_install_puts_agent_scripts_where_saved_tabs_expect_them(tmp_path):
     mod.install(str(tmp_path), enable=False)
     src = os.path.join(HERE, "obsidian-plugin", "scripts")
     names = sorted(os.listdir(src))
-    assert names == ["agent-registry-lib.zsh", "agent-resume-terminal.zsh", "agent-session-hook.zsh",
+    assert names == ["agent-claude.zsh", "agent-codex.zsh", "agent-kinds.zsh", "agent-registry-lib.zsh",
+                     "agent-resume-terminal.zsh", "agent-session-hook.zsh",
                      "agent-sessions-lib.zsh"]
     for name in names:
         dest = tmp_path / ".obsidian" / "scripts" / name
@@ -35,5 +36,7 @@ def test_dev_install_marks_itself_and_a_staged_install_clears_the_marks(tmp_path
     target = tmp_path / ".obsidian" / "plugins" / "session-atlas"
     mod.install(str(tmp_path), enable=False, dev=True)
     assert (target / ".hotreload").exists() and (target / ".dev").exists()
+    registry = tmp_path / ".obsidian/scripts/agent-kinds.zsh"
+    assert registry.read_bytes() == Path(HERE, "obsidian-plugin/scripts/agent-kinds.zsh").read_bytes()
     mod.install(str(tmp_path), enable=False)
     assert not (target / ".hotreload").exists() and not (target / ".dev").exists()

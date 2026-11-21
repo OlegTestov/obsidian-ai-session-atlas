@@ -5,7 +5,6 @@
 /* exported resumeWithButton, refreshResumeWith, closeResumeWith, lineageBlock, convertedBadge -- used by other page scripts */
 
 (function (root) {
-  const AGENTS = ["claude", "codex"];
 
   /**
    * Menu items. Inside Obsidian an agent the plugin has turned off is shown disabled (Claude Code is on
@@ -13,8 +12,8 @@
    * The session's own agent is always available: it is the ordinary resume.
    */
   function choices(own, host, embedded) {
-    return AGENTS.map((agent) => {
-      const on = !embedded || (agent === "claude" ? !(host && host.claude === false) : !!(host && host.codex === true));
+    return root.AtlasLogic.AGENTS.map((agent) => {
+      const on = !embedded || (agent === "claude" ? !(host && host.claude === false) : host?.[agent] === true);
       return { agent, own: agent === own, enabled: agent === own || on };
     });
   }

@@ -2,10 +2,12 @@
 // tab is loaded one by one without taking the focus.
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { createRequire } from "node:module";
+import Module, { createRequire } from "node:module";
 import { setGlobal } from "./helpers/globals.mjs";
 import { loadSrc } from "./helpers/load-src.mjs";
 
+const realLoad = Module._load;
+Module._load = (id, ...args) => id === "obsidian" ? {} : realLoad(id, ...args);
 setGlobal("window", { setTimeout, clearTimeout, setInterval, clearInterval });
 const { StartupMethods, orphanTabProcesses, deferredAgentLeaves, agentUnder } = loadSrc("startup");
 const childProcess = createRequire(import.meta.url)("child_process");

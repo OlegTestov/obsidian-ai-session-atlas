@@ -177,3 +177,17 @@ def test_explicit_prices_are_used_for_every_row_not_the_config(mixed, atlas_env,
     doubled = stats.summary(mixed, "all", now=NOW, agents=["codex"],
                             prices={"gpt-6-sol": [4.0, 0.4, 5.0, 20.0]})["totals"]
     assert doubled["cost"] == round(2 * CODEX_COST, 2)
+
+
+def test_downgrade_skips_and_logs_unknown_agent_without_losing_known_activity(mixed, caplog):
+    before = run(mixed)
+    # A copied reply can have the same key as activity in a supported transcript.
+    mixed.execute("INSERT INTO sessions(session_id, source_path, agent, session_kind) "
+                  "VALUES ('newer-id', '/newer', 'newer-agent', 'interactive')")
+    mixed.execute("INSERT INTO activity(session_id, key, kind, ts, cost) "
+                  "SELECT 'newer-id', key, kind, ts, 1000 FROM activity WHERE session_id=?", (CLAUDE_ID,))
+    mixed.commit()
+    after = run(mixed)
+    assert before["totals"] == after["totals"]
+    assert before["sessions"] == after["sessions"]
+    assert "newer-id" in caplog.text and "newer-agent" in caplog.text

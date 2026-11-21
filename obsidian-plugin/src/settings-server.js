@@ -3,12 +3,14 @@
 import { Notice, Setting } from "obsidian";
 import * as childProcess from "child_process";
 import * as F from "./config-form";
+import { agentKinds, getAgent } from "./agent-registry";
+import { supportsTerminal } from "./agents";
 
 const DEFAULT_MODELS = { classification: ["sonnet", "low"], catalog_summary: ["sonnet", "low"],
                          handoff: ["sonnet", "medium"] };
 
 const MIN_MACOS = 12;
-const AI_AGENTS = ["auto", "claude", "codex"];
+const AI_AGENTS = ["auto", ...agentKinds.filter(supportsTerminal)];
 
 /** Environment checks: what is present, what is missing, and a button where it can be fixed. */
 async function renderStatus(tab, containerEl = tab.containerEl) {
@@ -35,8 +37,9 @@ async function renderStatus(tab, containerEl = tab.containerEl) {
       python || clt ? null : { text: t("setup.installClt"), onClick: () => {
         childProcess.spawn("/usr/bin/xcode-select", ["--install"], { detached: true, stdio: "ignore" }).unref();
       } });
-  row(!!shell.claude, "Claude Code", shell.claude || t("setup.notFound"));
-  row(!!shell.codex, "Codex", shell.codex || t("setup.notFoundOptional"));
+  for (const kind of agentKinds) {
+    row(!!shell[kind], getAgent(kind).label, shell[kind] || t(kind === "claude" ? "setup.notFound" : "setup.notFoundOptional"));
+  }
   const up = !!health && health.app === "session-atlas";
   row(up, t("setup.server"), up ? `127.0.0.1:${health.port} · python ${health.python || "?"}`
       : (plugin.serverProblem || t("setup.serverDown")), { text: t("setup.restart"), onClick: async () => {
@@ -44,7 +47,7 @@ async function renderStatus(tab, containerEl = tab.containerEl) {
         await plugin.ensureServer();
         tab.refresh();
       } });
-  if (up) await renderIndex(tab, box, row);
+  if (up) await renderIndex(tab, row);
   renderLimits(tab, box);
 }
 
@@ -54,7 +57,7 @@ function pythonProblem(plugin, clt) {
   return plugin.t("setup.pythonUnfit", { tried: tried || "—" });
 }
 
-async function renderIndex(tab, box, row) {
+async function renderIndex(tab, row) {
   const { plugin } = tab;
   const r = await plugin.atlasRequest("GET", "/api/index-status");
   const info = r.status === 200 && r.data ? r.data : null;
@@ -67,6 +70,7 @@ async function renderIndex(tab, box, row) {
     new Notice(res.status === 200 ? plugin.t("setup.reindexDone") : plugin.t("setup.reindexFailed"));
     tab.refresh();
   } });
+  if (info?.ai_agent_error) row(false, plugin.t("ai.agent"), info.ai_agent_error);
 }
 
 /** Subscription limits: a file the plugin does not own (~/.claude/settings.json) is edited only on explicit opt-in. */
@@ -146,8 +150,15 @@ function aiDefinitions(tab) {
       toggle.setValue(!!cfg().force_1m).onChange(v => save({ force_1m: v }))) },
     { name: plugin.t("ai.agent"), desc: plugin.t("ai.agent.desc"), render: setting => setting.addDropdown(dropdown => {
       for (const choice of AI_AGENTS) dropdown.addOption(choice, plugin.t(`ai.agent.${choice}`));
-      dropdown.setValue(AI_AGENTS.includes(cfg().ai_agent) ? cfg().ai_agent : "auto")
-        .onChange(value => save({ ai_agent: value }));
+      const choice = cfg().ai_agent;
+      const selected = choice == null || choice === "" ? "auto" : choice;
+      if (!AI_AGENTS.includes(selected)) {
+        dropdown.addOption("", plugin.t("ai.agent.invalid", { value: JSON.stringify(choice) }));
+        dropdown.setValue("");
+      } else {
+        dropdown.setValue(selected);
+      }
+      dropdown.onChange(value => { if (AI_AGENTS.includes(value)) save({ ai_agent: value }); });
     }) },
     { name: plugin.t("ai.codexModel"), desc: plugin.t("ai.codexModel.desc"), render: setting => setting.addText(text => {
       text.setPlaceholder(plugin.t("ai.codexModel.placeholder")).setValue(F.modelToText(cfg().codex_model));

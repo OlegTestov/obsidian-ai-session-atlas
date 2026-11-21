@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from atlas import db, index, search
+from atlas import db, index, runner, search
 from tests.conftest import assistant_text, assistant_tool, user_text
 
 
@@ -72,19 +72,22 @@ def test_deleted_source_disappears_from_the_catalog(atlas_env, write_session):
     assert conn.execute("SELECT count(*) c FROM fts").fetchone()["c"] == 0
 
 
-def test_rebuild_keeps_manual_overrides(atlas_env, write_session):
+def test_rebuild_keeps_manual_overrides_and_egress_grants(atlas_env, write_session):
     write_session("p", [user_text("работа")], session_id="11111111-1111-1111-1111-111111111111")
     conn = _conn(atlas_env)
     index.index_all(conn, root=str(atlas_env["projects"]))
     conn.execute("INSERT INTO user_overrides(session_id, domain, sensitivity, updated_at) "
                  "VALUES(?,?,?,?)",
                  ("11111111-1111-1111-1111-111111111111", "personal", "sensitive", "2026-09-13"))
-    conn.commit()
+    runner.grant_egress(conn, "11111111-1111-1111-1111-111111111111", "existing-hash",
+                        "handoff", runner.CLAUDE_BACKEND, "sonnet")
+    grant = conn.execute("SELECT * FROM egress_grants").fetchone()[:]
 
     db.drop_derived(conn)
     index.index_all(conn, root=str(atlas_env["projects"]), full=True)
     kept = conn.execute("SELECT * FROM user_overrides").fetchone()
     assert kept["sensitivity"] == "sensitive"
+    assert conn.execute("SELECT * FROM egress_grants").fetchone()[:] == grant
     meta = search.load_session(conn, "11111111-1111-1111-1111-111111111111")
     assert meta["sensitivity"] == "sensitive" and meta["domains"] == ["personal"]
 

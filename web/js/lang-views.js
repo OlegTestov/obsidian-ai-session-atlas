@@ -88,6 +88,7 @@
       "agent.codex": "Codex",
       "agent.claudeShort": "Claude",
       "agent.codexShort": "Codex",
+      "agent.unknown": "Unknown agent",
       "agent.badgeHint": "Agent: {agent}",
       "agent.lastOne": "Select at least one agent",
 
@@ -319,6 +320,7 @@
       "agent.codex": "Codex",
       "agent.claudeShort": "Claude",
       "agent.codexShort": "Codex",
+      "agent.unknown": "Неизвестный агент",
       "agent.badgeHint": "Агент: {agent}",
       "agent.lastOne": "Нужно выбрать хотя бы одного агента",
 

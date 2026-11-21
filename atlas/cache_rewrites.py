@@ -12,7 +12,7 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 
 from . import costs, forks, openai_costs
-from .agents import CODEX
+from .agents import CLAUDE, CODEX, require
 
 COLD_MIN = 20_000
 CHANGED_MAX_S = 300          # the short cache life; also the guess when nobody wrote before
@@ -51,10 +51,11 @@ def lifetime(w) -> float | None:
 
 def extra_cost(r, prices: dict | None) -> float | None:
     """What the reply cost beyond a warm cache; None when the model or the reply has no price."""
+    agent = require(r["agent"], (CLAUDE, CODEX), "cache pricing")
     if r["cost"] is None:
         return None
     inp, cr, cw, out = (r[k] or 0 for k in ("inp", "cr", "cw", "out"))
-    if r["agent"] == CODEX:
+    if agent == CODEX:
         warm = openai_costs.reply_cost(r["model"], 0, cr + inp + cw, 0, out, prices)
     else:
         warm = costs.message_cost(r["model"], {"output_tokens": out, "cache_read_input_tokens": cr + inp + cw})

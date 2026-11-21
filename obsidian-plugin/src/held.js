@@ -4,6 +4,8 @@
 // offered back (catalog banner, the card's Go to, a notice) and held until the user decides.
 import { Notice } from "obsidian";
 import { AGENT_VIEW_TYPE } from "./constants";
+import { agentKinds, getAgent } from "./agent-registry";
+import { restoreAgent } from "./agents";
 
 // Time for the new plugin copy to load and pick its tabs up.
 const RECLAIM_MS = 120000;
@@ -81,6 +83,7 @@ function offerHeld(workspace, now = Date.now()) {
   for (const [key, held] of [...registry()]) {
     adoptLegacy(key, held);
     if (!held.held || wanted.has(key)) continue;
+    if (held.state?.kind !== "shell" && !restoreAgent(held.state?.kind)) continue;
     if (held.pty.exited) { releaseHeld(key); continue; }
     if (!held.offeredAt) {
       window.clearTimeout(held.timer);
@@ -98,10 +101,10 @@ function offerHeld(workspace, now = Date.now()) {
  */
 function adoptLegacy(key, held) {
   if (held.held !== undefined || !held.timer || !held.pty) return;
-  const kind = /^(claude|codex)-/.exec(key);
+  const kind = agentKinds.find(id => key.startsWith(id + "-"));
   held.held = true;
-  held.state = held.state || { kind: kind ? kind[1] : "shell", instance: kind ? key : null,
-                               title: kind ? (kind[1] === "codex" ? "Codex" : "Claude Code") : "Terminal" };
+  held.state = held.state || { kind: kind || "shell", instance: kind ? key : null,
+                               title: kind ? getAgent(kind).label : "Terminal" };
 }
 
 /** Ends a held process; a process attached to a tab is not touched. */
@@ -119,13 +122,13 @@ class HeldMethods {
   heldTabs() {
     return offerHeld(this.app && this.app.workspace).map(({ key, pty, state }) => ({
       key, ptyPid: pty.pid, title: String(state.title || "Terminal").slice(0, 200),
-      agent: state.kind === "codex" ? "codex" : state.kind === "shell" ? "shell" : "claude",
+      agent: state.kind,
     }));
   }
 
   heldForSession(s) {
     const ancestors = new Set(Array.isArray(s && s.ancestors) ? s.ancestors : []);
-    return this.heldTabs().find((h) => ancestors.has(h.ptyPid)) || null;
+    return this.heldTabs().find((h) => ancestors.has(h.ptyPid) && (h.agent === "shell" || h.agent === (s.agent ?? "claude"))) || null;
   }
 
   /** Called at load and every poll: new held processes get a notice; the catalog shows a banner. */

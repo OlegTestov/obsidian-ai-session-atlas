@@ -334,9 +334,24 @@
     return notes;
   }
 
-  // Agents a session can come from. A row without the field predates Codex support: Claude Code.
-  const AGENTS = ["claude", "codex"];
-  const agentOf = s => (s && s.agent) || "claude";
+  const agentRegistry = new Map((root.ATLAS_AGENTS || []).map(row => [row.id, row]));
+  const AGENTS = Object.freeze([...agentRegistry.keys()]);
+  // Rows without an agent predate Codex support.
+  const agentOf = s => s?.agent || "claude";
+  const findAgent = kind => agentRegistry.get(kind);
+
+  function getAgent(kind) {
+    if (!agentRegistry.has(kind)) throw new Error(`Unknown agent: ${kind}`);
+    return agentRegistry.get(kind);
+  }
+
+  function requireAgent(kind, implementations, operation) {
+    getAgent(kind);
+    if (!Object.prototype.hasOwnProperty.call(implementations, kind)) {
+      throw new Error(`Agent ${kind} does not support ${operation}`);
+    }
+    return implementations[kind];
+  }
 
   /** A stored agent pick: known values in a fixed order; nothing known left means all (the default). */
   function agentSelection(stored) {
@@ -345,20 +360,36 @@
     return known.length ? known : AGENTS.slice();
   }
 
-  /** The `agent` request parameter; empty when every agent is picked, so the request stays as before. */
+  function savedAgentSelection(stored) {
+    if (Array.isArray(stored)) {
+      // In the old format, ticking both original agents meant the unfiltered view.
+      if (stored.includes("claude") && stored.includes("codex")) return AGENTS.slice();
+      return agentSelection(stored);
+    }
+    return agentSelection(stored?.selected);
+  }
+
+  function storedAgentSelection(picked) {
+    // Keep the original format until an explicit pair can mean something different from all.
+    if (AGENTS.every(kind => kind === "claude" || kind === "codex")) return picked;
+    return picked.length === AGENTS.length ? null : { selected: picked };
+  }
+
+  /** The `agent` request parameter; empty when every agent is picked. */
   function agentParam(selected) {
     const sel = agentSelection(selected);
     return sel.length === AGENTS.length ? "" : sel.join(",");
   }
 
-  /** Client-side check (Active). With all picked, a value this page does not know passes too. */
+  /** Client-side check for the Active view. */
   function agentPasses(s, selected) {
     const sel = agentSelection(selected);
-    return sel.length === AGENTS.length || sel.includes(agentOf(s));
+    return sel.includes(agentOf(s));
   }
 
   /** A checkbox click. The last ticked agent stays: an empty pick would show an empty page. */
   function toggleAgent(selected, agent, on) {
+    getAgent(agent);
     const sel = agentSelection(selected);
     const next = AGENTS.filter(a => (a === agent ? on : sel.includes(a)));
     return next.length ? next : sel;
@@ -366,7 +397,7 @@
 
   /** Agents "+ Session" offers: Claude Code always, Codex only when the plugin reports it enabled. */
   function newSessionAgents(hostAgents) {
-    return hostAgents && hostAgents.codex === true ? AGENTS.slice() : ["claude"];
+    return AGENTS.filter(kind => kind === "claude" || hostAgents?.[kind] === true);
   }
 
   /** The remembered agent while it is still offered, otherwise Claude Code. */
@@ -380,10 +411,11 @@
    */
   function freeTextOption(d) {
     if (!d || !d.answerable || !Array.isArray(d.options)) return null;
-    if (d.agent === "codex") {
+    const kind = agentOf(d);
+    if (kind === "codex") {
       return d.feedback ? d.options.find(o => o.n === d.feedback.n && o.text === d.feedback.label) || null : null;
     }
-    return d.kind === "question" ? d.options.find(o => o.freeText) || null : null;
+    return kind === "claude" && d.kind === "question" ? d.options.find(o => o.freeText) || null : null;
   }
 
   /** Typed answer as the terminal field takes it: one line (Enter there sends), at most 4000 characters. */
@@ -397,7 +429,7 @@
     return (new TextEncoder().encode(String(text || "")).length / 1e6).toFixed(2);
   }
 
-  const api = { AGENTS, sizeMb, freeTextOption, freeAnswerText, agentOf, agentSelection, agentParam, agentPasses, toggleAgent, newSessionAgents,
+  const api = { AGENTS, findAgent, getAgent, requireAgent, savedAgentSelection, storedAgentSelection, sizeMb, freeTextOption, freeAnswerText, agentOf, agentSelection, agentParam, agentPasses, toggleAgent, newSessionAgents,
                 newSessionAgent, applyFrozenOrder, pruneClosedNotes, CLOSED_NOTE_TTL_MS, pluralRu, tasksSummary, jumpMatches, durationText, stepPasses, relPath, terminalStatus, infoParts, shortTokens, arrangeSessions, contextLevel, limitsText, limitsAge, activeUrl, deliveryState, DELIVERY_WAIT_MS, queuedNotShown, commandMatches,
                 historyStep, PERIODS, periodOf, valuesOf, passes, filterOptions, parseLayout,
                 backgroundReasons, unansweredPrompt, nextCard, costText };

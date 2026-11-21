@@ -3,6 +3,7 @@
 import { Notice } from "obsidian";
 import * as fsSync from "fs";
 import * as os from "os";
+import { agentKinds, getAgent } from "./agent-registry";
 
 class FirstRunMethods {
   /** Runs once, after the agents check, so the notice names the agents it found. */
@@ -19,8 +20,7 @@ class FirstRunMethods {
     } catch (error) { console.error("AI Session Atlas: could not turn on subscription limits", error); }
     if (this._loaded === false) return { limits };
     const cfg = this.readServerConfig() || {};
-    const names = { claude: "Claude Code", codex: "Codex" };
-    const agents = Object.keys(names).filter((kind) => this.agentEnabled(kind)).map((kind) => names[kind]);
+    const agents = agentKinds.filter(kind => this.agentEnabled(kind)).map(kind => getAgent(kind).label);
     const lines = [];
     const home = os.homedir();
     const shown = file.startsWith(home + "/") ? "~" + file.slice(home.length) : file;

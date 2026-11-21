@@ -5,11 +5,37 @@
 import { Notice } from "obsidian";
 import * as path from "path";
 import * as fsSync from "fs";
-import { AGENT_VIEW_TYPE, SESSION_ID } from "./constants";
+import { AGENT_VIEW_TYPE } from "./constants";
 import { AGENT_ICONS, registerAgentIcons } from "./agent-icons";
+import { agentKinds, getAgent, UnknownAgent, validId } from "./agent-registry";
 
 const SCRIPT_NAME = "agent-resume-terminal.zsh";
-const AGENTS = { claude: "Claude Code", codex: "Codex" };
+const AGENTS = Object.freeze(Object.fromEntries(agentKinds.map(kind => [kind, getAgent(kind).label])));
+
+const TERMINALS = new Map([
+  ["claude", { paletteId: "open-claude-code-terminal", icon: AGENT_ICONS.claude, parse: claudeLaunch }],
+  ["codex", { paletteId: "open-codex-terminal", icon: AGENT_ICONS.codex, parse: codexLaunch }],
+]);
+
+function terminalAgent(kind) {
+  getAgent(kind);
+  if (!TERMINALS.has(kind)) throw new UnknownAgent(`Agent ${kind} does not support terminal tabs`);
+  return TERMINALS.get(kind);
+}
+
+function supportsTerminal(kind) {
+  return TERMINALS.has(kind);
+}
+
+function restoreAgent(kind) {
+  try {
+    terminalAgent(kind);
+    return true;
+  } catch (error) {
+    console.error("AI Session Atlas: could not restore an agent tab", error);
+    return false;
+  }
+}
 // A Claude Code background job, as `claude attach` takes it (the first 8 hex digits of its session).
 const JOB_ID = /^[0-9a-f]{8}$/;
 const AND = Symbol("&&");
@@ -81,19 +107,24 @@ function plainPrompt(text) {
 function parseLaunch(command) {
   const w = shellWords(String(command || ""));
   if (!w || w.length < 4 || w[0] !== "cd" || typeof w[1] !== "string" || !w[1].startsWith("/")
-      || w[2] !== AND || !AGENTS[w[3]] || w.slice(4).some((x) => typeof x !== "string")) return null;
+      || w[2] !== AND || typeof w[3] !== "string" || w.slice(4).some((x) => typeof x !== "string")) return null;
   const args = w.slice(4);
   const start = (mode, id, prompt) => ({ agent: w[3], cwd: w[1], mode, sessionId: id, prompt: prompt || "" });
-  if (w[3] === "codex") {
-    if (args.length === 0) return start("new", "");
-    if (args.length === 1 && plainPrompt(args[0])) return start("new", "", args[0]);
-    if (args.length !== 2 || !SESSION_ID.test(args[1])) return null;
-    if (args[0] === "resume") return start("resume", args[1]);
-    return args[0] === "fork" ? start("resume-fork", args[1]) : null;
-  }
+  return terminalAgent(w[3]).parse(args, start);
+}
+
+function codexLaunch(args, start) {
+  if (args.length === 0) return start("new", "");
+  if (args.length === 1 && plainPrompt(args[0])) return start("new", "", args[0]);
+  if (args.length !== 2 || !validId("codex", args[1])) return null;
+  if (args[0] === "resume") return start("resume", args[1]);
+  return args[0] === "fork" ? start("resume-fork", args[1]) : null;
+}
+
+function claudeLaunch(args, start) {
   const [flag, id, ...rest] = args;
   if (flag === "attach") return rest.length === 0 && JOB_ID.test(id || "") ? start("attach", id) : null;
-  if (!SESSION_ID.test(id || "")) return null;
+  if (!validId("claude", id)) return null;
   if (flag === "--resume" && rest.length === 0) return start("resume", id);
   if (flag === "--resume" && rest.length === 1 && rest[0] === "--fork-session") return start("resume-fork", id);
   if (flag === "--session-id" && rest.length === 0) return start("new", id);
@@ -103,6 +134,7 @@ function parseLaunch(command) {
 
 /** Terminal arguments: script, agent kind, tab id, and the start when there is one. */
 function agentArgs(scriptPath, kind, instance, seed) {
+  terminalAgent(kind);
   const parts = ["exec", shellQuote(scriptPath), kind, instance];
   if (seed) {
     // A new Codex thread has no id yet: an empty word keeps the prompt in its place.
@@ -131,9 +163,11 @@ class AgentMethods {
     registerAgentIcons();
     this.agentRibbons = {};
     // A disabled agent has no button and no palette command; enabling applies at once, without a restart.
-    for (const kind of Object.keys(AGENTS)) {
-      this.agentRibbons[kind] = this.addRibbonIcon(AGENT_ICONS[kind], this.t(`agent.${kind}`), () => this.openAgent(kind));
-      this.addCommand({ id: kind === "claude" ? "open-claude-code-terminal" : "open-codex-terminal",
+    for (const kind of agentKinds) {
+      if (!supportsTerminal(kind)) continue;
+      const { icon, paletteId } = terminalAgent(kind);
+      this.agentRibbons[kind] = this.addRibbonIcon(icon, this.t(`agent.${kind}`), () => this.openAgent(kind));
+      this.addCommand({ id: paletteId,
                         name: this.t(`agent.${kind}.command`),
                         checkCallback: (checking) => {
                           if (!this.agentEnabled(kind)) return false;
@@ -147,11 +181,12 @@ class AgentMethods {
   /** The user's own choice wins; otherwise what the last check found. Nothing found keeps Claude Code:
    *  its button stays and the environment check in the settings says what is missing. */
   agentEnabled(kind) {
+    getAgent(kind);
     const chosen = (this.settings && this.settings.agents) || {};
     if (typeof chosen[kind] === "boolean") return chosen[kind];
     const found = this.settings && this.settings.agentsFound;
     if (!found) return kind === "claude";
-    if (kind === "claude" && !found.claude && !found.codex) return true;
+    if (kind === "claude" && !agentKinds.some(id => found[id])) return true;
     return found[kind] === true;
   }
 
@@ -166,7 +201,7 @@ class AgentMethods {
   adoptAgentArgs() {
     const dir = path.join(this.dataDir(), "agent-args");
     const found = {};
-    for (const kind of Object.keys(AGENTS)) {
+    for (const kind of agentKinds) {
       try { found[kind] = fsSync.readFileSync(path.join(dir, kind), "utf8").trim(); } catch { found[kind] = ""; }
     }
     this.settings.agentArgs = found;
@@ -178,7 +213,7 @@ class AgentMethods {
     const dir = path.join(this.dataDir(), "agent-args");
     fsSync.mkdirSync(dir, { recursive: true, mode: 0o700 });
     const args = (this.settings && this.settings.agentArgs) || {};
-    for (const kind of Object.keys(AGENTS)) {
+    for (const kind of agentKinds) {
       fsSync.writeFileSync(path.join(dir, kind), String(args[kind] || "").replace(/[\r\n]+/g, " ").trim() + "\n");
     }
   }
@@ -187,7 +222,7 @@ class AgentMethods {
   async detectAgents() {
     const shell = await this.shellProbe();
     if (!shell || !shell.PATH) return this.settings.agentsFound || null;
-    const found = { claude: !!shell.claude, codex: !!shell.codex };
+    const found = Object.fromEntries(agentKinds.map(kind => [kind, !!shell[kind]]));
     // Up to 2.9.0 the first start saved Codex's probe result as if you had chosen it: drop it once.
     const chosen = this.settings.agents;
     if (!this.settings.agentsFound && chosen && typeof chosen.codex === "boolean") {
@@ -217,6 +252,7 @@ class AgentMethods {
    */
   async openAgent(kind, opts = {}) {
     try {
+      terminalAgent(kind);
       const script = this.agentScriptPath();
       if (!script || !fsSync.existsSync(script)) {
         new Notice(this.t("agent.noScript", { path: script || SCRIPT_NAME }));
@@ -228,7 +264,7 @@ class AgentMethods {
       await leaf.setViewState({
         type: AGENT_VIEW_TYPE,
         active: true,
-        state: { kind, instance, cwd: opts.cwd || this.getVaultPath(), title: opts.label || AGENTS[kind],
+        state: { kind, instance, cwd: opts.cwd || this.getVaultPath(), title: opts.label || getAgent(kind).label,
                  command: agentArgs(script, kind, instance, opts.seed || null)[3] },
       });
       if (opts.group) this.joinGroup(leaf, opts.group);
@@ -243,4 +279,4 @@ class AgentMethods {
   }
 }
 
-export { AgentMethods, parseLaunch, agentArgs, agentTabEnv, shellQuote, shellWords, AGENTS, SCRIPT_NAME };
+export { AgentMethods, parseLaunch, agentArgs, agentTabEnv, shellQuote, shellWords, AGENTS, SCRIPT_NAME, terminalAgent, supportsTerminal, restoreAgent };

@@ -15,8 +15,8 @@ import { registry, keepHeldTabs, holdForReclaim } from "./held";
 import { selectWithModifier, isCopyKey, copySelection, pasteClipboard, menuItems, copyTarget, writeClipboard } from "./term-copy";
 import { pathLinkProvider, pathClicks, localTarget } from "./term-links";
 import { resolvePath } from "./open-path";
-import { shellQuote, agentTabEnv } from "./agents";
-import { AGENT_ICONS } from "./agent-icons";
+import { shellQuote, agentTabEnv, terminalAgent, restoreAgent, supportsTerminal } from "./agents";
+import { getAgent } from "./agent-registry";
 import { normalizeCodexHome } from "./codex-hook";
 
 import { pasteImageEvent } from "./term-paste";
@@ -60,7 +60,10 @@ class AgentTerminalView extends ItemView {
   }
 
   getViewType() { return AGENT_VIEW_TYPE; }
-  getDisplayText() { return this.state.title || "Terminal"; }
+  getDisplayText() {
+    const { title, kind } = this.state;
+    return title || (supportsTerminal(kind) ? getAgent(kind).label : "Terminal");
+  }
 
   /** Obsidian updates the tab label; the title above the content is ours to update. */
   refreshTitle() {
@@ -79,8 +82,9 @@ class AgentTerminalView extends ItemView {
   }
   getIcon() {
     if (this.backgroundJob) return BACKGROUND_ICON;
-    const kind = this.state.kind === "codex" ? "codex" : "claude";
-    return AGENT_ICONS[kind];
+    const kind = this.state.kind ?? "claude";
+    if (kind === "shell") return terminalAgent("claude").icon;
+    return supportsTerminal(kind) ? terminalAgent(kind).icon : "terminal";
   }
 
   /** The background job this tab shows (bg-session.js), or null: the tab's icon and hint follow it. */
@@ -110,7 +114,9 @@ class AgentTerminalView extends ItemView {
     this.state = Object.assign({}, state || {});
     if (super.setState) await super.setState(state, result);
     this.refreshTitle();
-    if (!this.pty && this.state.command) this.start();
+    if (!this.pty && this.state.command && (this.state.kind === "shell" || restoreAgent(this.state.kind))) {
+      this.start();
+    }
   }
 
   async onOpen() {

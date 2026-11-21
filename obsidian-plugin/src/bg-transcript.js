@@ -3,7 +3,8 @@
 // continuation (`continued-in`).
 import * as fs from "fs";
 import * as path from "path";
-import { PROJECTS_DIR, SESSION_ID } from "./constants";
+import { PROJECTS_DIR } from "./constants";
+import { validId } from "./agent-registry";
 
 const TAIL_BYTES = 65536;
 
@@ -39,13 +40,13 @@ function namesContinuation(file, id) {
 /** The session id to resume for a job's process file: its own, or its parent's; null when neither. */
 function resumeIdentity(data, root = PROJECTS_DIR) {
   const id = data && data.sessionId;
-  if (!SESSION_ID.test(id || "")) return null;
+  if (!validId("claude", id || "")) return null;
   let dirs;
   try { dirs = fs.readdirSync(root); } catch { return null; }
   if (hasHistory(root, dirs, id)) return id;            // its own history wins over the parent's
   const folder = path.join(root, projectSlug(data.cwd));
   let names;
-  try { names = fs.readdirSync(folder).filter((n) => n.endsWith(".jsonl") && SESSION_ID.test(n.slice(0, -6))); }
+  try { names = fs.readdirSync(folder).filter((n) => n.endsWith(".jsonl") && validId("claude", n.slice(0, -6))); }
   catch { return null; }
   // The parent was written to when the job started: newest first, so the search stops early.
   const files = names.map((name) => {

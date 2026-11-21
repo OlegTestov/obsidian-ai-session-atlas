@@ -5,7 +5,7 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { loadPage, pageOrder } from "./helpers/page.mjs";
 
-const page = loadPage(pageOrder().filter((f) => f.startsWith("lang-") || ["i18n.js", "resume-with.js"].includes(f)));
+const page = loadPage(pageOrder().filter((f) => f.startsWith("lang-") || ["i18n.js", "logic.js", "resume-with.js"].includes(f)));
 const RW = page.ResumeWith;
 const pick = (list) => Array.from(list, (c) => `${c.agent}:${c.own ? "own" : ""}${c.enabled ? "on" : "off"}`);
 

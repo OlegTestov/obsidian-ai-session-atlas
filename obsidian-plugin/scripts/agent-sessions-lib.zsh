@@ -10,8 +10,28 @@ CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
 CODEX_SESSIONS_DIR="${OBS_AGENT_TERMINAL_CODEX_SESSIONS_DIR:-$CODEX_HOME_DIR/sessions}"
 CODEX_ARCHIVED_DIR="$CODEX_HOME_DIR/archived_sessions"
 
-valid_uuid() {
-  [[ "$1" =~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' ]]
+typeset -gA ATLAS_ID_PATTERNS
+_ATLAS_SESSIONS_LIB_DIR="${${(%):-%x}:A:h}"
+
+load_agent_patterns() {
+  (( ${#ATLAS_ID_PATTERNS} )) && return 0
+  if ! source "$_ATLAS_SESSIONS_LIB_DIR/agent-kinds.zsh"; then
+    print -u2 "Could not load the Session Atlas agent registry"
+    return 1
+  fi
+}
+
+valid_id() {
+  local kind="$1" sid="$2" MATCH
+  load_agent_patterns || return 1
+  if [[ -z "$kind" || -z "${ATLAS_ID_PATTERNS[$kind]-}" ]]; then
+    print -u2 "Unknown agent: $kind"
+    return 1
+  fi
+  setopt localoptions
+  unsetopt rematchpcre bashrematch
+  local LC_ALL=C
+  [[ "$sid" =~ "${ATLAS_ID_PATTERNS[$kind]}" && "$MATCH" == "$sid" ]]
 }
 
 # A Claude Code background job id, as `claude attach` takes it: 8 hex digits.
@@ -21,14 +41,14 @@ valid_job_id() {
 
 # Codex names a rollout rollout-<time>-<thread id>.jsonl, in sessions/YYYY/MM/DD or archived_sessions.
 codex_session_exists() {
-  valid_uuid "$1" || return 1
+  valid_id codex "$1" || return 1
   local -a found=("$CODEX_SESSIONS_DIR"/**/rollout-*-"$1".jsonl(N.) "$CODEX_ARCHIVED_DIR"/**/rollout-*-"$1".jsonl(N.))
   (( ${#found} > 0 ))
 }
 
 # Any project folder: a tab from AI Session Atlas can open outside the vault too.
 claude_session_exists() {
-  valid_uuid "$1" || return 1
+  valid_id claude "$1" || return 1
   local -a found=("$CLAUDE_PROJECTS_DIR"/*/"$1".jsonl(N))
   (( ${#found} > 0 ))
 }
@@ -58,7 +78,7 @@ _claude_process_alive() {
 # process file names (parkedJobId) or the job its transcript continued in (continued-in).
 claude_live_job() {
   local session_id="$1"
-  valid_uuid "$session_id" || return 1
+  valid_id claude "$session_id" || return 1
   local -a jobs=() continued=()
   local file text
   for file in "$CLAUDE_SESSIONS_DIR"/*.json(N); do
@@ -94,7 +114,7 @@ claude_job_session() {
     text="$(<"$file")" 2>/dev/null || continue
     [[ "$(_json_field "$text" jobId)" == "$job" ]] || continue
     text="$(_json_field "$text" sessionId)"
-    valid_uuid "$text" && { print -r -- "$text"; return 0; }
+    valid_id claude "$text" && { print -r -- "$text"; return 0; }
   done
   return 1
 }
@@ -103,7 +123,7 @@ claude_job_session() {
 # Prints its pid. A second process on one transcript would interleave two conversations.
 claude_session_pid() {
   local session_id="$1" file text pid
-  valid_uuid "$session_id" || return 1
+  valid_id claude "$session_id" || return 1
   for file in "$CLAUDE_SESSIONS_DIR"/*.json(N); do
     text="$(<"$file")" 2>/dev/null || continue
     [[ "$(_json_field "$text" sessionId)" == "$session_id" ]] || continue

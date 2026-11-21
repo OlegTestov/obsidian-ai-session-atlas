@@ -20,13 +20,19 @@ from .messages import msg
 __all__ = ["ConvertError", "plan", "resume_with"]
 
 
-def _source(conn: sqlite3.Connection, session_id: str, target: str) -> dict:
-    if target not in agents.ALL:
+def _target(target: str) -> str:
+    if target not in agents.all():
         raise ConvertError(msg("launch.bad_agent"))
+    return agents.require(target, (agents.CLAUDE, agents.CODEX), "conversion writes")
+
+
+def _source(conn: sqlite3.Connection, session_id: str, target: str) -> dict:
+    _target(target)
     row = conn.execute("SELECT agent, source_path FROM sessions WHERE session_id=?",
                        (session_id,)).fetchone()
     if row is None:
         raise ConvertError(msg("server.no_such_session"))
+    agents.require(row["agent"], (agents.CLAUDE, agents.CODEX), "conversion reads")
     cwd = actions.resume_cwd(conn, session_id)
     if not cwd:
         raise ConvertError(msg("server.no_workdir"))
@@ -60,7 +66,7 @@ def plan(conn: sqlite3.Connection, session_id: str, target: str) -> dict:
 
 
 def _target_dir(target: str, cwd: str) -> str:
-    if target == agents.CLAUDE:
+    if _target(target) == agents.CLAUDE:
         try:
             return convert_write.claude_folder(index.PROJECTS_ROOT, cwd)
         except ConvertError:

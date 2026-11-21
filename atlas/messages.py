@@ -46,6 +46,9 @@ MESSAGES: dict[str, dict] = {
     "server.unknown_artifact": {
         "en": "unknown result type",
         "ru": "неизвестный тип результата"},
+    "server.invalid_ai_agent": {
+        "en": "Invalid ai_agent value {value} for AI execution. Choose a supported agent in Atlas settings.",
+        "ru": "Недопустимое значение ai_agent {value}. Выберите поддерживаемого агента в настройках Atlas."},
     "server.agent_changed": {
         "en": "The settings now send this to {agent}, not to the agent in the preview. Open the preview again.",
         "ru": "По настройкам это теперь уйдёт в {agent}, а не в агента из предпросмотра. Открой предпросмотр снова."},

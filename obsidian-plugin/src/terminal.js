@@ -3,7 +3,8 @@ import { Notice } from "obsidian";
 import * as childProcess from "child_process";
 import * as fsSync from "fs";
 import * as path from "path";
-import { parseLaunch } from "./agents";
+import { parseLaunch, supportsTerminal } from "./agents";
+import { idPattern, UnknownAgent } from "./agent-registry";
 import { attachedSessionState } from "./attach";
 import { codexScreenState } from "./dialog-codex";
 import {
@@ -15,6 +16,8 @@ import {
   IMAGE_EXT,
   MAX_IMAGES,
 } from "./constants";
+
+const CODEX_ROLLOUT = new RegExp(`^n.*/rollout-[^/]*-(${idPattern("codex").slice(1, -1)})\\.jsonl$`);
 
 class TerminalMethods {
   /**
@@ -106,6 +109,7 @@ class TerminalMethods {
   }
 
   emptyAgentPrompt(leaf, agent) {
+    if (!supportsTerminal(agent)) return false;
     try {
       const terminal = leaf.view.emulator.terminal;
       const buffer = terminal.buffer.active;
@@ -207,7 +211,7 @@ class TerminalMethods {
                                             { encoding: "utf8", timeout: 3000 });
       const ids = [];
       for (const line of out.split("\n")) {
-        const m = /^n.*\/rollout-[^/]*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/.exec(line);
+        const m = CODEX_ROLLOUT.exec(line);
         if (m && !ids.includes(m[1])) ids.push(m[1]);
       }
       return ids;
@@ -240,7 +244,14 @@ class TerminalMethods {
    * script, so after an Obsidian restart the tab gets its session back. Anything else runs as is.
    */
   async openCommandInTerminal(command, cwd, label) {
-    const launch = parseLaunch(command);
+    let launch;
+    try {
+      launch = parseLaunch(command);
+    } catch (error) {
+      if (!(error instanceof UnknownAgent)) throw error;
+      new Notice(this.t("terminal.failed", { error: error.message }));
+      return;
+    }
     // The session already has a tab, maybe one Obsidian brought back but has not loaded yet: show it.
     // A second tab would start a second process on the same conversation once both are open.
     if (launch && launch.mode === "resume" && this.revealSessionTab(launch.sessionId)) return;

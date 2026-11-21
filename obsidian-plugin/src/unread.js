@@ -2,10 +2,10 @@
 // them, not the page: it polls even while the Atlas tab is closed, and the page asks for them with the tabs.
 // "Looking" is remembered per session as a time, so a turn you watched end is not marked by a later poll.
 import { VIEW_TYPE } from "./constants";
+import { UnknownAgent, validId } from "./agent-registry";
 
 const WORKING = new Set(["busy", "background"]);
 const activityOf = (s) => s.activity || s.status || "idle";
-const SESSION_ID = /^[\w-]{1,80}$/;
 const CLICK_MAX_AGE_MS = 60_000;          // a click time older than this from the page is not trusted
 
 /**
@@ -59,8 +59,18 @@ function clickTime(at, now) {
 }
 
 /** Session ids a page sent as seen: strings of the id shape only, at most 200. */
-function seenFromPage(ids) {
-  return Array.isArray(ids) ? ids.filter((id) => typeof id === "string" && SESSION_ID.test(id)).slice(0, 200) : [];
+function seenFromPage(ids, agents) {
+  if (!Array.isArray(ids)) return [];
+  return ids.filter(id => {
+    // A new card can be clicked before the plugin's next poll. Its legacy wire format is an untyped UUID.
+    const kind = agents?.get(id) ?? "claude";
+    try { return validId(kind, id); }
+    catch (error) {
+      if (!(error instanceof UnknownAgent)) throw error;
+      console.error(error);
+      return false;
+    }
+  }).slice(0, 200);
 }
 
 /** The leaf's own window has focus: a tab may live in a popout window, not only the main one. */
@@ -113,6 +123,7 @@ class UnreadMethods {
     if (!this.unread || !this.seenAt) return;          // watchUnread has not run
     if (!this.lastStop) this.lastStop = new Map();
     if (!this.unreadEnd) this.unreadEnd = new Map();
+    this.unreadAgents = new Map(sessions.map(s => [s.session_id, s.agent ?? "claude"]));
     const tabs = await this.terminalTabs();            // one snapshot: a slow tab is waited for once
     const now = Date.now();
     const leafSessions = new Map();
@@ -163,7 +174,7 @@ class UnreadMethods {
     if (!this.unread || !this.seenAt) return false;
     const at = clickTime(data && data.at, Date.now());
     let changed = false;
-    for (const id of seenFromPage(data && data.ids)) {
+    for (const id of seenFromPage(data && data.ids, this.unreadAgents)) {
       this.seenAt.set(id, Math.max(this.seenAt.get(id) || 0, at));
       const end = this.unreadEnd && this.unreadEnd.get(id);
       if (this.unread.has(id) && !(end > at)) {

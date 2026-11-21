@@ -7,6 +7,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.15.1] - 2026-11-21
+
+### Changed
+
+- Internal: every part of Atlas reads one list of supported agents, and each agent has its own launch and catalog module. An unknown agent is refused with a clear message instead of being treated as Claude Code. Nothing changes for Claude Code and Codex users; this prepares support for more agents.
+
+### Fixed
+
+- An invalid `ai_agent` value in `config.json` is reported in the AI settings, and the other features keep working.
+- A catalog row from an agent this version does not know (for example after a downgrade) is skipped instead of breaking the statistics or the Active view.
+
 ## [2.15.0] - 2026-11-21
 
 ### Added

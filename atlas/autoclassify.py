@@ -43,17 +43,21 @@ def enabled(conn: sqlite3.Connection) -> bool:
 
 
 def set_enabled(conn: sqlite3.Connection, on: bool) -> dict:
+    backend = runner.backend() if on else ""
     _set_meta(conn, KEY_ENABLED, "1" if on else "0")
-    _set_meta(conn, KEY_BACKEND, runner.backend() if on else "")
+    _set_meta(conn, KEY_BACKEND, backend)
     return status(conn)
 
 
-def _agent(conn: sqlite3.Connection) -> tuple[str, str | None]:
+def _agent(conn: sqlite3.Connection) -> tuple[str | None, str | None]:
     """(the agent it runs with, why it is paused or None). Turned on for one agent, it pauses when the
     settings would now send the sessions to another one (Claude Code no longer found, a changed choice)
     instead of sending them there unasked. An entry from before the agent was recorded is recorded now."""
-    current = runner.backend()
     recorded = _meta(conn, KEY_BACKEND)
+    try:
+        current = runner.backend()
+    except runner.InvalidAIAgent as exc:
+        return recorded or None, str(exc)
     if not recorded:
         if enabled(conn):
             _set_meta(conn, KEY_BACKEND, current)
@@ -71,7 +75,7 @@ def status(conn: sqlite3.Connection, now: float | None = None) -> dict:
     backend, paused = _agent(conn)
     return {
         "enabled": on,
-        "agent": runner.agent_name(backend),
+        "agent": runner.agent_name(backend) if backend is not None else None,
         "paused": paused if on else None,
         "last_run": _iso(last_at),
         "next_run": _iso(max(last_at + INTERVAL_SECONDS, now or time.time())

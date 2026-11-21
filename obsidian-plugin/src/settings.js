@@ -5,9 +5,11 @@ import { NOTICE_HOLDS, DEFAULT_NOTICE_HOLD } from "./notify";
 import { DEFAULT_FONT_SIZE } from "./constants";
 import { validMailRoot } from "./mail-nudge";
 import { normalizeCodexHome } from "./codex-hook";
+import { agentKinds, getAgent } from "./agent-registry";
+import { supportsTerminal } from "./agents";
 
 const DEFAULT_SETTINGS = { notify: true, systemNotify: true, explorerClicks: false, language: "auto",
-                           wakeOnMail: true, agentMailRoot: "", agentMailScript: "", codexHome: "", agents: {}, agentArgs: { claude: "", codex: "" }, terminalFontSize: DEFAULT_FONT_SIZE,
+                           wakeOnMail: true, agentMailRoot: "", agentMailScript: "", codexHome: "", agents: {}, agentArgs: Object.fromEntries(agentKinds.map(kind => [kind, ""])), terminalFontSize: DEFAULT_FONT_SIZE,
                            noticeHold: DEFAULT_NOTICE_HOLD, loadAgentTabs: true, showWhatsNew: true };
 
 class AtlasSettingTab extends PluginSettingTab {
@@ -35,8 +37,9 @@ class AtlasSettingTab extends PluginSettingTab {
   getSettingDefinitions() {
     const t = (key) => this.plugin.t(key), plugin = this.plugin;
     const definition = (name, desc, render) => ({ name: t(name), ...(desc ? { desc: t(desc) } : {}), render });
+    const agentName = kind => supportsTerminal(kind) ? t(`settings.agent.${kind}`) : getAgent(kind).label;
     const definitions = [
-      { name: t("setup.heading"), aliases: [t("setup.python"), t("setup.server"), t("setup.limits"), "macOS", "Claude Code", "Codex"],
+      { name: t("setup.heading"), aliases: [t("setup.python"), t("setup.server"), t("setup.limits"), "macOS", ...agentKinds.map(kind => getAgent(kind).label)],
         render: setting => {
           setting.settingEl.empty();
           setting.settingEl.addClass("session-atlas-status-section");
@@ -51,7 +54,7 @@ class AtlasSettingTab extends PluginSettingTab {
             this.refresh();
           }))),
       { type: "group", heading: t("settings.agentsHeading"), items: [
-        ...["claude", "codex"].map(kind => definition(`settings.agent.${kind}`, "settings.agent.desc", setting => {
+        ...agentKinds.map(kind => ({ name: agentName(kind), desc: t("settings.agent.desc"), render: setting => {
           setting.addToggle(toggle => toggle.setValue(plugin.agentEnabled(kind)).onChange(async value => {
             plugin.settings.agents = Object.assign({}, plugin.settings.agents, { [kind]: value });
             await this.save();
@@ -62,7 +65,7 @@ class AtlasSettingTab extends PluginSettingTab {
               await this.save();
               plugin.writeAgentArgs();
             }));
-        })),
+        } })),
         codexHookDefinition(this),
         definition("codexHook.home", "codexHook.home.desc", setting => setting.addText(text => {
           text.setPlaceholder("~/.codex").setValue(plugin.settings.codexHome);

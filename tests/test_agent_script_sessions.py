@@ -107,10 +107,13 @@ def test_resume_does_not_read_every_rollout(tab):
 
 
 def test_registry_thread_in_current_format_resumes_after_restart(tab):
-    _rollout(tab["codex"], TID, _current(TID, "/Users/u/Code/elsewhere"))
+    mapped = _rollout(tab["codex"], TID, _current(TID, "/Users/u/Code/elsewhere"))
     subprocess.run(["zsh", "-c", f'source "{SCRIPTS}/agent-registry-lib.zsh"; upsert_resume_id codex cx-6 {TID}'],
                    cwd=tab["work"], env=tab["env"], check=True)
     assert tab["run"]("codex", "cx-6", "new", "", "сделай отчёт")[0] == ["resume", TID]
+    mapped.unlink()
+    _rollout(tab["codex"], OTHER, _current(OTHER, "/Users/u/Code/elsewhere"))
+    assert tab["run"]("codex", "cx-6", "resume", OTHER)[0] == [""]
 
 
 # --- Claude Code ---------------------------------------------------------------------------------

@@ -193,7 +193,7 @@ def test_relocate_guards_for_codex(atlas_env, write_rollout, child, tmp_path, ca
 def test_relocate_route_answers_codex_resume(atlas_env, live_server, monkeypatch, tmp_path):
     from atlas import server
     monkeypatch.setattr(server.relocate, "stop_for_move",
-                        lambda sid, pid: {"stopped": True, "host_app": "iTerm", "waited": 0.25,
+                        lambda sid, pid, agent=None: {"stopped": True, "host_app": "iTerm", "waited": 0.25,
                                           "agent": "codex", "cwd": str(tmp_path)})
     base, token = live_server
     req = urllib.request.Request(f"{base}/api/relocate", data=json.dumps({"session_id": TID, "pid": 5}).encode(),

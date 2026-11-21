@@ -18,6 +18,10 @@ function activeCard(s) {
   const card = el("article", "acard" + (act === "busy" ? " busy" : act === "background" ? " busy bg"
     : act === "waiting" ? " waiting" : ""));
   card.dataset.id = s.session_id;
+  if (!AtlasLogic.findAgent(AtlasLogic.agentOf(s))) {
+    card.append(el("div", "t", s.title || s.session_id), agentBadge(s));
+    return card;
+  }
   if (act === "waiting") card.appendChild(decisionStrip(s));
   const head = el("div", "head");
   head.appendChild(pinButton(s));
@@ -100,9 +104,12 @@ function activeCard(s) {
     + (s.cost_now != null ? i18n("active.costNow", { cost: s.cost_now.toFixed(2) }) : "")
     + (s.cost_partial ? i18n("active.costPartial") : "");
   // Codex records no total: only the estimate from the thread's token count, if the price is known.
-  const costHint = AtlasLogic.agentOf(s) !== "codex" ? claudeCost()
-    : s.cost_now != null ? i18n("active.costCodex", { cost: s.cost_now.toFixed(2) })
-    : i18n("active.costCodexNone");
+  const costs = {
+    claude: claudeCost,
+    codex: () => s.cost_now != null ? i18n("active.costCodex", { cost: s.cost_now.toFixed(2) })
+      : i18n("active.costCodexNone"),
+  };
+  const costHint = AtlasLogic.requireAgent(AtlasLogic.agentOf(s), costs, "live cost")();
 
   const heldPid = pid ? null : heldFor(s);
   const [go, close] = tabButtons(s, pid, heldPid, s.title || s.session_id);

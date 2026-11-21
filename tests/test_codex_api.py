@@ -41,7 +41,8 @@ def test_agent_filter_is_a_known_subset_or_nothing():
     assert agents.parse_filter(["codex"]) == ["codex"]
     assert agents.parse_filter(["Codex, gemini"]) == ["codex"]       # unknown values ignored
     assert agents.parse_filter(["claude", "codex"]) is None
-    assert agents.parse_filter(["gemini", ""]) is None
+    with pytest.raises(agents.UnknownAgent, match="gemini"):
+        agents.parse_filter(["gemini", ""])
 
 
 def test_search_and_list_filter_by_agent(both):

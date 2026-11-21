@@ -68,8 +68,9 @@ class LaunchError(ValueError):
 
 
 def new_session(conn: sqlite3.Connection, cwd: str, prompt: str, agent: str = agents.CLAUDE) -> dict:
-    if agent not in agents.ALL:
+    if agent not in agents.all():
         raise LaunchError(msg("launch.bad_agent"))
+    agents.require(agent, (agents.CLAUDE, agents.CODEX), "new session launch")
     try:
         cwd = folders.check(cwd)
     except folders.FolderError as exc:

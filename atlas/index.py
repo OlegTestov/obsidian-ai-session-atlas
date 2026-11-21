@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import fcntl
 import glob
-import hashlib
 import os
 import re
 import sqlite3
@@ -12,7 +11,7 @@ import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
-from . import codex_parse, config, costs, db, paths, search_rows, store
+from . import agents, codex_parse, config, costs, db, paths, search_rows, store
 
 PROJECTS_ROOT = os.environ.get("ATLAS_PROJECTS_ROOT", os.path.join(paths.claude_dir(), "projects"))
 
@@ -78,7 +77,7 @@ def _codex_parent(path: str) -> str | None:
         return None
     first = head.split(b"\n", 1)[0]
     found = _PARENT.search(first) if _SUBAGENT.search(first) else None
-    parent = found.group(1).decode().lower() if found else None
+    parent = found.group(1).decode() if found else None
     _codex_heads[path] = (ino, parent)
     return parent
 
@@ -194,21 +193,46 @@ def _note_cost(conn: sqlite3.Connection, session_id: str, seconds: float) -> Non
     conn.execute("INSERT OR REPLACE INTO index_costs VALUES (?,?,?)", (session_id, seconds, _clock()))
 
 
-def _codex_signature(path: str, title: str | None) -> str:
-    """A rename in Codex changes only its state database: the title is part of the signature."""
-    sig = _signature(path, []) + f"|p:{codex_parse.PARSE_VERSION}"     # a parser change rereads them once
-    return sig + ("|t:" + hashlib.sha1(title.encode()).hexdigest()[:12] if title else "")
-
-
 def index_one(conn: sqlite3.Connection, path: str, agent: str) -> None:
     """A transcript Atlas has just written ("Resume with…"): in the catalog without waiting for a pass."""
+    adapter = agents.adapter(agent, operation="immediate indexing")
+    ref = agents.SourceRef(agent, path)
     with writer_lock():
         st = os.stat(path)
-        if agent == codex_parse.AGENT:
-            store.store_codex(conn, path, st, _codex_signature(path, None))
-        else:
-            store.store_full(conn, path, st, _signature(path, []), [], "")
+        getattr(adapter, "_index_one", _index_one)(conn, ref, st)
         conn.commit()
+
+
+def _index_one(conn, ref, st):
+    store.store_full(conn, ref.locator, st, _signature(ref.locator, []), [], None, agent=ref.agent)
+
+
+def _index_refs(conn, refs, home, known, present, stats, full, paced, protected):
+    """Default file indexing for adapters without native checkpoint or sidecar requirements."""
+    for ref in refs:
+        path = ref.locator
+        present.add(path)
+        stats["seen"] += 1
+        try:
+            st = os.stat(path)
+        except FileNotFoundError:
+            continue
+        sig = _signature(path, [])
+        if not full and not _changed(known.get(path), sig):
+            stats["skipped"] += 1
+            continue
+        try:
+            sid = store.store_full(conn, path, st, sig, [], None, agent=ref.agent,
+                                   protected=protected)
+            conn.commit()
+            if sid:
+                stats["full"] += 1
+                stats["indexed"] += 1
+        except Exception as exc:
+            conn.rollback()
+            stats["errors"] += 1
+            print(f"atlas index: {path}: {type(exc).__name__}: {exc}", file=sys.stderr)
+            _retry_full(conn, path)
 
 
 def index_all(conn: sqlite3.Connection, root: str = PROJECTS_ROOT,
@@ -229,51 +253,37 @@ def index_all(conn: sqlite3.Connection, root: str = PROJECTS_ROOT,
         # Recheck the flag under the lock: another process may have rebuilt while we waited.
         if only_if_flagged and not recovery and db.get_meta(conn, "needs_reindex") != "1":
             return stats
-        _reread_newly_priced(conn)
-        _reread_copies_once(conn)
-        known = {r["path"]: r for r in conn.execute("SELECT * FROM sources")}
-        present = set()
-        for path in discover(root):
-            present.add(path)
-            stats["seen"] += 1
+        home = codex_root or codex_home()
+        passes = []
+        incomplete = set()
+        for kind in agents.all():
+            adapter = agents.adapter(kind)
             try:
-                st = os.stat(path)
-            except FileNotFoundError:
-                continue
-            subagents = discover_subagents(path)
-            stats["subagent_files"] += len(subagents)
-            sig = _signature(path, subagents)
-            if not full and not _changed(known.get(path), sig):
-                stats["skipped"] += 1
-                continue
-            sub_sig = _files_signature(subagents)
-            try:
-                # An appended file is read from where the last pass stopped; otherwise in full.
-                if full or known.get(path) is None \
-                        or not store.store_tail(conn, path, st, sig, sub_sig):
-                    session_id = os.path.splitext(os.path.basename(path))[0]
-                    if paced and not full and known.get(path) is not None and _deferred(conn, session_id):
-                        stats["deferred"] += 1        # its sources row is kept: seen as changed again
-                        continue
-                    started = time.monotonic()
-                    store.store_full(conn, path, st, sig, subagents, sub_sig)
-                    _note_cost(conn, session_id, time.monotonic() - started)   # same transaction
-                    stats["full"] += 1
-                else:
-                    stats["tail"] += 1
-                conn.commit()
-                stats["indexed"] += 1
-            except Exception as exc:  # one unreadable transcript must not stop the pass
-                conn.rollback()
+                status, refs = adapter.discover(root, home)
+            except Exception as exc:
                 stats["errors"] += 1
-                print(f"atlas index: {path}: {type(exc).__name__}: {exc}", file=sys.stderr)
-                _retry_full(conn, path)
+                print(f"atlas index: {kind} discovery: {type(exc).__name__}: {exc}", file=sys.stderr)
+                incomplete.add(kind)
+                continue
+            if status != "complete":
+                incomplete.add(kind)
+                continue
+            passes.append((adapter, refs))
 
-        _relink_continuations(conn, stats)
-        _index_codex(conn, codex_root or codex_home(), known, present, stats, full)
+        # Repricing works by session_id, which can name sources owned by different agents.
+        if not incomplete:
+            _reread_newly_priced(conn)
+        _reread_copies_once(conn, incomplete)
+        known = {r["path"]: r for r in conn.execute("SELECT * FROM sources")}
+        protected, owners = _protected_sources(conn, incomplete)
+        present = set()
+        for adapter, refs in passes:
+            getattr(adapter, "_index_refs", _index_refs)(
+                conn, refs, home, known, present, stats, full, paced, protected)
 
         for path, row in known.items():
-            if path not in present:  # the source is gone: remove its derived rows too
+            if path not in present and row["session_id"] not in protected \
+                    and (not incomplete or path in owners):
                 # An archived Codex rollout moves to another folder: its session lives on there.
                 moved = conn.execute("SELECT 1 FROM sources WHERE session_id=? AND path<>?",
                                      (row["session_id"], path)).fetchone()
@@ -284,13 +294,25 @@ def index_all(conn: sqlite3.Connection, root: str = PROJECTS_ROOT,
                 stats["removed"] += 1
         db.set_meta(conn, "indexed_through", _now())
         with search_rows.writing(conn):
-            if full:
+            if full and not incomplete:
                 conn.execute("UPDATE fts_guard SET recovery=0 WHERE id=1 AND generation=?",
                              (generation,))
             remaining = conn.execute("SELECT recovery FROM fts_guard WHERE id=1").fetchone()[0]
-            db.set_meta(conn, "needs_reindex", "1" if remaining else "0")
+            db.set_meta(conn, "needs_reindex", "1" if remaining or (full and incomplete) else "0")
         conn.commit()
     return stats
+
+
+def _protected_sources(conn, incomplete):
+    if not incomplete:
+        return set(), set()
+    protected, owners = set(), set()
+    for sid, path, kind in conn.execute("SELECT session_id, source_path, agent FROM sessions"):
+        if kind in incomplete:
+            protected.add(sid)
+        else:
+            owners.add(path)
+    return protected, owners
 
 
 FORK_MARK = re.compile(rb'"forkedFrom"|"session_id":\s*"([^"]+)"')
@@ -335,12 +357,12 @@ def is_codex_fork_head(path: str) -> bool:
         return False
 
 
-def _reread_copies_once(conn: sqlite3.Connection) -> None:
+def _reread_copies_once(conn: sqlite3.Connection, incomplete: set[str]) -> None:
     """Copies indexed before session_forks existed, or before Codex copies were recorded: parse
     them in full once so the table fills."""
     for marker, agent, is_copy in (("copies_scanned", "claude", is_copy_head),
                                    ("codex_copies_scanned", "codex", is_codex_fork_head)):
-        if db.get_meta(conn, marker) == "1":
+        if agent in incomplete or db.get_meta(conn, marker) == "1":
             continue
         for row in conn.execute("SELECT source_path FROM sessions WHERE agent = ?", (agent,)).fetchall():
             if is_copy(row["source_path"]):
@@ -380,40 +402,6 @@ def _relink_continuations(conn: sqlite3.Connection, stats: dict) -> None:
             conn.commit()
             stats["full"] += 1
         except Exception as exc:  # one unreadable transcript must not stop the pass
-            conn.rollback()
-            stats["errors"] += 1
-            print(f"atlas index: {path}: {type(exc).__name__}: {exc}", file=sys.stderr)
-            _retry_full(conn, path)
-
-
-def _index_codex(conn, home: str, known: dict, present: set, stats: dict, full: bool) -> None:
-    paths_ = discover_codex(home)
-    titles = codex_parse.thread_titles(home) if paths_ else {}
-    children = codex_subagents(paths_)
-    folded = {p for subs in children.values() for p in subs}
-    for path in paths_:
-        if path in folded:
-            continue             # part of its root thread's session; a row of its own is purged below
-        present.add(path)
-        stats["seen"] += 1
-        stats["codex"] += 1
-        try:
-            st = os.stat(path)
-        except FileNotFoundError:
-            continue
-        title = titles.get(codex_parse.session_id_of(path) or "")
-        subagents = children.get(path, [])
-        stats["subagent_files"] += len(subagents)
-        sig = _codex_signature(path, title) + ("|s:" + _files_signature(subagents) if subagents else "")
-        if not full and not _changed(known.get(path), sig):
-            stats["skipped"] += 1
-            continue
-        try:
-            store.store_codex(conn, path, st, sig, title, subagents)
-            conn.commit()
-            stats["full"] += 1
-            stats["indexed"] += 1
-        except Exception as exc:  # one unreadable rollout must not stop the pass
             conn.rollback()
             stats["errors"] += 1
             print(f"atlas index: {path}: {type(exc).__name__}: {exc}", file=sys.stderr)

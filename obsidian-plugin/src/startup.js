@@ -6,6 +6,7 @@
 import * as childProcess from "child_process";
 import * as path from "path";
 import { AGENT_VIEW_TYPE } from "./constants";
+import { restoreAgent, supportsTerminal } from "./agents";
 
 // Each agent starts its MCP servers: one at a time keeps a start-up with many tabs bearable. The next
 // tab waits for this one's agent to start (a login shell first): its script must see what runs where.
@@ -14,7 +15,7 @@ const AGENT_START_MS = 10000;
 // After an in-place reload Obsidian rebuilds the plugin's tabs only once loading is over.
 const RESTORE_WAIT_MS = 10000;
 const RESTORE_STEP_MS = 250;
-const AGENT = /(^|\/)(claude|codex)( |$)/;
+
 
 /**
  * Processes of tab trees that belong to launchd (their Obsidian is gone) and run this install's tab
@@ -47,7 +48,8 @@ function agentPidUnder(psText, root) {
   const queue = [...(children.get(root) || [])];
   while (queue.length) {
     const pid = queue.shift();
-    if (AGENT.test(commands.get(pid) || "")) return pid;
+    const executable = /(^|\/)([\w-]+)( |$)/g;
+    if (Array.from((commands.get(pid) || "").matchAll(executable)).some(match => supportsTerminal(match[2]))) return pid;
     queue.push(...(children.get(pid) || []));
   }
   return 0;
@@ -66,7 +68,7 @@ function deferredAgentLeaves(workspace) {
     const st = leaf.getViewState && leaf.getViewState();
     const s = st && st.type === AGENT_VIEW_TYPE ? st.state || {} : null;
     if (s && leaf.isDeferred && typeof leaf.loadIfDeferred === "function"
-        && (s.kind === "claude" || s.kind === "codex") && s.instance) out.push(leaf);
+        && s.kind !== "shell" && s.instance && restoreAgent(s.kind)) out.push(leaf);
   });
   return out;
 }
@@ -77,7 +79,9 @@ function loadedAgentLeaves(workspace) {
   if (!workspace || typeof workspace.iterateAllLeaves !== "function") return out;
   workspace.iterateAllLeaves((leaf) => {
     const st = leaf.getViewState && leaf.getViewState();
-    if (st && st.type === AGENT_VIEW_TYPE && !leaf.isDeferred && leaf.view && leaf.view.pty) out.push(leaf);
+    const kind = st?.state?.kind;
+    if (st?.type === AGENT_VIEW_TYPE && !leaf.isDeferred && leaf.view?.pty && kind !== "shell"
+        && restoreAgent(kind)) out.push(leaf);
   });
   return out;
 }

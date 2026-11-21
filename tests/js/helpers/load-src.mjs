@@ -15,29 +15,36 @@ export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "
 export const SRC = path.join(ROOT, "obsidian-plugin", "src");
 export const FIXTURES = path.join(ROOT, "tools", "fixtures");
 
-let outDir = null;
+const builds = new Map();
 
-function buildOnce() {
-  if (outDir) return outDir;
+function buildOnce(extraAgents) {
+  const key = JSON.stringify(extraAgents);
+  if (builds.has(key)) return builds.get(key);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-src-"));
   // Bare imports such as @xterm/xterm resolve from the repository's node_modules.
   fs.symlinkSync(path.join(ROOT, "node_modules"), path.join(dir, "node_modules"), "dir");
+  fs.mkdirSync(path.join(dir, "atlas"));
+  const agents = JSON.parse(fs.readFileSync(path.join(ROOT, "atlas", "agents.json")));
+  fs.writeFileSync(path.join(dir, "atlas", "agents.json"), JSON.stringify([...agents, ...extraAgents]));
   esbuild.buildSync({
     entryPoints: fs.readdirSync(SRC).filter((f) => f.endsWith(".js")).map((f) => path.join(SRC, f)),
-    outdir: dir,
+    outdir: path.join(dir, "obsidian-plugin", "src"),
     format: "cjs",
     platform: "node",
     target: "es2020",
     logLevel: "error",
   });
+  for (const name of fs.readdirSync(SRC).filter(f => f.endsWith(".mjs"))) {
+    fs.copyFileSync(path.join(SRC, name), path.join(dir, "obsidian-plugin", "src", name));
+  }
   process.on("exit", () => fs.rmSync(dir, { recursive: true, force: true }));
-  outDir = dir;
-  return outDir;
+  builds.set(key, dir);
+  return dir;
 }
 
 /** require() for a module of obsidian-plugin/src, e.g. loadSrc("statusline"). */
-export function loadSrc(name) {
-  return require(path.join(buildOnce(), name.replace(/\.js$/, "") + ".js"));
+export function loadSrc(name, extraAgents = []) {
+  return require(path.join(buildOnce(extraAgents), "obsidian-plugin", "src", name.replace(/\.js$/, "") + ".js"));
 }
 
 /** The plugin class from a module object: CommonJS export or ES default export. */

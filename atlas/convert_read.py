@@ -213,6 +213,10 @@ def read_codex(path: str, session_id: str) -> Conversation:
 
 
 def read(path: str, session_id: str, agent: str) -> Conversation:
+    from . import agents
+
+    readers = {agents.CLAUDE: read_claude, agents.CODEX: read_codex}
+    reader = readers[agents.require(agent, readers, "conversion reads")]
     if not os.path.isfile(path):
         raise FileNotFoundError(path)
-    return read_codex(path, session_id) if agent == "codex" else read_claude(path, session_id)
+    return reader(path, session_id)

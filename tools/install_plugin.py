@@ -62,9 +62,15 @@ def install(vault: str, enable: bool = True, dev: bool = False, port: int | None
     scripts = os.path.join(vault, ".obsidian", "scripts")
     os.makedirs(scripts, exist_ok=True)
     for name in sorted(os.listdir(os.path.join(PLUGIN_DIR, "scripts"))):
+        if name == "agent-kinds.zsh":
+            continue
         dest = os.path.join(scripts, name)
         shutil.copy(os.path.join(PLUGIN_DIR, "scripts", name), dest)
         os.chmod(dest, 0o755)
+    registry = subprocess.check_output(["node", os.path.join(ROOT, "tools", "agent_registry.mjs")])
+    with open(os.path.join(scripts, "agent-kinds.zsh"), "wb") as fh:
+        fh.write(registry)
+    os.chmod(os.path.join(scripts, "agent-kinds.zsh"), 0o755)
 
     enabled = None
     if enable:

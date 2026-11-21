@@ -682,7 +682,7 @@ describe("agent filter", () => {
     assert.equal(kept(["claude"]), "ac");
   });
   test("Active: Codex only", () => assert.equal(kept(["codex"]), "b"));
-  test("Active: both keep everything, an unknown agent too", () => assert.equal(kept(["claude", "codex"]), "abcd"));
+  test("Active: both keep known agents", () => assert.equal(kept(["claude", "codex"]), "abc"));
 
   // The page side: the pick per view comes from localStorage through the same migration.
   const upTo = (name) => pageOrder().slice(0, pageOrder().indexOf(name) + 1);
@@ -704,7 +704,8 @@ describe("agent filter", () => {
     assert.ok(p.agentName("claude") === "Claude Code" && p.agentName("codex") === "Codex");
     assert.equal(p.agentShort({ agent: "codex" }), "Codex");
     assert.equal(p.agentShort({}), "Claude");
-    assert.equal(p.agentName("gemini"), "gemini");
+    assert.equal(p.agentName("gemini"), "Неизвестный агент");
+    assert.throws(() => p.AtlasLogic.getAgent("gemini"), /Unknown agent: gemini/);
     assert.equal(p.I18N.i18n("agent.filter"), "Агент");
   });
 });

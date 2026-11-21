@@ -17,7 +17,7 @@ import subprocess
 import time
 from datetime import datetime, timedelta, timezone
 
-from . import codex_parse, codex_procs, codex_tail, costs, forks, paths, prompt_queue, search, tasks
+from . import agents, codex_parse, codex_procs, codex_tail, costs, forks, paths, prompt_queue, search, tasks
 from .parse import COMPACT_PREFIX
 from .resolve import HEADLESS_ENTRYPOINTS
 
@@ -225,7 +225,14 @@ def live_transcript(conn: sqlite3.Connection, session_id: str, projects_root: st
     """The transcript a card reads: a parked session's job when it has the newer messages."""
     from .index import PROJECTS_ROOT
     projects_root = projects_root or PROJECTS_ROOT
-    path = _transcript(conn, session_id, projects_root)
+    agent = agents.session_agent(conn, session_id)
+    if agent is not None:
+        agents.require(agent, (agents.CLAUDE, agents.CODEX), "live transcript")
+        if not agents.valid_id(agent, session_id):
+            return None
+    path = _transcript(conn, session_id, projects_root, agent)
+    if (agent or agents.transcript_agent(path)) == agents.CODEX:
+        return path
     files = _read_files(sessions_dir or SESSIONS_DIR)
     own = next((d for d in files if str(d["sessionId"]) == session_id and d.get("parkedJobId")),
                None)
@@ -414,14 +421,18 @@ def markdown_tail(text: str, limit: int = PREVIEW_CHARS) -> str:
     return (FENCE + "\n" + tail) if fences % 2 else tail
 
 
-def _transcript(conn: sqlite3.Connection, session_id: str, projects_root: str) -> str | None:
+def _transcript(conn: sqlite3.Connection, session_id: str, projects_root: str,
+                agent: str | None = None) -> str | None:
     row = conn.execute("SELECT source_path FROM sessions WHERE session_id=?",
                        (session_id,)).fetchone()
     if row and row["source_path"] and os.path.exists(row["source_path"]):
         return row["source_path"]
-    found = glob.glob(os.path.join(glob.escape(projects_root), "*", session_id + ".jsonl"))
+    if agent in (None, agents.CLAUDE):
+        found = glob.glob(os.path.join(glob.escape(projects_root), "*", glob.escape(session_id) + ".jsonl"))
+        if found:
+            return found[0]
     # A Codex thread not indexed yet: its rollout is looked up by the thread id.
-    return found[0] if found else codex_procs.find_rollout(session_id)
+    return codex_procs.find_rollout(session_id) if agent in (None, agents.CODEX) else None
 
 
 def _read_files(sessions_dir: str) -> list[dict]:

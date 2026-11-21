@@ -12,6 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import esbuild from "esbuild";
+import { SHELL_REGISTRY, shellRegistry } from "./tools/agent_registry.mjs";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
@@ -20,7 +21,7 @@ const OUT = path.resolve(outIndex >= 0 ? args[outIndex + 1] : ROOT);
 
 // What the plugin extracts at runtime. Text files only; tab scripts land in runtime/scripts.
 const PAYLOAD = [
-  ["atlas", [".py", ".md"]],
+  ["atlas", [".py", ".md", ".json"]],
   ["web", ["index.html"]],
   ["web/js", [".js", ".css"]],
   ["obsidian-plugin/scripts", [".zsh"]],
@@ -42,11 +43,13 @@ export function payload() {
   const files = {};
   for (const [folder, suffixes] of PAYLOAD) {
     for (const name of fs.readdirSync(path.join(ROOT, folder)).sort()) {
+      if (folder === "obsidian-plugin/scripts" && name === SHELL_REGISTRY) continue;
       if (!suffixes.some((s) => name.endsWith(s))) continue;
       const rel = path.posix.join(folder, name).replace("obsidian-plugin/scripts/", "scripts/");
       files[rel] = fs.readFileSync(path.join(ROOT, folder, name), "utf8");
     }
   }
+  files["scripts/" + SHELL_REGISTRY] = shellRegistry();
   const renderer = terminalRenderer();
   files["web/js/card-terminal-renderer.js"] = renderer.js;
   files["web/js/card-terminal-renderer.css"] = renderer.css;

@@ -19,15 +19,20 @@ const ARG_CHOICES = {
  * Claude Code: /effort, /model. Codex: /model lists its models (its own cache), "/model <slug>"
  * that model's efforts; the model alone may be sent as is (optional), Codex keeps it for the session.
  */
-function argChoices(text, agent) {
-  const t = (text || "").trim();
-  if (agent !== "codex") {
-    const choices = ARG_CHOICES[t];
-    return choices ? { cmd: t, label: i18n(t === "/effort" ? "cmd.effort" : "cmd.model"),
-                       items: choices.map(([value, label]) => ({ text: `${t} ${value}`, label,
-                                                                 hint: i18n("cmd.choice.hint", { cmd: t, value }) })) }
-      : null;
-  }
+function argChoices(text, agent = "claude") {
+  const picker = AtlasLogic.requireAgent(agent, { claude: claudeArgChoices, codex: codexArgChoices }, "command arguments");
+  return picker((text || "").trim());
+}
+
+function claudeArgChoices(t) {
+  const choices = ARG_CHOICES[t];
+  return choices ? { cmd: t, label: i18n(t === "/effort" ? "cmd.effort" : "cmd.model"),
+                     items: choices.map(([value, label]) => ({ text: `${t} ${value}`, label,
+                                                               hint: i18n("cmd.choice.hint", { cmd: t, value }) })) }
+    : null;
+}
+
+function codexArgChoices(t) {
   const models = codexModels();
   if (t === "/model" && models.length) {
     return { cmd: t, label: i18n("cmd.model"),

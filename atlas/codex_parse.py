@@ -14,13 +14,12 @@ import re
 import sqlite3
 from urllib.parse import quote
 
-from . import activity, codex_skills
+from . import activity, agents, codex_skills
 from .parse import SessionFacts, _add_seen, _harvest_all, _harvest_tickets, _turn, iter_complete_lines
 
-AGENT = "codex"
+AGENT = agents.CODEX
 PARSE_VERSION = 2     # 2: skills by Codex's own names, once a turn; a forked subagent's copied turns skipped
-ROLLOUT_ID = re.compile(r"^rollout-.*-([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-"
-                        r"[0-9a-fA-F]{12})\.jsonl$")
+ROLLOUT_ID = re.compile(rf"^rollout-.*-({agents.id_pattern(AGENT)[1:-1]})\.jsonl$")
 PATCH_FILE = re.compile(r"^\*\*\* (?:(?:Add|Update|Delete) File|Move to): *(.+?)\s*$", re.M)
 # `exec` runs model-written JavaScript; the shell command is the `cmd:` string inside it.
 JS_CMD = re.compile(r"""\bcmd\s*:\s*("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`[^`]*`)""")
@@ -46,7 +45,7 @@ _HEAD_TS = re.compile(rb'"timestamp":\s*"([0-9T:.Z+-]{10,40})"')
 
 def session_id_of(path: str) -> str | None:
     m = ROLLOUT_ID.match(os.path.basename(path))
-    return m.group(1).lower() if m else None
+    return m.group(1) if m else None
 
 
 def _js_string(literal: str) -> str:
@@ -214,7 +213,7 @@ def _session_meta(r: _Rollout, p: dict) -> None:
     # `codex fork`, /fork and a Desktop fork name their source; subagent and review threads do too,
     # but they are not copies the human made.
     if p.get("forked_from_id") and not f.spawned:
-        f.forked_from = str(p["forked_from_id"]).lower()
+        f.forked_from = str(p["forked_from_id"])
         f.forked_at = p.get("timestamp") if isinstance(p.get("timestamp"), str) else None
 
 
@@ -384,10 +383,9 @@ def _clean_title(value) -> str | None:
     return " ".join(value.split())[:TITLE_LIMIT]
 
 
-def _index_names(home: str) -> dict[str, str]:
+def _index_names(home: str):
     """Names from Codex's `session_index.jsonl`, the latest line per thread. Codex keeps a name it
     set on a thread not yet in its state database only here."""
-    out = {}
     try:
         with open(os.path.join(home, "session_index.jsonl"), encoding="utf-8", errors="replace") as fh:
             for line in fh:
@@ -397,10 +395,9 @@ def _index_names(home: str) -> dict[str, str]:
                     continue
                 name = _clean_title(row.get("thread_name")) if isinstance(row, dict) else None
                 if name and isinstance(row.get("id"), str):
-                    out[row["id"].lower()] = name
+                    yield row["id"], name
     except OSError:
-        return {}
-    return out
+        return
 
 
 def _state_titles(home: str) -> dict[str, tuple[str | None, str | None]]:
@@ -418,7 +415,7 @@ def _state_titles(home: str) -> dict[str, tuple[str | None, str | None]]:
             return {}
         name = "name" if "name" in cols else "NULL"
         title = "title" if "title" in cols else "NULL"
-        return {str(i).lower(): (_clean_title(n), _clean_title(t))
+        return {str(i): (_clean_title(n), _clean_title(t))
                 for i, n, t in conn.execute(f"SELECT id, {name}, {title} FROM threads") if i}
     except sqlite3.Error:
         return {}
@@ -426,15 +423,26 @@ def _state_titles(home: str) -> dict[str, tuple[str | None, str | None]]:
         conn.close()
 
 
-def thread_titles(home: str) -> dict[str, str]:
-    """Codex's own thread names: {thread id: title}. A name the user gave wins (the state database,
-    then the session index), then Codex's automatic title."""
+def _title_key(tid: str):
+    # Codex's older title sidecars can spell the same UUID in either case.
+    # Reconcile their metadata without rewriting an ID used by the catalog or by a CLI.
+    return int(tid.replace("-", ""), 16) if agents.valid_id(AGENT, tid) else tid
+
+
+def thread_titles(home: str, rollout_ids=()) -> dict[str, str]:
+    """A user name wins (the state database, then the session index), then the automatic title."""
     state = _state_titles(home)
-    names = _index_names(home)
+    keys = {_title_key(tid): value for tid, value in state.items()}
+    spellings = set(rollout_ids) | state.keys()
+    names = {}
+    for tid, name in _index_names(home):
+        spellings.add(tid)
+        names[_title_key(tid)] = name
     out = {}
-    for tid in state.keys() | names.keys():
-        name, title = state.get(tid, (None, None))
-        found = name or names.get(tid) or title
+    for tid in spellings:
+        key = _title_key(tid)
+        name, title = keys.get(key, (None, None))
+        found = name or names.get(key) or title
         if found:
             out[tid] = found
     return out

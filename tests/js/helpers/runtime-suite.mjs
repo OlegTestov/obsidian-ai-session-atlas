@@ -5,6 +5,7 @@
 // clean account's environment:   ATLAS_RUNTIME_BUNDLE=<built main.js> node runtime-suite.mjs
 import { after, before, describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import Module from "node:module";
@@ -120,8 +121,21 @@ export function defineRuntimeTests(bundle) {
 
     it("extracts the server, the page and the scripts", () => {
       const runtime = plugin.runtimeDir();
-      for (const f of ["atlas/server.py", "web/index.html", "web/js/core.js", "scripts/agent-resume-terminal.zsh"]) {
+      for (const f of ["atlas/server.py", "web/index.html", "web/js/core.js", "scripts/agent-resume-terminal.zsh",
+        "scripts/agent-kinds.zsh", "scripts/agent-claude.zsh", "scripts/agent-codex.zsh"]) {
         assert.ok(fs.existsSync(path.join(runtime, f)), f);
+      }
+      const home = fs.mkdtempSync(path.join(tmp, "launch-"));
+      fs.writeFileSync(path.join(home, ".zshenv"), [
+        'claude() { print "claude-runtime"; }',
+        'codex() { [[ "${1:-}" == --help ]] || print "codex-runtime"; }',
+      ].join("\n"));
+      const env = { HOME: home, ZDOTDIR: home, PATH: "", OBS_AGENT_TERMINAL_NO_SHELL: "1",
+                    OBS_AGENT_TERMINAL_STATE_DIR: path.join(home, "state") };
+      for (const kind of ["claude", "codex"]) {
+        const output = execFileSync("/bin/zsh", [path.join(runtime, "scripts/agent-resume-terminal.zsh"), kind, "smoke"],
+                                    { encoding: "utf8", cwd: home, env, timeout: 10000 });
+        assert.match(output, new RegExp(kind + "-runtime"));
       }
     });
 
@@ -178,6 +192,8 @@ export function defineRuntimeTests(bundle) {
       plugin.extractRuntime(plugin.embeddedPayload());
       assert.ok(!fs.existsSync(path.join(runtime, "atlas/old_module.py")));
       assert.ok(fs.existsSync(path.join(runtime, "atlas/server.py")));
+      const registry = JSON.parse(fs.readFileSync(path.join(runtime, "atlas/agents.json")));
+      assert.deepEqual(registry.map(row => row.id), ["claude", "codex"]);
     });
 
     it("without Command Line Tools never runs /usr/bin/python3", async () => {

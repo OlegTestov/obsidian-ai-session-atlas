@@ -28,11 +28,12 @@ function rememberSent(text) {
   store(HISTORY_KEY, history.slice(-HISTORY_MAX));
 }
 
-async function ensureCommands(agent) {
-  const key = agent === "codex" ? "codex" : "claude";
+async function ensureCommands(key = "claude") {
+  const url = AtlasLogic.requireAgent(key, { claude: "/api/commands", codex: "/api/commands?agent=codex" },
+                                     "command catalog");
   if (!commandLists[key]) {
     try {
-      const r = await api(key === "codex" ? "/api/commands?agent=codex" : "/api/commands");
+      const r = await api(url);
       commandLists[key] = { commands: r.commands || [], models: r.models || [] };
     } catch { commandLists[key] = { commands: [], models: [] }; }
   }

@@ -12,8 +12,8 @@ import os
 import sqlite3
 from datetime import datetime, timezone
 
-from . import actions, activity, codex_parse, resolve, search_rows
-from .parse import SessionFacts, facts_state, fork_source, parse_file, parse_tail
+from . import actions, activity, agents, resolve, search_rows
+from .parse import SessionFacts, facts_state, fork_source
 
 META_TURN = -2        # title, tickets, paths from file history
 SUBAGENT_TURN = -1    # subagent texts: change only together with their files
@@ -206,7 +206,7 @@ def _converted(conn, session_id: str, facts: SessionFacts) -> None:
         facts.title, facts.title_source = row["title"], "converted"
 
 
-def _merge_subagents(facts: SessionFacts, subs: list) -> tuple[list[str], list[str], dict]:
+def _merge_subagents(facts: SessionFacts, subs) -> tuple[list[str], list[str], dict]:
     """Subagents are part of the parent session: their commands, files and text are merged here."""
     sub_commands: list[str] = []
     sub_paths: list[str] = []
@@ -231,13 +231,15 @@ def _write_subagent_row(conn, session_id: str, facts: SessionFacts, sub_commands
             _insert_paths(conn, session_id, SUBAGENT_TURN, "\n".join(sub_paths + sub_commands))
 
 
-def store_full(conn, path: str, st, sig: str, subagents: list[str], sub_sig: str) -> str:
-    session_id = os.path.splitext(os.path.basename(path))[0]
-    parent, handed_over = continuation_of(conn, session_id)
-    facts = parse_file(path, session_id, continued_from=parent, copied_until=handed_over)
+def store_full(conn, path: str, st, sig: str, subagents: list[str], sub_sig: str | None, *,
+               agent: str = agents.CLAUDE, protected=()) -> str | None:
+    ref = agents.SourceRef(agent, path)
+    facts, subs = agents.adapter(ref.agent).read(ref, conn=conn, subagents=subagents)
+    session_id = facts.session_id
+    if session_id in protected:
+        return None
     _converted(conn, session_id, facts)
-    sub_commands, sub_paths, sub_rows = _merge_subagents(
-        facts, [parse_file(sub_path, session_id) for sub_path in subagents])
+    sub_commands, sub_paths, sub_rows = _merge_subagents(facts, subs)
     resolved = _resolved(facts)
     with search_rows.writing(conn):
         purge(conn, session_id)
@@ -247,7 +249,8 @@ def store_full(conn, path: str, st, sig: str, subagents: list[str], sub_sig: str
         _write_meta_row(conn, session_id, title, facts, resolved)
         _write_subagent_row(conn, session_id, facts, sub_commands, sub_paths)
         _write_turns(conn, session_id, facts)
-        _save_state(conn, session_id, path, st, sub_sig, facts)
+        if sub_sig is not None:
+            _save_state(conn, session_id, path, st, sub_sig, facts)
         _record_source(conn, path, session_id, st, sig, facts)
         return session_id
 
@@ -256,15 +259,12 @@ def store_codex(conn, path: str, st, sig: str, title: str | None = None,
                 subagents: list[str] | None = None) -> str:
     """A Codex rollout is reread in full on any change: the largest is ~25 MB, a pass is ~0.2 s.
     Its subagents' rollouts (index.codex_subagents) are part of it, as Claude Code's subagents are."""
-    parent, converted_at = continuation_of(conn, codex_parse.session_id_of(path) or "")
-    turns: set = set()             # a subagent's copy of its parent's turns is counted once, there
-    facts = codex_parse.parse_file(path, title=title, continued_from=parent, copied_until=converted_at,
-                                   turns=turns)
+    ref = agents.SourceRef(agents.CODEX, path)
+    facts, subs = agents.adapter(ref.agent).read(ref, conn=conn, title=title, subagents=subagents or [])
     session_id = facts.session_id
     _converted(conn, session_id, facts)
     if not session_id:
         raise ValueError("no thread id in the rollout name or its session_meta")
-    subs = [codex_parse.parse_file(p, turns=turns) for p in subagents or []]
     sub_commands, sub_paths, sub_rows = _merge_subagents(facts, subs)
     resolved = _resolved(facts)
     with search_rows.writing(conn):
@@ -289,8 +289,8 @@ def store_tail(conn, path: str, st, sig: str, sub_sig: str) -> bool:
             or row["inode"] != st.st_ino or row["offset"] > st.st_size \
             or row["sub_sig"] != sub_sig or tail_sig(path, row["offset"]) != row["tail_sig"]:
         return False
-    facts = parse_tail(path, json.loads(row["state"]))
-    facts.session_id, facts.source_path = session_id, path
+    ref = agents.SourceRef(agents.CLAUDE, path)
+    facts, _ = agents.adapter(ref.agent).read(ref, conn=conn, checkpoint=json.loads(row["state"]))
     if facts.subagent_text:
         return False          # a subagent wrote to the main file: its row must be rebuilt
     resolved = _resolved(facts)

@@ -21,7 +21,6 @@ const PTY_WAIT_MS = 1000;
 const CLAUDE_DIR = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude");
 const SESSIONS_DIR = path.join(CLAUDE_DIR, "sessions");
 const PROJECTS_DIR = path.join(CLAUDE_DIR, "projects");
-const SESSION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 // The agent tab script's registry of tab → session (scripts/agent-registry-lib.zsh, same default path).
 const REGISTRY_FILE = path.join(process.env.XDG_STATE_HOME || path.join(os.homedir(), ".local", "state"),
                                 "obsidian-agent-terminals", "resume.tsv");
@@ -51,7 +50,6 @@ export {
   PTY_WAIT_MS,
   SESSIONS_DIR,
   PROJECTS_DIR,
-  SESSION_ID,
   REGISTRY_FILE,
   MAX_SEND_CHARS,
   ENTER_DELAY_MS,

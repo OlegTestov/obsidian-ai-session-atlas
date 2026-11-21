@@ -15,6 +15,8 @@ function copy(name){
  for(const f of ["atlas","web","obsidian-plugin","manifest.json","esbuild.config.mjs"]){
   fs.cpSync(path.join(ROOT,f),path.join(dir,f),{recursive:true,filter:p=>!p.includes("__pycache__")});
  }
+ fs.mkdirSync(path.join(dir,"tools"));
+ fs.copyFileSync(path.join(ROOT,"tools/agent_registry.mjs"),path.join(dir,"tools/agent_registry.mjs"));
  return dir;
 }
 const hash=p=>createHash("sha256").update(fs.readFileSync(p)).digest("hex");

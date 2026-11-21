@@ -1,3 +1,4 @@
+import { terminalAgent } from "./agents";
 // Input into a session from the Active view: text and dialog answers. Mixed into the plugin class.
 import {
   HOST_SOURCE,
@@ -55,6 +56,11 @@ class InputMethods {
       ? this.readPendingState(data.claudePid, data.sessionId, tab.leaf)
       : this.readAgentState(data.claudePid, tab.leaf);
     if (!state || !state.sessionIds.includes(data.sessionId)) return { error: this.t("input.noSession") };
+    try {
+      terminalAgent(state.agent);
+    } catch (error) {
+      return { error: error.message };
+    }
     return { tab, state };
   }
 

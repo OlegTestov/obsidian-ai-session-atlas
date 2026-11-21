@@ -8,6 +8,7 @@ Claude replies carry their cost from the index; Codex replies are priced here (a
 """
 from __future__ import annotations
 
+import logging
 import sqlite3
 import time
 from collections import Counter, defaultdict
@@ -15,12 +16,13 @@ from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 
 from . import cache_rewrites, config, forks, openai_costs
-from .agents import CODEX
+from .agents import CLAUDE, CODEX, UnknownAgent, require
 from .messages import msg
 
 PERIODS = {"today": None, "7d": 7, "30d": 30, "90d": 90, "all": None}
 TOP = 30                     # breakdown rows: the page trims them to what is visible
 SESSIONS_EACH = 10
+_LOG = logging.getLogger(__name__)
 
 
 def window(period: str, now: datetime | None = None) -> tuple[datetime | None, datetime]:
@@ -45,11 +47,11 @@ WITH d AS (
          MAX(a.active_s) AS act, MAX(a.model) AS model,
          MAX(a.input) AS inp, MAX(a.output) AS out, MAX(a.cache_read) AS cr,
          MAX(a.cache_write) AS cw, MAX(a.cost) AS cost, MAX(a.tools) AS tools,
-         MAX(s.agent) AS agent, MAX(a.sub) AS sub,
+         MAX(COALESCE(NULLIF(s.agent, ''), :claude)) AS agent, MAX(a.sub) AS sub,
          MAX(COALESCE(s.session_kind, '') <> 'interactive') AS bg
     FROM activity a JOIN sessions s ON s.session_id = a.session_id
    WHERE a.ts >= :since AND a.ts < :until AND (:auto OR s.session_kind = 'interactive'){agents}
-   GROUP BY a.key)
+   GROUP BY a.key, CASE WHEN s.agent IN (:claude, :codex, '') THEN '' ELSE s.agent END)
 SELECT d.*, strftime('%Y-%m-%d %H', d.ts, 'localtime') AS lh,
        CAST(strftime('%w', d.ts, 'localtime') AS INTEGER) AS wd
   FROM d"""
@@ -57,15 +59,23 @@ SELECT d.*, strftime('%Y-%m-%d %H', d.ts, 'localtime') AS lh,
 
 def _rows(conn: sqlite3.Connection, since: datetime | None, until: datetime, auto: bool,
           agents: list[str] | None = None, prices: dict | None = None) -> list[dict]:
-    params = {"since": _utc(since), "until": _utc(until) or "9", "auto": 1 if auto else 0}
+    params = {"since": _utc(since), "until": _utc(until) or "9", "auto": 1 if auto else 0,
+              "claude": CLAUDE, "codex": CODEX}
     where = ""
     if agents:
         params.update({f"ag{i}": a for i, a in enumerate(agents)})
         where = f" AND s.agent IN ({','.join(f':ag{i}' for i in range(len(agents)))})"
-    rows = [dict(r) for r in conn.execute(_ROWS.format(agents=where), params)]
-    for r in rows:
-        if r["agent"] == CODEX and r["kind"] == "a":
+    rows = []
+    for raw in conn.execute(_ROWS.format(agents=where), params):
+        r = dict(raw)
+        try:
+            agent = require(r["agent"], (CLAUDE, CODEX), "statistics pricing")
+        except UnknownAgent as exc:
+            _LOG.warning("Skipping activity for session %s (key %s): %s", r["sid"], r["key"], exc)
+            continue
+        if agent == CODEX and r["kind"] == "a":
             r["cost"] = openai_costs.reply_cost(r["model"], r["inp"], r["cr"], r["cw"], r["out"], prices)
+        rows.append(r)
     return rows
 
 

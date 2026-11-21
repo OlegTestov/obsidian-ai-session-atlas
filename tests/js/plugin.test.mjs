@@ -320,18 +320,20 @@ describe("Active view: terminal tabs", () => {
   });
 
   it("sends the unread sessions and forgets the ones the page has seen", async () => {
-    plugin.unread = new Set(["s-a", "s-b"]);
+    const a = "11111111-1111-1111-1111-111111111111";
+    const b = "22222222-2222-2222-2222-222222222222";
+    plugin.unread = new Set([a, b]);
     plugin.seenAt = new Map();
     plugin.handleMessage(msg({ type: "list-tabs" }));
     await settle(1200);
-    assert.deepEqual(lastReply().unread, ["s-a", "s-b"]);
-    plugin.handleMessage(msg({ type: "seen", ids: ["s-a"] }, EVIL));
-    assert.deepEqual(plugin.unreadIds(), ["s-a", "s-b"], "a foreign page cannot clear marks");
-    plugin.handleMessage(msg({ type: "seen", ids: ["s-a"] }));
+    assert.deepEqual(lastReply().unread, [a, b]);
+    plugin.handleMessage(msg({ type: "seen", ids: [a] }, EVIL));
+    assert.deepEqual(plugin.unreadIds(), [a, b], "a foreign page cannot clear marks");
+    plugin.handleMessage(msg({ type: "seen", ids: [a] }));
     await settle(1200);
-    assert.deepEqual(lastReply().unread, ["s-b"], "the reply carries what is left");
+    assert.deepEqual(lastReply().unread, [b], "the reply carries what is left");
     const count = replies.length;
-    plugin.handleMessage(msg({ type: "seen", ids: ["s-a"] }));
+    plugin.handleMessage(msg({ type: "seen", ids: [a] }));
     await settle(300);
     assert.equal(replies.length, count, "nothing changed: no reply");
   });
@@ -2930,8 +2932,11 @@ describe("Resume with: the converted session opens in the target agent's tab", (
     assert.deepEqual(P(`cd ${Q} && claude --resume ${CLAUDE_ID}`),
                      { agent: "claude", cwd: CWD, mode: "resume", sessionId: CLAUDE_ID, prompt: "" });
   });
+  it("keeps the registered UUID's spelling", () => {
+    assert.equal(P(`cd /x && codex resume ${CODEX_ID.toUpperCase()}`).sessionId, CODEX_ID.toUpperCase());
+  });
   for (const bad of [`cd /x && codex --resume ${CODEX_ID}`, `cd /x && claude resume ${CLAUDE_ID}`,
-                     `cd /x && codex resume ${CODEX_ID.toUpperCase()}`, `cd /x && codex resume ${CODEX_ID}; id`]) {
+                     `cd /x && codex resume ${CODEX_ID}; id`]) {
     it(`rejects: ${bad}`, () => assert.equal(P(bad), null));
   }
   for (const [agent, command, id] of [["codex", `cd ${Q} && codex resume ${CODEX_ID}`, CODEX_ID],

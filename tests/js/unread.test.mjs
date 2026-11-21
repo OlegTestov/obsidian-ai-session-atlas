@@ -14,58 +14,61 @@ const { UnreadMethods, nextUnread, seenAfterEnd, seenFromPage } = loadSrc("unrea
 if (!getGlobal("window")) setGlobal("window", {});
 const { NotifyMethods, waitingTransitions } = loadSrc("notify");
 
+const A_ID = "11111111-1111-1111-1111-111111111111";
+const B_ID = "22222222-2222-2222-2222-222222222222";
 const S = (id, activity, ancestors = [], at = null) => ({ session_id: id, activity, ancestors, last_message_at: at });
 const ids = (set) => [...set].sort();
 
 describe("nextUnread", () => {
   it("a session that finished its turn unseen gets a mark", () => {
-    const prev = new Map([["a", "busy"], ["b", "busy"]]);
-    const now = [S("a", "idle"), S("b", "busy")];
+    const prev = new Map([[A_ID, "busy"], [B_ID, "busy"]]);
+    const now = [S(A_ID, "idle"), S(B_ID, "busy")];
     const { started } = waitingTransitions(prev, now);
-    assert.deepEqual(ids(nextUnread(new Set(), now, started, new Set())), ["a"]);
+    assert.deepEqual(ids(nextUnread(new Set(), now, started, new Set())), [A_ID]);
   });
 
   it("a dialog counts as finished too", () => {
-    const prev = new Map([["a", "idle"]]);
-    const now = [S("a", "waiting")];
+    const prev = new Map([[A_ID, "idle"]]);
+    const now = [S(A_ID, "waiting")];
     const { started } = waitingTransitions(prev, now);
-    assert.deepEqual(ids(nextUnread(new Set(), now, started, new Set())), ["a"]);
+    assert.deepEqual(ids(nextUnread(new Set(), now, started, new Set())), [A_ID]);
   });
 
   it("no mark when you were looking at it", () => {
-    const now = [S("a", "idle")];
-    assert.deepEqual(ids(nextUnread(new Set(), now, now, new Set(["a"]))), []);
+    const now = [S(A_ID, "idle")];
+    assert.deepEqual(ids(nextUnread(new Set(), now, now, new Set([A_ID]))), []);
   });
 
   it("the mark goes when the session works again", () => {
-    assert.deepEqual(ids(nextUnread(new Set(["a"]), [S("a", "busy")], [], new Set())), []);
-    assert.deepEqual(ids(nextUnread(new Set(["a"]), [S("a", "background")], [], new Set())), []);
+    assert.deepEqual(ids(nextUnread(new Set([A_ID]), [S(A_ID, "busy")], [], new Set())), []);
+    assert.deepEqual(ids(nextUnread(new Set([A_ID]), [S(A_ID, "background")], [], new Set())), []);
   });
 
   it("the mark goes when the session closes", () => {
-    assert.deepEqual(ids(nextUnread(new Set(["a", "b"]), [S("b", "idle")], [], new Set())), ["b"]);
+    assert.deepEqual(ids(nextUnread(new Set([A_ID, B_ID]), [S(B_ID, "idle")], [], new Set())), [B_ID]);
   });
 
   it("an existing mark stays while the session keeps waiting", () => {
-    assert.deepEqual(ids(nextUnread(new Set(["a"]), [S("a", "waiting")], [], new Set())), ["a"]);
+    assert.deepEqual(ids(nextUnread(new Set([A_ID]), [S(A_ID, "waiting")], [], new Set())), [A_ID]);
   });
 
   it("an idle session that did nothing new gets no mark", () => {
-    assert.deepEqual(ids(nextUnread(new Set(), [S("a", "idle")], [], new Set())), []);
+    assert.deepEqual(ids(nextUnread(new Set(), [S(A_ID, "idle")], [], new Set())), []);
   });
 
   it("status works when activity is missing", () => {
-    const s = { session_id: "a", status: "busy" };
-    assert.deepEqual(ids(nextUnread(new Set(["a"]), [s], [], new Set())), []);
+    const s = { session_id: A_ID, status: "busy" };
+    assert.deepEqual(ids(nextUnread(new Set([A_ID]), [s], [], new Set())), []);
   });
 });
 
 describe("seenFromPage", () => {
   it("keeps only id-shaped strings, at most 200", () => {
-    assert.deepEqual(seenFromPage(["ab-1", 5, "../x", "", "a b", null]), ["ab-1"]);
-    assert.equal(seenFromPage(Array.from({ length: 300 }, (_, i) => "s" + i)).length, 200);
-    assert.deepEqual(seenFromPage("ab"), []);
-    assert.deepEqual(seenFromPage(["x".repeat(80), "y".repeat(81)]), ["x".repeat(80)]);
+    assert.deepEqual(seenFromPage([A_ID, "ab-1", 5, "../x", "", "a b", null]), [A_ID]);
+    const uuids = Array.from({ length: 300 }, (_, i) => "12345678-1234-1234-1234-" + String(i).padStart(12, "0"));
+    assert.equal(seenFromPage(uuids).length, 200);
+    assert.deepEqual(seenFromPage(A_ID), []);
+    assert.deepEqual(seenFromPage([A_ID + "\n", A_ID.toUpperCase()]), [A_ID]);
   });
 });
 
@@ -126,9 +129,9 @@ describe("UnreadMethods", () => {
     const A = leaf("A"), B = leaf("B");
     p.tabs = [{ leaf: A, pid: 11 }, { leaf: B, pid: 12 }];
     p.current = B;
-    const now = [S("a", "idle", [11], ago(0))];
+    const now = [S(A_ID, "idle", [11], ago(0))];
     await p.updateUnread(now, now);
-    assert.deepEqual(p.unreadIds(), ["a"]);
+    assert.deepEqual(p.unreadIds(), [A_ID]);
   });
 
   it("no mark when its tab is in front of its focused window", async () => {
@@ -136,7 +139,7 @@ describe("UnreadMethods", () => {
     const A = leaf("A");
     p.tabs = [{ leaf: A, pid: 11 }];
     p.current = A;
-    const now = [S("a", "idle", [11], ago(0))];
+    const now = [S(A_ID, "idle", [11], ago(0))];
     await p.updateUnread(now, now);
     assert.deepEqual(p.unreadIds(), []);
   });
@@ -146,9 +149,9 @@ describe("UnreadMethods", () => {
     const A = leaf("A", () => false);
     p.tabs = [{ leaf: A, pid: 11 }];
     p.current = A;
-    const now = [S("a", "idle", [11], ago(0))];
+    const now = [S(A_ID, "idle", [11], ago(0))];
     await p.updateUnread(now, now);
-    assert.deepEqual(p.unreadIds(), ["a"]);
+    assert.deepEqual(p.unreadIds(), [A_ID]);
   });
 
   it("a tab in a focused popout counts as looked at, whatever the main window", async () => {
@@ -159,7 +162,7 @@ describe("UnreadMethods", () => {
       const A = leaf("A", () => true);
       p.tabs = [{ leaf: A, pid: 11 }];
       p.current = A;
-      const now = [S("a", "idle", [11], ago(0))];
+      const now = [S(A_ID, "idle", [11], ago(0))];
       await p.updateUnread(now, now);
       assert.deepEqual(p.unreadIds(), []);
     } finally { setGlobal("document", doc); }
@@ -170,14 +173,14 @@ describe("UnreadMethods", () => {
     const A = leaf("A"), B = leaf("B");
     p.tabs = [{ leaf: A, pid: 11 }, { leaf: B, pid: 12 }];
     p.current = A;
-    await p.updateUnread([S("a", "busy", [11])], []);    // the poll knows which leaf holds a
+    await p.updateUnread([S(A_ID, "busy", [11])], []);    // the poll knows which leaf holds a
     p.frontChanged(A);
     await new Promise((r) => setTimeout(r, 5));          // the turn ends after you came to the tab
     const endedAt = new Date().toISOString();
     await new Promise((r) => setTimeout(r, 5));
     p.current = B;
     p.frontChanged(B);                                   // left a after its last message
-    const now = [S("a", "idle", [11], endedAt)];
+    const now = [S(A_ID, "idle", [11], endedAt)];
     await p.updateUnread(now, now);
     assert.deepEqual(p.unreadIds(), []);
   });
@@ -187,32 +190,32 @@ describe("UnreadMethods", () => {
     const A = leaf("A"), B = leaf("B");
     p.tabs = [{ leaf: A, pid: 11 }, { leaf: B, pid: 12 }];
     p.current = A;
-    await p.updateUnread([S("a", "busy", [11])], []);
+    await p.updateUnread([S(A_ID, "busy", [11])], []);
     p.frontChanged(A);
     p.current = B;
     p.frontChanged(B);
     await new Promise((r) => setTimeout(r, 5));
-    const now = [S("a", "idle", [11], new Date().toISOString())];
+    const now = [S(A_ID, "idle", [11], new Date().toISOString())];
     await p.updateUnread(now, now);
-    assert.deepEqual(p.unreadIds(), ["a"]);
+    assert.deepEqual(p.unreadIds(), [A_ID]);
   });
 
   it("a session without a tab is marked", async () => {
     const p = host();
-    const now = [S("a", "idle", [99], ago(0))];
+    const now = [S(A_ID, "idle", [99], ago(0))];
     await p.updateUnread(now, now);
-    assert.deepEqual(p.unreadIds(), ["a"]);
+    assert.deepEqual(p.unreadIds(), [A_ID]);
   });
 
   it("bringing its tab to the front clears only that mark", async () => {
     const p = host();
     const A = leaf("A"), B = leaf("B");
     p.tabs = [{ leaf: A, pid: 11 }, { leaf: B, pid: 12 }];
-    const now = [S("a", "idle", [11], ago(0)), S("b", "idle", [12], ago(0))];
+    const now = [S(A_ID, "idle", [11], ago(0)), S(B_ID, "idle", [12], ago(0))];
     await p.updateUnread(now, now);
-    assert.deepEqual(p.unreadIds().sort(), ["a", "b"]);
+    assert.deepEqual(p.unreadIds().sort(), [A_ID, B_ID]);
     p.handlers["active-leaf-change"](A);
-    assert.deepEqual(p.unreadIds(), ["b"]);
+    assert.deepEqual(p.unreadIds(), [B_ID]);
   });
 
   it("a tab brought forward in an unfocused window clears nothing; focusing the window does", async () => {
@@ -220,10 +223,10 @@ describe("UnreadMethods", () => {
     let focused = false;
     const A = leaf("A", () => focused);
     p.tabs = [{ leaf: A, pid: 11 }];
-    const now = [S("a", "idle", [11], ago(0))];
+    const now = [S(A_ID, "idle", [11], ago(0))];
     await p.updateUnread(now, now);
     p.handlers["active-leaf-change"](A);
-    assert.deepEqual(p.unreadIds(), ["a"]);
+    assert.deepEqual(p.unreadIds(), [A_ID]);
     focused = true;
     p.current = A;
     p.handlers["dom:focus"]();
@@ -241,8 +244,8 @@ describe("UnreadMethods", () => {
     const p = host();
     const t0 = ago(0);
     await new Promise((r) => setTimeout(r, 5));
-    p.markSeen({ ids: ["a", "b c"] });
-    const now = [S("a", "idle", [], t0), S("b c", "idle", [], t0)];
+    p.markSeen({ ids: [A_ID, "b c"] });
+    const now = [S(A_ID, "idle", [], t0), S("b c", "idle", [], t0)];
     await p.updateUnread(now, now);
     assert.deepEqual(p.unreadIds(), ["b c"]);
     p.markSeen({ all: true });
@@ -257,13 +260,13 @@ describe("UnreadMethods: the cases the second review found", () => {
     p.tabs = [{ leaf: A, pid: 11 }, { leaf: B, pid: 12 }];
     const sent = ago(60000);
     p.current = A;
-    await p.updateUnread([S("a", "busy", [11], sent)], []);
+    await p.updateUnread([S(A_ID, "busy", [11], sent)], []);
     p.current = B;
     p.frontChanged(B);
     await new Promise((r) => setTimeout(r, 5));
-    const now = [{ ...S("a", "waiting", [11], sent), status_at: new Date().toISOString() }];
+    const now = [{ ...S(A_ID, "waiting", [11], sent), status_at: new Date().toISOString() }];
     await p.updateUnread(now, now);
-    assert.deepEqual(p.unreadIds(), ["a"]);
+    assert.deepEqual(p.unreadIds(), [A_ID]);
   });
 
   it("the window losing focus credits the tab you were watching", async () => {
@@ -272,42 +275,42 @@ describe("UnreadMethods: the cases the second review found", () => {
     const A = leaf("A", () => focused);
     p.tabs = [{ leaf: A, pid: 11 }];
     p.current = A;
-    await p.updateUnread([S("a", "busy", [11])], []);
+    await p.updateUnread([S(A_ID, "busy", [11])], []);
     p.frontChanged(A);
     await new Promise((r) => setTimeout(r, 5));
     const endedAt = new Date().toISOString();
     await new Promise((r) => setTimeout(r, 5));
     p.handlers["dom:blur"]();                            // you watched it end, then left Obsidian
     focused = false;
-    const now = [S("a", "idle", [11], endedAt)];
+    const now = [S(A_ID, "idle", [11], endedAt)];
     await p.updateUnread(now, now);
     assert.deepEqual(p.unreadIds(), []);
   });
 
   it("a session without times is judged by the previous poll", async () => {
     const p = host();
-    p.markSeen({ ids: ["a"] });
+    p.markSeen({ ids: [A_ID] });
     await new Promise((r) => setTimeout(r, 5));
-    await p.updateUnread([S("a", "busy")], []);          // a poll after you saw it
-    const now = [S("a", "idle")];
+    await p.updateUnread([S(A_ID, "busy")], []);          // a poll after you saw it
+    const now = [S(A_ID, "idle")];
     await p.updateUnread(now, now);
-    assert.deepEqual(p.unreadIds(), ["a"], "seen before the previous poll does not cover this turn");
+    assert.deepEqual(p.unreadIds(), [A_ID], "seen before the previous poll does not cover this turn");
   });
 
   it("closed sessions leave the seen times", async () => {
     const p = host();
-    p.markSeen({ ids: ["a", "b"] });
-    await p.updateUnread([S("b", "idle")], []);
-    assert.deepEqual([...p.seenAt.keys()], ["b"]);
+    p.markSeen({ ids: [A_ID, B_ID] });
+    await p.updateUnread([S(B_ID, "idle")], []);
+    assert.deepEqual([...p.seenAt.keys()], [B_ID]);
   });
 
   it("markSeen says whether a mark went", async () => {
     const p = host();
-    const now = [S("a", "idle", [], ago(0))];
+    const now = [S(A_ID, "idle", [], ago(0))];
     await p.updateUnread(now, now);
-    assert.equal(p.markSeen({ ids: ["b"] }), false);
-    assert.equal(p.markSeen({ ids: ["a"] }), true);
-    assert.equal(p.markSeen({ ids: ["a"] }), false);
+    assert.equal(p.markSeen({ ids: [B_ID] }), false);
+    assert.equal(p.markSeen({ ids: [A_ID] }), true);
+    assert.equal(p.markSeen({ ids: [A_ID] }), false);
   });
 
   it("the Atlas tab in front of its focused window counts as in view", () => {
@@ -340,10 +343,10 @@ describe("UnreadMethods: the cases the second review found", () => {
     setGlobal("document", { hasFocus: () => false });
     try {
       const before = notices;
-      await p.notifyWaiting(S("a", "idle", [11]));
+      await p.notifyWaiting(S(A_ID, "idle", [11]));
       assert.equal(notices, before);
       p.current = leaf("other");
-      await p.notifyWaiting(S("a", "idle", [11]));
+      await p.notifyWaiting(S(A_ID, "idle", [11]));
       assert.equal(notices, before + 1, "another tab in front: notified");
     } finally { setGlobal("document", doc); }
   });
@@ -355,7 +358,7 @@ describe("the notification poll keeps the marks", () => {
     Object.assign(p, Object.fromEntries(Object.getOwnPropertyNames(NotifyMethods.prototype)
       .filter((n) => n !== "constructor").map((n) => [n, NotifyMethods.prototype[n]])));
     p.unread = null;
-    const replies = [{ sessions: [S("a", "busy", [11])] }, { sessions: [S("a", "idle", [11], ago(0))] }];
+    const replies = [{ sessions: [S(A_ID, "busy", [11])] }, { sessions: [S(A_ID, "idle", [11], ago(0))] }];
     p.fetchActive = async () => replies.shift();
     p.offerHeldTabs = () => {};
     p.trackOpenSessions = async () => {};
@@ -369,7 +372,7 @@ describe("the notification poll keeps the marks", () => {
       await new Promise((r) => setTimeout(r, 20));
       assert.ok(p.unread instanceof Set, "startWatch sets the marks up");
       await p.pollActive();
-      assert.deepEqual(p.unreadIds(), ["a"]);
+      assert.deepEqual(p.unreadIds(), [A_ID]);
     } finally { setGlobal("window", win); }
   });
 });
@@ -385,70 +388,70 @@ describe("UnreadMethods: the cases the third review found", () => {
 
   it("a click made before the turn ended does not clear its mark", async () => {
     const { p } = away();
-    const now = [S("a", "idle", [11], ago(1000))];
+    const now = [S(A_ID, "idle", [11], ago(1000))];
     await p.updateUnread(now, now);
-    assert.deepEqual(p.unreadIds(), ["a"]);
-    assert.equal(p.markSeen({ ids: ["a"], at: Date.now() - 2000 }), false, "the held click came before the end");
-    assert.deepEqual(p.unreadIds(), ["a"]);
-    assert.equal(p.markSeen({ ids: ["a"], at: Date.now() }), true);
+    assert.deepEqual(p.unreadIds(), [A_ID]);
+    assert.equal(p.markSeen({ ids: [A_ID], at: Date.now() - 2000 }), false, "the held click came before the end");
+    assert.deepEqual(p.unreadIds(), [A_ID]);
+    assert.equal(p.markSeen({ ids: [A_ID], at: Date.now() }), true);
     assert.deepEqual(p.unreadIds(), []);
   });
 
   it("a held click that arrives before the poll does not cover a turn that ended after it", async () => {
     const { p } = away();
-    await p.updateUnread([S("a", "busy", [11])], []);
-    p.markSeen({ ids: ["a"], at: Date.now() - 2000 });
-    const now = [S("a", "idle", [11], ago(1000))];
+    await p.updateUnread([S(A_ID, "busy", [11])], []);
+    p.markSeen({ ids: [A_ID], at: Date.now() - 2000 });
+    const now = [S(A_ID, "idle", [11], ago(1000))];
     await p.updateUnread(now, now);
-    assert.deepEqual(p.unreadIds(), ["a"]);
+    assert.deepEqual(p.unreadIds(), [A_ID]);
   });
 
   it("a click time from the future, too old or not a number is the arrival time", () => {
     const { p } = away();
     for (const at of [Date.now() + 60_000, Date.now() - 10 * 60_000, "1", NaN, null]) {
       const before = Date.now();
-      p.markSeen({ ids: ["a"], at });
-      assert.ok(p.seenAt.get("a") >= before, String(at));
-      assert.ok(p.seenAt.get("a") <= Date.now(), "never ahead of now: " + String(at));
+      p.markSeen({ ids: [A_ID], at });
+      assert.ok(p.seenAt.get(A_ID) >= before, String(at));
+      assert.ok(p.seenAt.get(A_ID) <= Date.now(), "never ahead of now: " + String(at));
     }
   });
 
   it("a second dialog that opened between two polls while you were away is marked", async () => {
     const { p, A, B } = away();
     p.current = A;
-    const first = [{ ...S("a", "waiting", [11], ago(60_000)), status_at: ago(20_000) }];
+    const first = [{ ...S(A_ID, "waiting", [11], ago(60_000)), status_at: ago(20_000) }];
     await p.updateUnread(first, first);
     assert.deepEqual(p.unreadIds(), [], "you were in its tab");
     p.current = B;
     p.frontChanged(B);
     await new Promise((r) => setTimeout(r, 5));
-    const second = [{ ...S("a", "waiting", [11], ago(60_000)), status_at: new Date().toISOString() }];
+    const second = [{ ...S(A_ID, "waiting", [11], ago(60_000)), status_at: new Date().toISOString() }];
     await p.updateUnread(second, []);                   // waiting → waiting: no transition
-    assert.deepEqual(p.unreadIds(), ["a"]);
+    assert.deepEqual(p.unreadIds(), [A_ID]);
   });
 
   it("a short turn between two polls while you were away is marked", async () => {
     const { p } = away();
-    await p.updateUnread([S("a", "idle", [11], ago(60_000))], []);
+    await p.updateUnread([S(A_ID, "idle", [11], ago(60_000))], []);
     assert.deepEqual(p.unreadIds(), [], "the first poll knows no earlier stop");
-    await p.updateUnread([S("a", "idle", [11], ago(0))], []);   // idle → idle: no transition
-    assert.deepEqual(p.unreadIds(), ["a"]);
+    await p.updateUnread([S(A_ID, "idle", [11], ago(0))], []);   // idle → idle: no transition
+    assert.deepEqual(p.unreadIds(), [A_ID]);
   });
 
   it("a short turn in the tab you are watching is not marked", async () => {
     const { p, A } = away();
     p.current = A;
-    await p.updateUnread([S("a", "idle", [11], ago(60_000))], []);
-    await p.updateUnread([S("a", "idle", [11], ago(0))], []);
+    await p.updateUnread([S(A_ID, "idle", [11], ago(60_000))], []);
+    await p.updateUnread([S(A_ID, "idle", [11], ago(0))], []);
     assert.deepEqual(p.unreadIds(), []);
   });
 
   it("the same stop seen again adds no mark after you cleared it", async () => {
     const { p } = away();
-    const now = [S("a", "idle", [11], ago(1000))];
-    await p.updateUnread([S("a", "idle", [11], ago(60_000))], []);
+    const now = [S(A_ID, "idle", [11], ago(1000))];
+    await p.updateUnread([S(A_ID, "idle", [11], ago(60_000))], []);
     await p.updateUnread(now, []);
-    p.markSeen({ ids: ["a"] });
+    p.markSeen({ ids: [A_ID] });
     await p.updateUnread(now, []);
     assert.deepEqual(p.unreadIds(), []);
   });

@@ -2,23 +2,23 @@
 import * as fs from "fs";
 import * as path from "path";
 import { randomUUID } from "crypto";
+import { getAgent, validId } from "./agent-registry";
+import { supportsTerminal } from "./agents";
 
 const DIRECTORY = ".atlas-tabs";
-const UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/;
 const ROUTE = /^atlas-(?:[cx]-[0-9a-f]{32}|o-ses_[a-z0-9]{20,28})$/;
-const PREFIX = { claude: "c", codex: "x" };
 
 function tabRoutes(sessions, tabs, limitForTab = () => null) {
   const routes = new Map();
   for (const session of sessions) {
     const id = session?.session_id;
     const agent = session?.agent;
-    if (typeof id !== "string" || !UUID.test(id) || (agent !== "claude" && agent !== "codex")) continue;
+    if (!supportsTerminal(agent) || !validId(agent, id)) continue;
     if (!Array.isArray(session.ancestors)) continue;
     const tab = tabs.find(t => session.ancestors.includes(t.pid));
     const title = tab?.title?.trim();
     if (!title || title.length > 1000) continue;
-    const mailbox = `atlas-${PREFIX[agent]}-${id.replaceAll("-", "")}`;
+    const mailbox = `atlas-${getAgent(agent).mailPrefix}-${id.replaceAll("-", "").toLowerCase()}`;
     const usageLimit = limitForTab(id, agent, tab);
     const pid = Number.isInteger(session.pid) && session.pid > 1 ? session.pid : null;
     routes.set(mailbox, { mailbox, title, id, agent, ...(pid && { pid }), ...(usageLimit && { usage_limit: usageLimit }) });

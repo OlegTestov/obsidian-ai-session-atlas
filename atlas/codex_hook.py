@@ -13,7 +13,6 @@ from __future__ import annotations
 import contextlib
 import json
 import os
-import re
 import sys
 import tempfile
 import time
@@ -23,7 +22,6 @@ FOLDER = "codex-waits"
 OFF_FLAG = "codex-hook-off"        # the toggle is off but the entry stays (hooks after it keep their trust)
 KEEP_DAYS = 7                      # old marks of threads that never ran again
 STDIN_MAX = 1024 * 1024
-UUID = re.compile(r"^[0-9a-fA-F-]{36}$")
 
 
 def now_iso() -> str:
@@ -49,7 +47,12 @@ def mark(home: str, event: dict, at: str | None = None) -> str | None:
     if os.path.exists(os.path.join(home, OFF_FLAG)):
         return None
     sid = str(event.get("session_id") or "")
-    if not UUID.match(sid):
+    if __package__:
+        from . import agents
+    else:
+        import agents  # Codex runs the file directly.
+
+    if not agents.valid_id(agents.CODEX, sid):
         return None
     folder = os.path.join(home, FOLDER)
     os.makedirs(folder, mode=0o700, exist_ok=True)

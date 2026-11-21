@@ -1402,6 +1402,22 @@ MUT = [
   " or not 0 < ms < 4e12:", ":"),
 ]
 JS_MUT = [
+ ("reload: a failed group save leaves the request stuck", "obsidian-plugin/src/reload.js",
+  "        stop();\n        this.reloading = false;\n", "        stop();\n"),
+ ("reload: schedules work while hidden", "obsidian-plugin/src/reload.js",
+  "if (doc.hidden || timer !== null) return;", "if (timer !== null) return;"),
+ ("reload: accepts another request while pending", "obsidian-plugin/src/reload.js",
+  "if (this.reloading || !this.canReloadInPlace())", "if (!this.canReloadInPlace())"),
+ ("reload: schedules again on another visible event", "obsidian-plugin/src/reload.js",
+  "if (doc.hidden || timer !== null) return;", "if (doc.hidden) return;"),
+ ("reload: runs the group save after the window hides", "obsidian-plugin/src/reload.js",
+  "const reload = async () => {\n      if (doc.hidden) {", "const reload = async () => {\n      if (false) {"),
+ ("reload: unloads after the window hides during a save", "obsidian-plugin/src/reload.js",
+  "if (cancelled || doc.hidden) {", "if (cancelled) {"),
+ ("reload: keeps a pending visibility listener after unload", "obsidian-plugin/src/reload.js",
+  '      doc.removeEventListener("visibilitychange", schedule);\n', ""),
+ ("reload: tries to unload again after an interrupted save", "obsidian-plugin/src/reload.js",
+  "if (cancelled || doc.hidden) {", "if (doc.hidden) {"),
  ("review213: restored tabs get a single sweep", "obsidian-plugin/src/startup.js",
   "        total += loaded;\n        continue;\n", "        total += loaded;\n        return total;\n"),
  ("review213: an unloaded instance still writes the mail flags", "obsidian-plugin/src/mail-launch.js",
@@ -2490,6 +2506,12 @@ JS_MUT = [
  ("mail: opencode mailboxes are not recognized as tab routes", "obsidian-plugin/src/mail-routes.js",
   "const ROUTE = /^atlas-(?:[cx]-[0-9a-f]{32}|o-ses_[a-z0-9]{20,28})$/;", "const ROUTE = /^atlas-[cx]-[0-9a-f]{32}$/;"),
 
+ ("mail: the poll skips a session idle with a background shell", "obsidian-plugin/src/mail-nudge.js",
+  "s?.session_id === batch.id && NUDGEABLE.has(s.status)", "s?.session_id === batch.id && s.status === \"idle\""),
+ ("mail: the nudge refuses a session idle with a background shell", "obsidian-plugin/src/input.js",
+  "if (!NUDGEABLE.has(current?.status) ||", "if (current?.status !== \"idle\" ||"),
+ ("mail: a busy session counts as nudgeable", "obsidian-plugin/src/constants.js",
+  'const NUDGEABLE = new Set(["idle", "shell"]);', 'const NUDGEABLE = new Set(["idle", "shell", "busy"]);'),
  ("mail: a nudge ignores recent keystrokes", "obsidian-plugin/src/input.js",
   "|| (typeof view.lastInputAt === \"number\" && Date.now() - view.lastInputAt < NUDGE_QUIET_MS));", ");"),
  ("mail: a nudge ignores a pending delayed Enter", "obsidian-plugin/src/input.js",
@@ -2576,6 +2598,7 @@ JS_MUT = [
 
 # Node test files that cover each plugin/page source; the first matching prefix wins.
 JS_TESTS = [
+    ("obsidian-plugin/src/reload.js", ["--test-name-pattern=reload in place", "tests/js/plugin.test.mjs"]),
     ("web/js/stats-logic.js", ["tests/js/page.test.mjs"]),
     ("obsidian-plugin/src/bg-transcript.js", ["tests/js/bg-session.test.mjs"]),
     ("web/js/active-closed.js", ["tests/js/background-page.test.mjs", "tests/js/page.test.mjs"]),
@@ -2611,6 +2634,7 @@ JS_TESTS = [
     ("obsidian-plugin/src/mail-", ["tests/js/mail-nudge.test.mjs", "tests/js/mail-limits.test.mjs",
                                    "tests/js/mail-launch.test.mjs", "tests/js/settings-discovery.test.mjs"]),
     ("obsidian-plugin/src/input.js", ["tests/js/plugin.test.mjs", "tests/js/mail-nudge.test.mjs"]),
+    ("obsidian-plugin/src/constants.js", ["tests/js/plugin.test.mjs", "tests/js/mail-nudge.test.mjs"]),
     ("obsidian-plugin/src/i18n.js", ["tests/js/i18n.test.mjs", "tests/js/mail-launch.test.mjs", "tests/js/plugin.test.mjs"]),
     ("obsidian-plugin/src/", ["tests/js/plugin.test.mjs"]),
     ("obsidian-plugin/styles.css", ["tests/js/plugin.test.mjs"]),

@@ -7,6 +7,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.14.1] - 2026-11-21
+
+### Fixed
+
+- An update or reload of the plugin while the Obsidian window is hidden waits until the window is shown, so the plugin no longer comes back half-loaded without its buttons. Running agents keep their processes.
+- An Agent Mail wake-up line also reaches a Claude Code agent that waits at an empty prompt while a background command still runs. Before, the plugin skipped such agents until the command ended.
+- A plugin reload stops cleanly when the group changes cannot be saved, so a later reload can still run.
+
 ## [2.14.0] - 2026-11-20
 
 ### Added

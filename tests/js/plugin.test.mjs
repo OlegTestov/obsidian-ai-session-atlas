@@ -62,6 +62,7 @@ const window = { setTimeout, clearTimeout, clearInterval,
 setGlobal("window", window);
 let focusedWindow = true;
 setGlobal("document", { addEventListener() {}, hasFocus: () => focusedWindow });
+window.document = new EventTarget();
 const systemNotes = [];
 class FakeNotification {
   constructor(title, options) { this.title = title; this.body = options.body; systemNotes.push(this); }
@@ -1857,6 +1858,132 @@ describe("agent settings", () => {
 
 // Reload without closing tabs: a quiet unload (not "disabled by the user") and a load.
 describe("reload in place", () => {
+  function visibilityFixture(t, hidden) {
+    const doc = new EventTarget();
+    doc.hidden = hidden;
+    const previous = window.document;
+    window.document = doc;
+    const events = [];
+    const cleanups = [];
+    const plugin = new SessionAtlasPlugin();
+    plugin.manifest = { id: "session-atlas", dir: "plug" };
+    plugin.register = (cleanup) => cleanups.push(cleanup);
+    plugin.app = { plugins: {
+      plugins: { "session-atlas": plugin },
+      disablePlugin: async () => events.push("off"),
+      loadManifest: async () => events.push(plugin.build),
+      enablePlugin: async () => events.push("on"),
+    } };
+    const unload = () => cleanups.splice(0).forEach((cleanup) => cleanup());
+    t.after(() => { unload(); window.document = previous; });
+    const show = (visible) => {
+      doc.hidden = !visible;
+      doc.dispatchEvent(new Event("visibilitychange"));
+    };
+    return { plugin, events, show, unload };
+  }
+
+  function pauseGroupSave(plugin) {
+    let finish, markSaving;
+    const saved = new Promise((resolve) => { finish = resolve; });
+    const saving = new Promise((resolve) => { markSaving = resolve; });
+    plugin.flushGroups = () => { markSaving(); return saved; };
+    return { saving, finish };
+  }
+
+  function countReloadTimers(t) {
+    const realTimeout = window.setTimeout;
+    let scheduled = 0;
+    window.setTimeout = (...args) => { scheduled++; return realTimeout(...args); };
+    t.after(() => { window.setTimeout = realTimeout; });
+    return () => scheduled;
+  }
+
+  it("a hidden reload waits and uses the newest build once", async (t) => {
+    const { plugin, events, show } = visibilityFixture(t, true);
+    const scheduled = countReloadTimers(t);
+    plugin.build = "first";
+    assert.equal(plugin.reloadInPlace(), true);
+    plugin.build = "newest";
+    assert.equal(plugin.reloadInPlace(), false);
+    show(false);
+    await sleep(150);
+    assert.equal(scheduled(), 0);
+    assert.deepEqual(events, []);
+    show(true);
+    show(true);
+    await sleep(150);
+    assert.deepEqual(events, ["off", "newest", "on"]);
+  });
+
+  it("hiding during the scheduled delay postpones the reload", async (t) => {
+    const { plugin, events, show } = visibilityFixture(t, false);
+    plugin.build = "updated";
+    plugin.flushGroups = async () => events.push("save");
+    assert.equal(plugin.reloadInPlace(), true);
+    show(false);
+    await sleep(150);
+    assert.deepEqual(events, []);
+    show(true);
+    await sleep(150);
+    assert.deepEqual(events, ["save", "off", "updated", "on"]);
+  });
+
+  it("hiding while the group save is in flight postpones the unload", async (t) => {
+    const { plugin, events, show } = visibilityFixture(t, false);
+    plugin.build = "updated";
+    const { saving, finish } = pauseGroupSave(plugin);
+    assert.equal(plugin.reloadInPlace(), true);
+    await saving;
+    show(false);
+    finish();
+    await sleep(150);
+    assert.deepEqual(events, []);
+    show(true);
+    await sleep(150);
+    assert.deepEqual(events, ["off", "updated", "on"]);
+  });
+
+  it("a failed group save stops that reload; a later request reloads once", async (t) => {
+    const { plugin, events, show } = visibilityFixture(t, false);
+    const errors = t.mock.method(console, "error", () => {});
+    plugin.build = "updated";
+    plugin.flushGroups = async () => { throw new Error("disk full"); };
+    assert.equal(plugin.reloadInPlace(), true);
+    await sleep(150);
+    assert.deepEqual(events, []);
+    assert.equal(errors.mock.callCount(), 1);
+    assert.equal(plugin.reloading, false);
+    plugin.flushGroups = async () => events.push("save");
+    assert.equal(plugin.reloadInPlace(), true);
+    show(false);
+    show(true);
+    await sleep(150);
+    assert.deepEqual(events, ["save", "off", "updated", "on"]);
+  });
+
+  it("unloading the pending instance cancels its reload", async (t) => {
+    const { plugin, events, show, unload } = visibilityFixture(t, true);
+    const scheduled = countReloadTimers(t);
+    assert.equal(plugin.reloadInPlace(), true);
+    unload();
+    show(true);
+    await sleep(150);
+    assert.equal(scheduled(), 0);
+    assert.deepEqual(events, []);
+  });
+
+  it("unloading during the group save cancels the rest of the reload", async (t) => {
+    const { plugin, events, unload } = visibilityFixture(t, false);
+    const { saving, finish } = pauseGroupSave(plugin);
+    assert.equal(plugin.reloadInPlace(), true);
+    await saving;
+    unload();
+    finish();
+    await sleep(150);
+    assert.deepEqual(events, []);
+  });
+
   let reloadOther = null;
   it("quiet unload and load, without the user flag, once", async () => {
     const calls = [];

@@ -27,6 +27,9 @@ const REGISTRY_FILE = path.join(process.env.XDG_STATE_HOME || path.join(os.homed
                                 "obsidian-agent-terminals", "resume.tsv");
 const MAX_SEND_CHARS = 20000;
 const ENTER_DELAY_MS = 150;     // Enter after a paste: otherwise the TUI may take it as part of the paste
+// Claude Code says "shell" when its prompt is idle and only a background shell command still runs:
+// a mail nudge may be typed then, as when idle.
+const NUDGEABLE = new Set(["idle", "shell"]);
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp)$/i;
 const MAX_IMAGES = 5;
 const IMAGE_ENTER_DELAY_MS = 300;   // per image: Claude Code reads the attachment file
@@ -52,6 +55,7 @@ export {
   REGISTRY_FILE,
   MAX_SEND_CHARS,
   ENTER_DELAY_MS,
+  NUDGEABLE,
   IMAGE_EXT,
   MAX_IMAGES,
   IMAGE_ENTER_DELAY_MS,

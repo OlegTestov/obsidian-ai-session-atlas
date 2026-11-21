@@ -6,6 +6,7 @@ import {
   IMAGE_ENTER_DELAY_MS,
   PASTE_START,
   PASTE_END,
+  NUDGEABLE,
 } from "./constants";
 import { cleanInput } from "./terminal";
 import { parseDialog, sameOption, textField, extractCommandOutput, squash } from "./dialog";
@@ -116,8 +117,8 @@ class InputMethods {
   }
 
   /**
-   * Types a notification line and Enter, only into an idle session with an empty prompt and no
-   * input in flight. Strictly true when it was typed. The paste and Enter go in one write, so no
+   * Types a notification line and Enter, only into a session whose prompt is idle (a background shell
+   * may still run) and empty, with no input in flight. Strictly true when it was typed. The paste and Enter go in one write, so no
    * timer could submit what the person types meanwhile.
    */
   async typeNudge(data, guard) {
@@ -128,7 +129,7 @@ class InputMethods {
     const stdin = await this.ptyInput(tab.leaf);
     if (!stdin) return false;
     const current = this.readAgentState(data.claudePid, tab.leaf);
-    if (current?.status !== "idle" || !current.sessionIds.includes(data.sessionId)
+    if (!NUDGEABLE.has(current?.status) || !current.sessionIds.includes(data.sessionId)
         || !this.emptyAgentPrompt(tab.leaf, current.agent) || this.recentInput(tab.leaf) || !guard()) return false;
     stdin.write(PASTE_START + text + PASTE_END + "\r");
     return true;

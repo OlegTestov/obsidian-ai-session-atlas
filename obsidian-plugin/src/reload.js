@@ -21,10 +21,34 @@ class ReloadMethods {
     const { id, dir } = this.manifest;
     if (plugins.plugins && plugins.plugins[id] !== this) return false;     // a reload is already under way
     this.reloading = true;
-    // Not from inside our own handler: unloading would cut it off midway.
-    window.setTimeout(async () => {
-      // A group change waiting for its debounced save is on disk before the new instance reads it.
-      if (typeof this.flushGroups === "function") await this.flushGroups();
+    const doc = window.document;
+    let timer = null;
+    let cancelled = false;
+    const stop = () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+      timer = null;
+      doc.removeEventListener("visibilitychange", schedule);
+    };
+    const reload = async () => {
+      if (doc.hidden) {
+        timer = null;
+        return;
+      }
+      try {
+        // A group change waiting for its debounced save is on disk before the new instance reads it.
+        if (typeof this.flushGroups === "function") await this.flushGroups();
+      } catch (error) {
+        // The old instance stays loaded; a later request may try again.
+        console.error("AI Session Atlas: reload stopped, the groups could not be saved", error);
+        stop();
+        this.reloading = false;
+        return;
+      }
+      if (cancelled || doc.hidden) {
+        timer = null;
+        return;
+      }
       await plugins.disablePlugin(id);
       // Obsidian reads manifests only at startup; without a reread the new instance (and the plugin
       // list) keeps the version Obsidian started with.
@@ -32,7 +56,15 @@ class ReloadMethods {
         try { await plugins.loadManifest(dir); } catch (error) { console.error("AI Session Atlas: could not reread the manifest", error); }
       }
       await plugins.enablePlugin(id);
-    }, 50);
+    };
+    const schedule = () => {
+      if (doc.hidden || timer !== null) return;
+      // Keep the old views and PTYs intact while hidden. Let the current command handler finish.
+      timer = window.setTimeout(reload, 50);
+    };
+    doc.addEventListener("visibilitychange", schedule);
+    this.register(stop);
+    schedule();
     return true;
   }
 

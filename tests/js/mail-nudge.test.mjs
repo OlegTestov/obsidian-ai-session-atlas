@@ -240,6 +240,25 @@ test("busy by live state while Active still says idle: nothing, then one nudge",
   assert.deepEqual(r.claude.writes, [LINE(1, "codex", "claude")]);
 });
 
+test("idle prompt with a background shell running (\"shell\"): nudged, in Active and in the live state", async t => {
+  const r = rig(t);
+  r.mail("claude", "codex");
+  r.active.claude = "shell";
+  r.claude.status = "shell";
+  await r.poll();
+  assert.deepEqual(r.claude.writes, [LINE(1, "codex", "claude")]);
+});
+
+test("\"shell\" with text in the prompt: nothing is typed", async t => {
+  const r = rig(t);
+  r.mail("claude", "codex");
+  r.active.claude = "shell";
+  r.claude.status = "shell";
+  r.claude.draft = true;
+  await r.poll();
+  assert.deepEqual(r.claude.writes, []);
+});
+
 test("a dialog (waiting) gets nothing, in Active and in the live state", async t => {
   const r = rig(t);
   r.mail("claude", "codex");

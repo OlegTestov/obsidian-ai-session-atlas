@@ -5,6 +5,7 @@ import { Notice } from "obsidian";
 import { DIRECTORY, ROUTE, MailRoutes, tabRoutes } from "./mail-routes";
 import { MailLimits } from "./mail-limits";
 import { shellQuote } from "./agents";
+import { NUDGEABLE } from "./constants";
 
 const NAME = /^[a-z0-9][a-z0-9._-]{0,39}$/;
 const FILE = /^\d{13}-[0-9a-f]{12}\.json$/;
@@ -119,7 +120,7 @@ class MailNudger {
   }
 
   async nudge(batch, { root, sessions, routes }) {
-    const matches = sessions.filter(s => s?.session_id === batch.id && s.status === "idle"
+    const matches = sessions.filter(s => s?.session_id === batch.id && NUDGEABLE.has(s.status)
       && (!batch.agent || s.agent === batch.agent));
     if (matches.length !== 1) return false;
     const session = matches[0];

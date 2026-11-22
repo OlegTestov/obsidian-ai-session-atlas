@@ -158,8 +158,8 @@ test("the mail folder setting says a custom folder is created when its parent ex
   for (const [lang, text] of Object.entries({ en: STRINGS.en["mail.root.desc"], ru: STRINGS.ru["mail.root.desc"] })) {
     assert.doesNotMatch(text, /must already exist|должна уже существовать/, lang);
   }
-  assert.match(STRINGS.en["mail.root.desc"], /created if the folder it sits in exists/);
-  assert.match(STRINGS.ru["mail.root.desc"], /создаётся, если существует папка, в которой она лежит/);
+  assert.match(STRINGS.en["mail.root.desc"], /creates your custom mail folder if its parent exists/);
+  assert.match(STRINGS.ru["mail.root.desc"], /создаст папку почты, если её родительская папка уже существует/);
 });
 
 test("the manual setup rows and texts are gone in both languages", () => {

@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from atlas import actions, db, enrich, index, prompts, runner, search
+from atlas import actions, autoclassify, db, enrich, index, prompts, runner, search
 from tests.conftest import user_text, write_config
 
 
@@ -498,7 +498,25 @@ def test_index_status_for_the_setup_screen(live_server, write_session):
     write_session("-Users-u-Code-demo", [user_text("привет")])
     with urllib.request.urlopen(f"{base}/api/index-status", timeout=20) as r:
         data = json.loads(r.read())
-    assert set(data) == {"sessions", "indexing"} and isinstance(data["sessions"], int)
+    assert set(data) == {"sessions", "indexing", "auto_classify"}
+    assert isinstance(data["sessions"], int)
+    assert data["auto_classify"]["enabled"] is False
+
+
+def test_index_status_survives_corrupt_classification_state(live_server, capsys):
+    base, _ = live_server
+    with db.connect() as conn:
+        db.set_meta(conn, autoclassify.KEY_LAST, "not a timestamp")
+    for _ in range(2):
+        with urllib.request.urlopen(f"{base}/api/index-status", timeout=20) as response:
+            assert response.status == 200
+            data = json.load(response)
+        assert set(data) == {"sessions", "indexing"}
+        assert isinstance(data["sessions"], int)
+        assert isinstance(data["indexing"], bool)
+    assert capsys.readouterr().err.count("not a timestamp") == 1
+    with db.connect() as conn:
+        assert db.get_meta(conn, autoclassify.KEY_LAST) == "not a timestamp"
 
 
 def test_server_serves_every_file_the_page_loads(live_server):

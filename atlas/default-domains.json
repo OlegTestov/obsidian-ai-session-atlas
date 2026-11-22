@@ -1,0 +1,5 @@
+[
+  {"id": "work", "description": "work for an employer or clients"},
+  {"id": "projects", "description": "own products, tools and experiments"},
+  {"id": "personal", "description": "personal life: health, family, money, documents"}
+]

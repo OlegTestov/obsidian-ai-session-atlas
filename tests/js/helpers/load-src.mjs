@@ -24,6 +24,7 @@ function buildOnce(extraAgents) {
   // Bare imports such as @xterm/xterm resolve from the repository's node_modules.
   fs.symlinkSync(path.join(ROOT, "node_modules"), path.join(dir, "node_modules"), "dir");
   fs.mkdirSync(path.join(dir, "atlas"));
+  fs.copyFileSync(path.join(ROOT, "atlas", "default-domains.json"), path.join(dir, "atlas", "default-domains.json"));
   const agents = JSON.parse(fs.readFileSync(path.join(ROOT, "atlas", "agents.json")));
   fs.writeFileSync(path.join(dir, "atlas", "agents.json"), JSON.stringify([...agents, ...extraAgents]));
   esbuild.buildSync({

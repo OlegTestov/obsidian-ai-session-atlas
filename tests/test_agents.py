@@ -250,6 +250,8 @@ def test_invalid_ai_agent_is_reported_and_recovers_after_settings_change(atlas_e
     assert code == 200 and status["ai_agent"] == "mistyped"
     message = status["ai_agent_error"]
     assert "ai_agent" in message and "mistyped" in message and "settings" in message
+    assert status["auto_classify"]["enabled"] is True
+    assert status["auto_classify"]["paused"] == message
     for path, body in [("/api/preview", {"session_id": UUID}),
                        ("/api/classify/preview", {}), ("/api/auto-classify", {"enabled": True})]:
         assert request(path, body) == (400, {"error": message})
@@ -262,6 +264,7 @@ def test_invalid_ai_agent_is_reported_and_recovers_after_settings_change(atlas_e
     write_config(atlas_env["home"], {"ai_agent": "claude"})
     code, status = request("/api/index-status")
     assert code == 200 and "ai_agent_error" not in status
+    assert status["auto_classify"]["enabled"] is False
     assert request("/api/classify/preview", {})[0] == 200
     write_config(atlas_env["home"], {"ai_agent": False})      # falsy meant auto before the registry
     code, status = request("/api/index-status")

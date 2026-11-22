@@ -242,7 +242,8 @@ class RuntimeMethods {
       if (h && h.app === "session-atlas") return { ok: true, reason: null };
       if (!this.serverProcess) break;               // crashed on start: the reason is in server.log
     }
-    return { ok: false, reason: this.t("server.failedLog", { log: path.join(this.dataDir(), "server.log") }) };
+    return { ok: false, reason: this.t("server.failedLog", { log: path.join(this.dataDir(), "server.log") }),
+             shortReason: this.t("setup.serverFailed") };
   }
 
   async reapOrphanIndexers() {

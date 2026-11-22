@@ -7,6 +7,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.16.0] - 2026-11-22
+
+### Changed
+
+- The settings tab is reorganised: Status, General, Agents, Catalog, AI features, Notifications, then Advanced (integrations, agent launch, models, mail, diagnostics). Labels and descriptions are shorter and consistent in English and Russian; catalog fields state their format; Russian shows the built-in categories in Russian.
+- Status shows whether the catalog is ready and whether Claude Code and Codex are found. When the catalog is down, the reason and a Restart catalog button are in the same row. Paths and versions moved to Advanced: diagnostics.
+- The AI section shows whether automatic classification is on, off or paused and where to change it.
+- The What's new window shows the new settings.
+
+### Fixed
+
+- Leaving a categories field without changes no longer erases the built-in categories.
+- Text fields save once when you leave them, and an edit is saved even when Settings is closed right away. A failed save shows a notice and keeps your text; an invalid path or reasoning effort shows a notice and restores the previous value.
+- The macOS notification and notice duration settings are disabled while notifications are off; their values are kept.
+- An `ai_agent` value the server treats as automatic (for example `false`) is no longer shown as invalid.
+- The settings status polls the catalog every 30 s while idle instead of every 10 s.
 ## [2.15.1] - 2026-11-21
 
 ### Changed

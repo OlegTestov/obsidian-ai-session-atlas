@@ -15,6 +15,7 @@ import os
 import re
 import threading
 import time
+from pathlib import Path
 
 DEFAULTS = {
     "language": "en",                 # topics, descriptions and handoffs: en | ru; the plugin writes its own
@@ -24,11 +25,7 @@ DEFAULTS = {
     "workspace_roots": ["~/Code", "~/Projects", "~/Developer", "~/src"],
     "workspace_containers": [],       # ["~/Code/MCPs"]
     # Work domains for filters and the classifier. Empty: no domains are assigned.
-    "domains": [
-        {"id": "work", "description": "work for an employer or clients"},
-        {"id": "projects", "description": "own products, tools and experiments"},
-        {"id": "personal", "description": "personal life: health, family, money, documents"},
-    ],
+    "domains": json.loads(Path(__file__).with_name("default-domains.json").read_text(encoding="utf-8")),
     "vault_domain_rules": [],         # [["Work", "work"], …]: vault area → domain
     "project_domains": {},            # {"claude-config": "tools"}: project → domain
     "sensitive": {"vault_areas": [], "projects": []},   # never sent to the model

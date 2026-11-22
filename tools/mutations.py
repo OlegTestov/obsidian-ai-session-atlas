@@ -20,6 +20,12 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 MUT = [
+ ("settings round 2 R1: index status omits automatic classification", "atlas/server.py",
+  '                    _add_classification_status(conn, status)\n', ''),
+ ("settings round 3: corrupt classification state fails index status", "atlas/server.py",
+  '    except Exception as exc:\n        error = f"{type(exc).__name__}: {exc}"', '    except Exception:\n        raise'),
+ ("settings round 3: every status poll logs the same classification error", "atlas/server.py",
+  'if error is not None and error != _classification_status_error:', 'if error is not None:'),
  ("pending card: a shared-daemon client gets a placeholder that never resolves", "atlas/codex_procs.py",
   "    return not shared_daemon or \"--no-daemon\" in words", "    return True"),
  ("pending card: a --no-daemon tab loses its placeholder while the daemon runs", "atlas/codex_procs.py",
@@ -1584,8 +1590,8 @@ JS_MUT = [
   "input && !(kind === \"claude\" && blocked) ?", "input ?"),
  ("review213: any managed settings file blocks the flags", "obsidian-plugin/src/mail-launch.js",
   ".disableSideloadFlags === true;", ".disableSideloadFlags !== undefined;"),
- ("review213: a new Python path keeps the old mail flags", "obsidian-plugin/src/settings-server.js",
-  "if (key === \"pythonPath\" &&", "if (key === \"shellPath\" &&"),
+ ("review213: a new Python path keeps the old mail flags", "obsidian-plugin/src/settings-status.js",
+  '}, () => plugin.writeMailArgs?.()),', '}),'),
  ("review213: an earlier saved off stays off", "obsidian-plugin/src/main.js",
   "    if (!saved.mailOnByDefault) {\n", "    if (false) {\n"),
  ("review213: the one-time switch on is not saved", "obsidian-plugin/src/main.js",
@@ -1645,6 +1651,74 @@ JS_MUT = [
   ('language: the plugin choice does not reach config', 'obsidian-plugin/src/settings.js', '            plugin.writeServerConfig();          // topics', '            // topics'),
   ('defaults: AI toggle off without a setting', 'obsidian-plugin/src/settings-server.js', 'toggle.setValue(cfg().llm_enabled !== false)', 'toggle.setValue(!!cfg().llm_enabled)'),
   ('defaults: plugin language English', 'obsidian-plugin/src/settings.js', 'explorerClicks: false, language: "auto",', 'explorerClicks: false, language: "en",'),
+  ('settings tab F1: missing categories display as empty', 'obsidian-plugin/src/settings-server.js',
+   'const { domains } = cfg();', 'const { domains = [] } = cfg();'),
+  ('settings tab F2: untouched text gets saved', 'obsidian-plugin/src/settings-fields.js',
+   'let previous = draft?.previous ?? text.getValue();', 'let previous;'),
+  ('settings tab F2: text is saved while typing', 'obsidian-plugin/src/settings-fields.js',
+   'let previous = draft?.previous ?? text.getValue();', 'text.onChange(save);\n      let previous = draft?.previous ?? text.getValue();'),
+  ('settings tab F3: notification controls stay enabled', 'obsidian-plugin/src/settings.js',
+   'const disabled = !plugin.settings.notify;', 'const disabled = false;'),
+  ('settings tab F4: invalid AI agent warning also appears in Status', 'obsidian-plugin/src/settings-status.js',
+   '    if (info) pollIndex(id);\n    if (!up)',
+   '    if (info) pollIndex(id);\n    if (info?.ai_agent_error) row(t("ai.agent"), info.ai_agent_error);\n    if (!up)'),
+  ('settings tab F4: invalid AI agent dropdown hides the warning', 'obsidian-plugin/src/settings-server.js',
+   'dropdown.addOption("", plugin.t("ai.agent.invalid", { value: JSON.stringify(choice) }));', 'dropdown.addOption("", "");'),
+  ('settings round 2 C1: hide loses a focused edit', 'obsidian-plugin/src/settings.js',
+   '    this.focusedText?.flush();\n', ''),
+  ('settings round 2 C2: refresh loses a focused edit', 'obsidian-plugin/src/settings.js',
+   '[field?.flush(), ...this.textSaves]', '[undefined, ...this.textSaves]'),
+  ('settings round 2 C3: a failed save marks the field as saved', 'obsidian-plugin/src/settings-fields.js',
+   '            await save(next);', '            previous = next;\n            await save(next);'),
+  ('settings round 2 C3: refresh erases a failed edit', 'obsidian-plugin/src/settings-fields.js',
+   '    const value = draft?.raw ?? getValue() ?? "";', '    const value = getValue() ?? "";'),
+  ('settings round 2 C4: Catalog hides the start problem', 'obsidian-plugin/src/settings-status.js',
+   'reason ? `${t("setup.serverDown")} · ${reason}` : t("setup.serverDown")', 't("setup.serverDown")'),
+  ('settings round 2 C4: Limits hides a foreign status line', 'obsidian-plugin/src/settings-advanced.js',
+   'plugin.t(`setup.limits.${state}`)', 'plugin.t("setup.limits.desc")'),
+  ('settings round 2 C5: idle status polls every ten seconds', 'obsidian-plugin/src/settings-status.js',
+   'index?.indexing ? 1500 : 30000', 'index?.indexing ? 1500 : 10000'),
+  ('settings round 2 C6: only null and empty strings display as Automatic', 'obsidian-plugin/src/settings-server.js',
+   'let selected = !choice || emptyContainer ? "auto" : choice;', 'let selected = choice == null || choice === "" ? "auto" : choice;'),
+  ('settings round 2 C6: repeats of the same agent write the config', 'obsidian-plugin/src/settings-server.js',
+   'if (value === selected || !AI_AGENTS.includes(value)) return;', 'if (!AI_AGENTS.includes(value)) return;'),
+  ('settings round 2 R1: the classification note never uses status', 'obsidian-plugin/src/settings-server.js',
+   'const auto = info?.auto_classify;', 'const auto = null;'),
+  ('settings round 2 R3: invalid effort silently falls back', 'obsidian-plugin/src/settings-server.js',
+   'if (extra || (effort && !F.EFFORTS.includes(effort))) {', 'if (false) {'),
+  ('settings round 2 R3: the field keeps unnormalized text after saving', 'obsidian-plugin/src/settings-fields.js',
+   '          if (text.getValue() === raw && raw !== previous) text.setValue(previous);\n', ''),
+  ('settings round 2 R4: an enabled Codex hook hides the /hooks instruction', 'obsidian-plugin/src/settings-advanced.js',
+   '    if (state === "ours") setting.setDesc(plugin.t("codexHook.approve"));\n', ''),
+  ('settings round 2 R5: a ready empty catalog shows a count', 'obsidian-plugin/src/settings-status.js',
+   'info.sessions === 0 ? "setup.indexEmpty" : "setup.indexed"', '"setup.indexed"'),
+  ('settings round 2 R6: Agent Mail is missing search aliases', 'obsidian-plugin/src/settings.js',
+   '        aliases: ["почта", "почта между агентами", "Agent Mail", "mail"],\n', ''),
+  ('settings round 2 R10: built-in categories ignore the display language', 'obsidian-plugin/src/settings-server.js',
+   'defaultDomains.map(({ id }) => `${id} — ${t(`cfg.domains.default.${id}`)}`).join("\\n")', 'F.domainsToText(defaultDomains)'),
+  ('settings round 3: a failed save keeps the tab from refreshing', 'obsidian-plugin/src/settings.js',
+   'this.flushText(cycle).then(() => {', 'this.flushText(cycle).then(saved => {\n      if (saved === false) return;'),
+  ('settings round 3: a restored failed edit has the wrong saved baseline', 'obsidian-plugin/src/settings-fields.js',
+   'let previous = draft?.previous ?? text.getValue();', 'let previous = text.getValue();'),
+  ('settings round 3: refresh reopens a closed legacy tab', 'obsidian-plugin/src/settings.js',
+   '    const cycle = this.openCycle;\n    if (!cycle) return;',
+   '    const cycle = this.openCycle ??= { failedText: new Map() };'),
+  ('settings round 3: an in-flight refresh redraws a hidden or reopened tab', 'obsidian-plugin/src/settings.js',
+   '    cycle.refreshing ||= this.flushText(cycle).then(() => {\n      if (cycle !== this.openCycle) return;',
+   '    cycle.refreshing ||= this.flushText(cycle).then(() => {'),
+  ('settings round 3: a null poll resets the Catalog state', 'obsidian-plugin/src/settings-status.js',
+   '      } else {\n        rescan.setDisabled(true);\n        await refresh().catch(reportEnvironmentError);',
+   '      } else {\n        updateIndex(info);\n        await refresh().catch(reportEnvironmentError);'),
+  ('settings round 3: restart errors escape the button handler', 'obsidian-plugin/src/settings-status.js',
+   '    new Notice(plugin.t("setup.restartFailed", { error: error?.message ?? String(error) }));', '    throw error;'),
+  ('settings round 3: edits to Russian categories drop their IDs', 'obsidian-plugin/src/settings-server.js',
+   'v => save({ domains: F.textToDomains(v) }),',
+   'v => save({ domains: F.textToDomains(v).map(({ description }) => ({ description })) }),'),
+  ('settings round 3: no classification update arrives when the status is missing', 'obsidian-plugin/src/settings-status.js',
+   '      for (const update of indexListeners) update(info);',
+   '      if (info?.auto_classify) for (const update of indexListeners) update(info);'),
+  ('settings round 3: refresh does not flush text typed during a save', 'obsidian-plugin/src/settings.js',
+   '    } while (field !== this.focusedText || value !== field?.value());', '    } while (false);'),
   ('background runs: off by default', 'web/js/stats-logic.js', 'metric: "cost", auto: true }', 'metric: "cost", auto: false }'),
   ('background runs: no one-time migration', 'web/js/stats-logic.js', 'const migrated = prefs.autoV !== STATS_PREFS_V;', 'const migrated = false;'),
   ('background runs: migration overrides the user choice every time', 'web/js/stats-logic.js', 'const migrated = prefs.autoV !== STATS_PREFS_V;', 'const migrated = true;'),
@@ -2679,8 +2753,8 @@ JS_MUT = [
   '        if (error?.code !== "EEXIST") throw error;\n      }\n', '        if (error?.code !== "EEXIST") throw error;\n      }\n      if (!createRoot) return;\n'),
  ("mail: the default root is no longer created", "obsidian-plugin/src/mail-nudge.js",
   "root === mailRoot({})", "false"),
- ("mail: the folder setting accepts any text on blur", "obsidian-plugin/src/settings.js",
-  "if (value && !validMailRoot(value)) {", "if (false) {"),
+ ("mail: the folder setting accepts any text on blur", "obsidian-plugin/src/settings-advanced.js",
+  '      validate: value => value && !validMailRoot(value) ? plugin.t("mail.root.invalid") : null,\n', ''),
  ("mail: the home folder is a valid mail root", "obsidian-plugin/src/mail-nudge.js",
   "dir !== path.normalize(os.homedir())", "true"),
  ("mail: the disk root is a valid mail root", "obsidian-plugin/src/mail-nudge.js",
@@ -2771,13 +2845,13 @@ JS_MUT = [
  ("mail launch: mail is off by default", "obsidian-plugin/src/settings.js",
   "wakeOnMail: true,", "wakeOnMail: false,"),
  ("mail launch: the wake switch leaves the flags stale", "obsidian-plugin/src/settings.js",
-  "        if (after) after();\n", ""),
- ("mail launch: a new mail folder leaves the flags stale", "obsidian-plugin/src/settings.js",
-  "            plugin.writeMailArgs();\n", ""),
+  "        await after?.();\n", ""),
+ ("mail launch: a new mail folder leaves the flags stale", "obsidian-plugin/src/settings-advanced.js",
+  '}, () => plugin.writeMailArgs()),', '}),'),
  ("mail launch: the flags are not prepared at start", "obsidian-plugin/src/main.js",
   "this.app.workspace.onLayoutReady(() => this.writeMailArgs()\n      .then(", "this.app.workspace.onLayoutReady(() => Promise.resolve()\n      .then("),
  ("mail launch: the manual setup row is back", "obsidian-plugin/src/i18n.js",
-  '    "mail.root": "Agent mail folder",', '    "mail.setup": "Connect Agent Mail",\n    "mail.root": "Agent mail folder",'),
+  '    ...settingsEn,', '    ...settingsEn,\n    "mail.setup": "Connect Agent Mail",'),
  ('phase0a: an unsupported terminal falls back to Claude',
   'obsidian-plugin/src/agents.js',
   'if (!TERMINALS.has(kind)) throw new UnknownAgent(`Agent ${kind} does not support terminal tabs`);',
@@ -2878,7 +2952,13 @@ def _run(cmd):
 
 
 def run_python(name=None):
-    focused = ["tests/test_codex_active.py", "-k", "pending_codex"] if (name or "").startswith("pending card:") else []
+    focused = []
+    if (name or "").startswith("pending card:"):
+        focused = ["tests/test_codex_active.py", "-k", "pending_codex"]
+    elif (name or "").startswith("settings round 2"):
+        focused = ["tests/test_actions_security.py", "-k", "index_status_for_the_setup_screen"]
+    elif (name or "").startswith("settings round 3"):
+        focused = ["tests/test_actions_security.py", "-k", "index_status_survives_corrupt_classification_state"]
     return _run([sys.executable, "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider", *focused])
 
 
@@ -2899,6 +2979,10 @@ def run_node(path, name=None):
         tests = ["--test-name-pattern=cleanup selects only", "tests/js/indexer-cleanup.test.mjs"]
     elif name and name.startswith(("phase0a:", "phase0bc:")):
         tests = ["tests/js/agent-registry.test.mjs"]
+    elif name and name.startswith("settings tab F"):
+        tests = ["tests/js/settings-discovery.test.mjs"]
+    elif name and name.startswith(("settings round 2", "settings round 3")):
+        tests = ["tests/js/settings-fixes.test.mjs", "tests/js/settings-lifecycle.test.mjs"]
     else:
         tests = js_tests(path)
     # Force-exit: a mutant may leave a timer running. It can cut the TAP tail on macOS, so only the

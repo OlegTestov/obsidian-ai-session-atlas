@@ -1,32 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import Module from "node:module";
-import { loadSrc } from "./helpers/load-src.mjs";
-const original=Module._load;
-class Tab { constructor(app,plugin){this.app=app;this.plugin=plugin;} }
-Module._load=(r,p,i)=>r==="obsidian"?{PluginSettingTab:Tab, Setting:class{},Notice:class{}}:r==="electron"?{}:original(r,p,i);
-const {AtlasSettingTab,DEFAULT_SETTINGS}=loadSrc("settings");
-Module._load=original;
-function context(){
- const saved=[],effects=[], config={models:{}};
- const plugin={settings:JSON.parse(JSON.stringify(DEFAULT_SETTINGS)),t:k=>k,
-  readServerConfig:()=>config,writeServerConfig:cfg=>{Object.assign(config,cfg||{});effects.push(cfg||"config");},agentEnabled:()=>true,
-  saveData:async data=>saved.push(JSON.parse(JSON.stringify(data))),
-  register(){},refreshAgentButtons:()=>effects.push("buttons"),writeAgentArgs:()=>effects.push("args"),writeMailArgs:()=>effects.push("mail"),
-  codexHooksPath:()=>"/tmp/hooks.json",codexHookState:()=>({state:"off"}),setCodexHook:async on=>{effects.push("hook:"+on);return{ok:true};}};
- const tab=new AtlasSettingTab({},plugin);
- tab.update=()=>effects.push("refresh");
- return {tab,plugin,saved,effects,config};
-}
-const flat=defs=>defs.flatMap(d=>d.items?flat(d.items):[d]);
-function controls(def){
- const handlers=[];handlers.values=[];
- const control={setValue(value){handlers.values.push(value);return this;},setLimits(){return this;},setDynamicTooltip(){return this;},
-  setPlaceholder(){return this;},addOption(){return this;},setDisabled(){return this;},onChange(fn){handlers.push(fn);return this;}};
- const row={addToggle(fn){fn(control);return this;},addText(fn){fn(control);return this;},
-  addSlider(fn){fn(control);return this;},addDropdown(fn){fn(control);return this;}};
- assert.equal(def.render(row),undefined,"native render cleanup must be a function or undefined");return handlers;
-}
+import { context, flat, controls, Element, STRINGS, translate } from "./helpers/settings.mjs";
+
 describe("settings discovery",()=>{
  it("cached server definitions read current values whenever settings reopen",async()=>{
   const {tab,config}=context();const def=flat(tab.getSettingDefinitions()).find(d=>d.name==="ai.enabled");
@@ -34,9 +9,10 @@ describe("settings discovery",()=>{
   await first[0](false);assert.equal(config.llm_enabled,false);
   assert.equal(controls(def).values[0],false);
  });
- it("refresh falls back to display on hosts without the settings-search API",()=>{
-  const {tab}=context();tab.update=undefined;let displayed=0;tab.display=()=>displayed++;
-  tab.refresh();assert.equal(displayed,1);
+ it("refresh falls back to display on hosts without the settings-search API",async()=>{
+  const {tab}=context({legacy:true});tab.display();
+  let displayed=0;tab.display=()=>displayed++;
+  await tab.refresh();assert.equal(displayed,1);
  });
  it("provides localized searchable definitions for plugin and server settings",()=>{
   const {tab}=context();const defs=flat(tab.getSettingDefinitions());
@@ -50,9 +26,12 @@ describe("settings discovery",()=>{
  });
  it("declarative agent controls preserve persistence and runtime side effects",async()=>{
   const {tab,plugin,saved,effects}=context();
-  const def=flat(tab.getSettingDefinitions()).find(d=>d.name==="settings.agent.codex");
-  const handlers=controls(def);
-  await handlers[0](false);await handlers[1]("--example");
+  const defs=flat(tab.getSettingDefinitions());
+  await controls(defs.find(d=>d.name==="settings.agent.codex"))[0](false);
+  const args=controls(defs.find(d=>d.name==="settings.args.codex"));
+  await args.type("--example");
+  assert.deepEqual(effects,["buttons"]);
+  await args.blur();await args.blur();
   assert.equal(plugin.settings.agents.codex,false);
   assert.equal(plugin.settings.agentArgs.codex,"--example");
   assert.equal(saved.length,2);assert.deepEqual(effects,["buttons","args"]);
@@ -73,7 +52,9 @@ describe("settings discovery",()=>{
  it("changing the language refreshes native settings search definitions",async()=>{
   const {tab,plugin,effects}=context();
   const def=flat(tab.getSettingDefinitions()).find(d=>d.name==="settings.language");
-  await controls(def)[0]("ru");assert.equal(plugin.settings.language,"ru");
+  const picker=controls(def);
+  assert.equal(picker.values[0],"auto");
+  await picker[0]("ru");assert.equal(plugin.settings.language,"ru");
   assert.deepEqual(effects,["config","refresh"]);               // config.json takes the new language too
  });
  it("the mail folder is saved on blur only, and only when it is a usable absolute path",async()=>{
@@ -96,13 +77,148 @@ describe("settings discovery",()=>{
   assert.equal(defs.some(d=>/^mail\.setup/.test(d.name)),false);   // no manual connect row
   await controls(defs.find(d=>d.name==="mail.wake"))[0](false);
   assert.deepEqual(effects,["mail"]);
-  let value="/Users/me/mailbox",blur=null;
-  defs.find(d=>d.name==="mail.root").render({addText(fn){fn({setPlaceholder(){return this;},setValue(){return this;},
-   getValue:()=>value,inputEl:{addEventListener:(t,f)=>{if(t==="blur")blur=f;}}});return this;}});
-  await blur();assert.deepEqual(effects,["mail","mail"]);
-  await controls(defs.find(d=>d.name==="adv.python"))[0]("/opt/python3");
+  const change=async (key,value)=>{
+   const field=controls(defs.find(d=>d.name===key));
+   await field.type(value);await field.blur();
+  };
+  await change("mail.root","/Users/me/mailbox");assert.deepEqual(effects,["mail","mail"]);
+  await change("adv.python","/opt/python3");
   assert.deepEqual(effects,["mail","mail","mail"]);
-  await controls(defs.find(d=>d.name==="adv.shell"))[0]("/bin/zsh");
+  await change("adv.shell","/bin/zsh");
   assert.deepEqual(effects,["mail","mail","mail"]);
  });
+});
+
+describe("settings regressions",()=>{
+ it("F1 displays effective categories and leaving them untouched preserves an absent key",async()=>{
+  const {tab,config,effects}=context();
+  const def=flat(tab.getSettingDefinitions()).find(d=>d.name==="cfg.domains");
+  const categories=controls(def);
+  assert.match(categories.values[0],/^work — .+\nprojects — .+\npersonal — .+$/);
+  await categories.blur();
+  assert.equal(Object.hasOwn(config,"domains"),false);
+  assert.deepEqual(effects,[]);
+  await categories.type("");await categories.blur();
+  assert.deepEqual(config.domains,[]);
+  assert.equal(controls(def).values[0],"","an explicitly empty list stays empty");
+  await categories.blur();assert.equal(effects.length,1);
+ });
+
+ it("F2 skips untouched fields and saves edits only once on blur",async()=>{
+  const {tab,config,plugin,saved,effects}=context();
+  const defs=flat(tab.getSettingDefinitions());
+  for(const key of ["cfg.vaults","cfg.roots","cfg.domains","cfg.rules","cfg.sensitive","cfg.tickets",
+   "ai.model.classification","ai.model.catalog_summary","ai.model.handoff","ai.codexModel","codexHook.home","mail.root"]){
+   const field=controls(defs.find(d=>d.name===key));
+   await field.blur();
+   assert.deepEqual(effects,[],key);
+  }
+  assert.deepEqual(config,{models:{}});
+  for(const [label,key,value] of [["mail.script","agentMailScript","/tmp/mail.py"],
+   ["adv.python","pythonPath","/opt/python3"],["adv.shell","shellPath","/bin/zsh"]]){
+   const field=controls(defs.find(d=>d.name===label));
+   const count=saved.length;
+   await field.type(value);
+   assert.equal(saved.length,count,`${label} must wait for blur`);
+   await field.blur();assert.equal(plugin.settings[key],value);
+   await field.blur();assert.equal(saved.length,count+1,`${label} must save exactly once`);
+  }
+ });
+
+ it("F3 disables both notification controls and preserves their values",async()=>{
+  const {tab,plugin,saved}=context();
+  Object.assign(plugin.settings,{systemNotify:true,noticeHold:"sticky"});
+  const defs=flat(tab.getSettingDefinitions());
+  const field=key=>controls(defs.find(d=>d.name===key));
+  await field("settings.notify")[0](false);
+  for(const [key,value] of [["settings.systemNotify",true],["settings.noticeHold","sticky"]]){
+   const control=field(key);
+   assert.equal(control.disabled,true);
+   assert.equal(control.values[0],value);
+   assert.equal(control.desc,"settings.notify.disabled");
+  }
+  assert.equal(saved.at(-1).systemNotify,true);assert.equal(saved.at(-1).noticeHold,"sticky");
+  await field("settings.notify")[0](true);
+  assert.equal(field("settings.systemNotify").disabled,false);
+  assert.equal(field("settings.noticeHold").disabled,false);
+ });
+
+ it("F4 puts the invalid AI agent warning by its dropdown alone",async()=>{
+  const {tab,plugin,config}=context();
+  config.ai_agent="invalid";
+  plugin.atlasRequest=async()=>({status:200,data:{sessions:3,indexing:false,ai_agent_error:"invalid AI agent from server"}});
+  const defs=flat(tab.getSettingDefinitions());
+  const status=new Element();
+  const cleanup=defs.find(d=>d.name==="setup.index").render({settingEl:status});
+  await new Promise(resolve=>setImmediate(resolve));
+  cleanup();
+  assert.match(JSON.stringify(status),/setup.indexed/);
+  assert.doesNotMatch(JSON.stringify(status),/invalid AI agent from server/);
+  const picker=controls(defs.find(d=>d.name==="ai.agent"));
+  assert.deepEqual(picker.options.at(-1),["","ai.agent.invalid"]);
+  assert.equal(picker.values[0],"");
+  await picker[0]("codex");
+  assert.equal(config.ai_agent,"codex");
+ });
+});
+
+// The settings keys and controls shipped in 2.15.1, matched to their current definitions.
+const MASTER_CONTROLS={
+ language:["settings.language","dropdown"],showWhatsNew:["updates.setting","toggle"],explorerClicks:["settings.explorer","toggle"],
+ "agents.claude":["settings.agent.claude","toggle"],"agents.codex":["settings.agent.codex","toggle"],
+ loadAgentTabs:["settings.loadAgentTabs","toggle"],terminalFontSize:["settings.fontSize","slider"],
+ notify:["settings.notify","toggle"],systemNotify:["settings.systemNotify","toggle"],noticeHold:["settings.noticeHold","dropdown"],
+ wakeOnMail:["mail.wake","toggle"],llm_enabled:["ai.enabled","toggle"],ai_agent:["ai.agent","dropdown"],
+ sensitive:["cfg.sensitive","area"],vaults:["cfg.vaults","area"],workspace_roots:["cfg.roots","area"],domains:["cfg.domains","area"],
+ vault_domain_rules:["cfg.rules","area"],ticket_prefixes:["cfg.tickets","text"],statusLine:["setup.limits","toggle"],
+ "hooks.PermissionRequest":["codexHook","toggle"],codexHome:["codexHook.home","text"],
+ "agentArgs.claude":["settings.args.claude","text"],"agentArgs.codex":["settings.args.codex","text"],shellPath:["adv.shell","text"],
+ "models.classification":["ai.model.classification","text"],"models.catalog_summary":["ai.model.catalog_summary","text"],
+ "models.handoff":["ai.model.handoff","text"],force_1m:["ai.force1m","toggle"],codex_model:["ai.codexModel","text"],
+ agentMailRoot:["mail.root","text"],agentMailScript:["mail.script","text"],pythonPath:["adv.python","text"],
+};
+
+it("settings layout keeps all master controls in the specified section and row order",()=>{
+ const {tab}=context();
+ const defs=tab.getSettingDefinitions();
+ assert.deepEqual(defs.map(def=>[def.heading||def.name,def.items?.map(row=>row.name)]),[
+  ["setup.heading",["setup.index"]],
+  ["settings.generalHeading",["settings.language","updates.setting","settings.explorer"]],
+  ["settings.agentsHeading",["settings.agent.claude","settings.agent.codex","settings.loadAgentTabs","settings.fontSize","mail.wake"]],
+  ["cfg.heading",["cfg.vaults","cfg.roots","cfg.domains","cfg.rules","cfg.tickets"]],
+  ["ai.heading",["ai.enabled","ai.agent","cfg.sensitive","ai.classification"]],
+  ["settings.notificationsHeading",["settings.notify","settings.systemNotify","settings.noticeHold"]],
+  ["adv.integrations",["adv.defaults","setup.limits","codexHook","codexHook.home"]],
+  ["adv.launch",["settings.args.claude","settings.args.codex","adv.shell"]],
+  ["adv.models",["ai.model.classification","ai.model.catalog_summary","ai.model.handoff","ai.force1m","ai.codexModel"]],
+  ["adv.mail",["mail.root","mail.script"]],
+  ["adv.diagnostics",["setup.macos","setup.python","adv.python","setup.agentPath.Claude Code","setup.agentPath.Codex","setup.address"]],
+ ]);
+ const rows=flat(defs);
+ for(const [key,[name,type]] of Object.entries(MASTER_CONTROLS)){
+  const row=rows.find(def=>def.name===name);
+  assert.ok(row,key);
+  assert.deepEqual(controls(row).types,[type],key);
+ }
+});
+
+it("settings headings, rows, and state strings are bilingual and descriptions stay within 120 characters",()=>{
+ const {tab,plugin}=context();
+ const settingsKey=/^(?:setup|settings|mail|ai|cfg|adv|codexHook)(?:\.|$)|^updates\.setting/;
+ for(const lang of ["en","ru"]){
+  plugin.t=(key,vars)=>{
+   assert.ok(Object.hasOwn(STRINGS[lang],key),`${lang}: ${key}`);
+   return translate(lang,key,vars);
+  };
+  const defs=tab.getSettingDefinitions();
+  for(const {name,desc,heading} of [...defs,...flat(defs)]){
+   for(const text of [name,desc,heading].filter(Boolean)) assert.equal(text,text.trim());
+   assert.ok((desc?.length||0)<=120,`${lang}: ${name} (${desc?.length})`);
+  }
+  for(const key of Object.keys(STRINGS.en).filter(key=>settingsKey.test(key))){
+   const text=plugin.t(key);
+   assert.equal(text,text.trim(),`${lang}: ${key}`);
+   if(key.endsWith(".desc")) assert.ok(text.length<=120,`${lang}: ${key} (${text.length})`);
+  }
+ }
 });

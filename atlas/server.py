@@ -60,6 +60,24 @@ WEB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 ALLOWED_HOSTS = {f"127.0.0.1:{PORT}", f"localhost:{PORT}"}
 ALLOWED_ORIGINS = {f"http://127.0.0.1:{PORT}", f"http://localhost:{PORT}"}
 
+_classification_status_error = None
+_classification_status_lock = threading.Lock()
+
+
+def _add_classification_status(conn, status):
+    global _classification_status_error
+    try:
+        status["auto_classify"] = autoclassify.status(conn)
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"
+    else:
+        error = None
+    # Settings polls this endpoint. Report a recurring failure once until it changes or clears.
+    with _classification_status_lock:
+        if error is not None and error != _classification_status_error:
+            print(f"atlas index status: automatic classification: {error}", file=sys.stderr)
+        _classification_status_error = error
+
 
 # The index catches up on every page open and list request: otherwise the UI shows a catalog
 # that is days old until you press "update index". A pass with no changes takes hundredths
@@ -377,6 +395,7 @@ class Handler(BaseHTTPRequestHandler):
                 if url.path == "/api/index-status":           # the checks screen in settings
                     count = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
                     status = {"sessions": count, "indexing": catch_up()}
+                    _add_classification_status(conn, status)
                     try:
                         runner.configured_agent()
                     except runner.InvalidAIAgent as exc:

@@ -155,6 +155,7 @@ class SessionAtlasPlugin extends PluginData {
     this.startingServer = this.startServer().then((r) => {
       this.startingServer = null;
       this.serverProblem = r.ok ? null : r.reason;
+      this.serverProblemShort = r.ok ? null : r.shortReason;
       if (!r.ok) new Notice(this.t("server.failed", { error: r.reason }), 10000);
       return r.ok;
     });

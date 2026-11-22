@@ -73,17 +73,27 @@ test("subscription limits fit in the header on every view", async ({ page, open,
     await expect(header).toBeVisible();
     await expect(header).toHaveAttribute("title", full);
     await expect(page.locator("#active-summary .limits")).toHaveCount(0);
-    for (const [width, wanted] of [[360, "Codex 100%"], [600, "Claude 78% · Codex 100%"], [900], [1400, full]]) {
+    // Font metrics differ by platform: at 360 and 600 px a narrower step is fine; the poll below checks that the
+    // widest step that fits is the one shown.
+    const steps = ["Claude 78% · Codex 100%", "Codex 100%"];
+    for (const [width, allowed] of [[360, steps.slice(1)], [600, steps], [900], [1400, [full]]]) {
       await page.setViewportSize({ width, height: 900 });
       if (width === 360) await expectHeaderControlsInBounds(page);
-      if (wanted) await expect(shown).toHaveText(wanted);
-      await expect(shown.locator(".limits.warn")).toContainText("Codex");
+      if (allowed) {
+        await expect.poll(async () => {
+          if (!await shown.count()) return width === 360;   // hidden: the last step, allowed only where space is tight
+          const text = await shown.textContent();
+          return allowed.some(step => step instanceof RegExp ? step.test(text) : text === step);
+        }).toBe(true);
+      }
+      if (await shown.count()) await expect(shown.locator(".limits.warn")).toContainText("Codex");
       await expect.poll(() => header.evaluate(node => {
         const available = node.parentElement.getBoundingClientRect().width;
         const versions = [...node.children];
         const fits = versions.find(version => version.getBoundingClientRect().width <= available);
         return fits?.classList.contains("shown");
       })).toBe(true);
+      if (!await shown.count()) continue;
       expect(await shown.evaluate(part => {
         const slot = document.querySelector("#header-limits-slot");
         const nav = slot.parentElement;

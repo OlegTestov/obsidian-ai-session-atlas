@@ -2335,9 +2335,6 @@ JS_MUT = [
   '  if (seq < appliedLimitsSequence) return;\n', ''),
  ("header limits: open tooltip keeps old numbers", "web/js/tips.js",
   '  if (tipTarget === target && tipBox && !tipBox.classList.contains("hidden")) showTip(target);\n', ''),
- ("header limits: tabs clip Help at 240px", "web/js/atlas.css",
-  '  #views [role=tab]{flex:0 1 auto;min-width:0;padding-inline:4px;font-size:12px;\n'
-  '    overflow:hidden;text-overflow:ellipsis}\n', ''),
  ("header limits: abbreviate agents in compact layouts", "web/js/header-limits.js",
   'const summary = { text: `${name} ${pct(peak)}`, tone };',
   'const summary = { text: `${name === "Claude" ? "C" : "X"} ${pct(peak)}`, tone };'),
@@ -2352,6 +2349,8 @@ JS_MUT = [
  ("header limits: allow wrapping", "web/js/atlas.css",
   'text-align:right;white-space:nowrap;font-size:12px;color:var(--dim);overflow:hidden',
   'text-align:right;white-space:normal;font-size:12px;color:var(--dim);overflow:hidden'),
+ ("header limits: tabs shrink only below 300px", "web/js/atlas.css",
+  '#views [role=tab]{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}', '#views [role=tab]{}'),
  ("header limits: leave too little room at 360px", "web/js/atlas.css",
   '  #views{padding-inline:4px}\n  #views button{padding-inline:6px}\n  #header-limits-slot{margin-inline:2px}',
   '  #views{padding-inline:6px}\n  #views button{padding-inline:6px}'),

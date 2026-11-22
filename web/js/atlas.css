@@ -17,6 +17,8 @@ body{margin:0;font:14px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",syste
   border-bottom:1px solid var(--line);background:var(--panel)}
 #views button{border:none;border-bottom:2px solid transparent;border-radius:0;background:none;
   color:var(--dim);padding:0 14px;font-weight:600;flex:none;white-space:nowrap}
+/* Tabs may shrink with an ellipsis at any width (wide fonts); the limits slot empties first, Help never shrinks. */
+#views [role=tab]{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis}
 #views button[aria-selected=true]{color:var(--ink);border-bottom-color:var(--accent)}
 #views .n{font-weight:400;color:var(--dim);margin-left:4px}
 #views #help-btn{margin:auto 0;border:1px solid var(--line);border-radius:50%;
@@ -29,8 +31,7 @@ body{margin:0;font:14px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",syste
   #header-limits-slot{margin-inline:2px}
 }
 @media(max-width:300px){
-  #views [role=tab]{flex:0 1 auto;min-width:0;padding-inline:4px;font-size:12px;
-    overflow:hidden;text-overflow:ellipsis}
+  #views [role=tab]{padding-inline:4px;font-size:12px}
 }
 #header-limits{display:inline-block;position:relative;vertical-align:middle}
 .header-limits-version{position:absolute;right:0;width:max-content;visibility:hidden}

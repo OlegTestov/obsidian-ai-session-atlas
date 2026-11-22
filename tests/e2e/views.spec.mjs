@@ -131,7 +131,11 @@ test("subscription limits fit in the header on every view", async ({ page, open,
 // and the full text stays in the accessible label.
 test("with wide tab labels the header hides the limits and keeps every control in place", async ({ page, open }) => {
   await open();
-  await page.evaluate(() => document.querySelectorAll("#views [role=tab]").forEach(tab => { tab.style.letterSpacing = "2.5px"; }));
+  // Longer labels stand in for wider fonts.
+  await page.evaluate(() => ["#view-search", "#view-stats"].forEach(id => {
+    const tab = document.querySelector(id);
+    tab.textContent += " WWWWWWWW";
+  }));
   await page.setViewportSize({ width: 360, height: 900 });
   const header = page.locator("#header-limits");
   await expect(header.locator(".shown")).toHaveCount(0);

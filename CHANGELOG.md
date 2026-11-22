@@ -20,7 +20,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - A hidden Atlas tab in Obsidian no longer polls sessions or limits; it refreshes when shown again. Active also stops polling while the window is hidden.
 - The Active count and Quick Jump fill in even when Atlas opens on Search or Statistics or starts hidden.
 - A malformed Claude Code or Codex binary setting no longer stops the catalog page from loading.
-- In a very narrow pane or at high zoom, the view tabs shorten and "?" stays reachable.
+- When the header is short of space (narrow pane, high zoom, wide fonts), the limits hide first, then the view tabs shorten with an ellipsis; "?" always stays reachable.
 - An open limits tooltip updates when the numbers change.
 ## [2.16.0] - 2026-11-22
 

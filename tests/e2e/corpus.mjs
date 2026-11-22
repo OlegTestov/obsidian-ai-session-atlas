@@ -105,7 +105,7 @@ export function writeCorpus(root, python, now = Date.now()) {
     language: "en", ticket_prefixes: ["ABC"], llm_enabled: false,
     workspace_roots: ["~/Code"], vaults: [{ path: "~/Notes", id: "notes" }] }));
 
-  // Claude Code's limits as its status line saved them, 3 hours ago: the toolbar shows their age.
+  // Claude Code's limits as its status line saved them, 3 hours ago: the header shows their age.
   fs.writeFileSync(path.join(atlasHome, "rate-limits.json"), JSON.stringify({
     captured_at: now / 1000 - 3 * 3600 - 300,
     rate_limits: { five_hour: { used_percentage: 41.6, resets_at: now / 1000 + 3600 },

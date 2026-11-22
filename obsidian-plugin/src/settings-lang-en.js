@@ -105,10 +105,10 @@ export default {
 
   "adv.integrations": "Advanced: integrations",
   "adv.defaults": "An empty field uses the default shown in grey.",
-  "setup.limits": "Show Claude Code usage limits in Active",
+  "setup.limits": "Show Claude Code usage limits in the header",
   "setup.limits.desc": "Show subscription limits from Claude Code sessions.",
   "setup.limits.off": "Atlas adds its status line to Claude Code.",
-  "setup.limits.ours": "The Atlas status line supplies usage limits to Active.",
+  "setup.limits.ours": "The Atlas status line supplies usage limits to the header.",
   "setup.limits.foreign": "Claude Code already has another status line.",
   "setup.limits.broken": "Fix the Claude Code settings file to change this switch.",
   "setup.limitsOn": "Atlas status line added to {file}.",

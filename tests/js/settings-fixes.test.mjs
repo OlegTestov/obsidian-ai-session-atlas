@@ -105,7 +105,7 @@ it("C4 says when a different Claude Code status line is installed", () => {
   const { tab, plugin } = context();
   plugin.statusLineState = () => ({ state: "foreign" });
   plugin.t = (key, vars) => translate("en", key, vars);
-  const limits = field(tab, "Show Claude Code usage limits in Active");
+  const limits = field(tab, "Show Claude Code usage limits in the header");
   assert.equal(limits.desc, "Claude Code already has another status line.");
   assert.equal(limits.disabled, true);
 });

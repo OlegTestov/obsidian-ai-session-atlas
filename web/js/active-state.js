@@ -1,13 +1,12 @@
 // Active: state, server polling and the link to the Obsidian plugin.
 // Classic script: shares one global scope with the other page files.
-/* exported hostHealth, activeUpdated, activeLimits, activeCodexLimits, ACTIVE_FILTERS, PERIODS -- used by other page scripts */
+/* exported hostHealth, activeUpdated, ACTIVE_FILTERS, PERIODS -- used by other page scripts */
 /* exported legacyGroupNames, activeFilter, filterUI, layout, LAYOUT_MAX, LAYOUT_CELLS, layoutUI -- used by other page scripts */
 /* exported SEND_TIMEOUT_MS, MAX_ATTACH, lastSignature, composing -- used by other page scripts */
 /* exported lastRenderAt, fmtShort, tellTabHost, tabFor, heldFor, hostHeld, hostBackground -- used by other page scripts */
 // --- Active tab --------------------------------------------------------------
 
 const ACTIVE_POLL_MS = 5000;
-const HOST_SOURCE = "session-atlas-host";
 let activeSessions = [];
 let activeRaw = [];             // sessions as the server sent them; activeSessions adds tab screens
 let hostScreens = new Map();    // PTY proxy PID → a Codex tab's screen: {state: waiting | busy | idle, queued}
@@ -19,10 +18,8 @@ let hostReady = false;          // the plugin answered, so Go to and Close are a
 let hostHealth = null;          // {ok, reason} from the plugin: whether the terminal link works
 let tabsAskedAt = null;         // when the tabs were requested and no answer has come yet
 let activeTimer = null;
-let activeSeq = 0;
+let activeLoading = false;
 let activeUpdated = null;
-let activeLimits = null;        // subscription limits from the Claude Code status line
-let activeCodexLimits = null;   // Codex limits: from Codex itself or its newest token count
 
 // Active filters: each list allows several values, as in Excel.
 const ACTIVE_FILTERS = [
@@ -74,14 +71,6 @@ function tellTabHost(type, payload) {
   return true;
 }
 
-// The Atlas tab is on screen again (the plugin reports it; outside Obsidian, page visibility).
-function backOnScreen() {
-  if (state.view !== "active") return;
-  resortActive();
-  rerenderOrder();
-}
-document.addEventListener("visibilitychange", () => { if (!document.hidden) backOnScreen(); });
-
 window.addEventListener("message", e => {
   if (e.source !== window.parent) return;
   const d = e.data;
@@ -89,7 +78,6 @@ window.addEventListener("message", e => {
     backgroundResult(d.job);
     return;
   }
-  if (d && d.source === HOST_SOURCE && d.type === "shown") { backOnScreen(); return; }
   if (d && d.source === HOST_SOURCE && d.type === "sent" && pendingSends.has(d.nonce)) {
     const sid = pendingSends.get(d.nonce);
     pendingSends.delete(d.nonce);
@@ -173,39 +161,46 @@ function heldFor(s) {
 }
 
 registerView("active", { tab: "#view-active", panel: "#active",
-                         show: () => { resortActive(); loadActive(); },
+                         show: () => rerenderOrder(true),
+                         refresh: loadActive,
                          hide: () => {
-                           window.clearTimeout(activeTimer);
                            for (const panel of cardPanels.values()) panel.suspend?.();
                            lastSignature = "";
                          } });
 
+function needsActiveSnapshot() {
+  // The header counter and Quick Jump need one successful response on every entry view.
+  return pageVisible() && (state.view === "active" || !activeUpdated);
+}
+
 async function loadActive() {
   window.clearTimeout(activeTimer);
-  const seq = ++activeSeq;
+  if (activeLoading || !needsActiveSnapshot()) return;
+  activeLoading = true;
+  const limitsSeq = markLimitsRequested();
   try {
-    // Codex's own usage read is asked for only while Codex cards are shown.
-    const data = await api(AtlasLogic.activeUrl(agentPick.active));
-    if (seq !== activeSeq) return;
+    // The header needs Codex usage even if the cards are filtered to Claude.
+    const data = await api("/api/active?codex_usage=1");
+    updateHeaderLimits(data, limitsSeq);
     const previous = activeSessions;
     activeRaw = data.sessions || [];
     activeSessions = screenSessions();
     replacePendingSlots(previous, activeSessions);
-    activeLimits = data.limits || null;
-    activeCodexLimits = data.codex_limits || null;
     recentClosed = data.recent_closed || [];
     backgroundJobs = (data.background_jobs || []).filter(j => j && /^[0-9a-f]{8}$/.test(j.job_id || ""));
     pruneBackgroundNotes();
     AtlasLogic.pruneClosedNotes(closedNotes, recentClosed.map(c => c.session_id), Date.now());
     activeUpdated = new Date();
   } catch (e) {
-    if (seq !== activeSeq) return;
     // If the server is down, cards stay as they are and the banner on top reports it.
     if (!serverDown || !activeSessions.length) {
       const grid = $("#active-grid");
       grid.replaceChildren(el("p", "empty", i18n("active.error", { msg: e.message })));
       mountCardPanels(grid);
     }
+  } finally {
+    activeLoading = false;
+    if (needsActiveSnapshot()) activeTimer = window.setTimeout(loadActive, ACTIVE_POLL_MS);
   }
   $("#active-count").textContent = activeSessions.length ? String(activeSessions.length) : "";
   if (EMBEDDED) {                             // the answer arrives as a message and redraws the cards
@@ -214,5 +209,4 @@ async function loadActive() {
   }
   renderActive();
   refreshCardPanels();
-  if (state.view === "active") activeTimer = window.setTimeout(loadActive, ACTIVE_POLL_MS);
 }

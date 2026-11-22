@@ -1,6 +1,7 @@
 // Own tooltips instead of the system ones: those have a delay of about two seconds that cannot be
 // configured. Works for any element with a title; the attribute is hidden while hovering.
 // Classic script: shares one global scope with the other page files.
+/* exported setTipText -- used by the limits header */
 const TIP_DELAY_MS = 1000;
 let tipTimer = null;
 let tipTarget = null;
@@ -11,6 +12,13 @@ function hideTip() {
   tipTimer = null;
   tipTarget = null;
   if (tipBox) tipBox.classList.add("hidden");
+}
+
+function setTipText(target, text) {
+  // The tooltip handler takes ownership of the title after the first hover.
+  if (target.hasAttribute("data-tip")) target.dataset.tip = text;
+  else target.title = text;
+  if (tipTarget === target && tipBox && !tipBox.classList.contains("hidden")) showTip(target);
 }
 
 function showTip(target) {

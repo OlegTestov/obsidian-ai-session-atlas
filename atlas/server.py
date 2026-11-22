@@ -60,6 +60,11 @@ WEB_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 ALLOWED_HOSTS = {f"127.0.0.1:{PORT}", f"localhost:{PORT}"}
 ALLOWED_ORIGINS = {f"http://127.0.0.1:{PORT}", f"http://localhost:{PORT}"}
 
+
+def _subscription_limits(live: bool) -> dict:
+    return {"limits": limits.read_limits(), "codex_limits": codex_live.limits(live=live)}
+
+
 _classification_status_error = None
 _classification_status_lock = threading.Lock()
 
@@ -378,6 +383,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, {"ok": True, "app": APP, "port": PORT,
                                         "python": "{}.{}".format(*sys.version_info[:2]),
                                         "version": runtime_version()})
+            if url.path == "/api/limits":
+                return self._json(200, _subscription_limits(live=True))
             if url.path == "/api/stats":
                 # A count over a large index takes seconds: the last snapshot comes at once. Before
                 # any database access here: the reindex check below may wait for the indexer's
@@ -417,8 +424,7 @@ class Handler(BaseHTTPRequestHandler):
                                                 conn, {s["session_id"] for s in sessions}
                                                 | {j["session_id"] for j in background},
                                                 agents=picked),
-                                            "limits": limits.read_limits(),
-                                            "codex_limits": codex_live.limits(
+                                            **_subscription_limits(
                                                 live=(query.get("codex_usage") or [""])[0] == "1"),
                                             "indexing": indexing})
                 if url.path.startswith("/api/active/feed/"):
@@ -549,7 +555,8 @@ class Handler(BaseHTTPRequestHandler):
         html = html.replace("__TERMINAL_ASSETS__", terminal_assets)
         registry = json.dumps([dict(agents.get(kind)) for kind in agents.all()]).replace("<", "\\u003c")
         html = (html.replace("__NONCE__", nonce).replace("__TOKEN__", csrf_token())
-                .replace("__AGENTS__", registry))
+                .replace("__AGENTS__", registry)
+                .replace("__CLAUDE_INSTALLED__", json.dumps(runner.has_claude())))
         self._send(200, html.encode(), "text/html; charset=utf-8", nonce=nonce)
 
     def _static(self, name: str) -> None:

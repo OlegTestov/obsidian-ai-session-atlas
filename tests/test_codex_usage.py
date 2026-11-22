@@ -5,6 +5,7 @@ import json
 import os
 import sys
 import time
+import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 
@@ -197,6 +198,77 @@ def test_active_route_asks_codex_only_on_request(standin, atlas_env, live_server
     while time.monotonic() < deadline and not (get()["codex_limits"] or {}).get("live"):
         time.sleep(0.1)
     assert get()["codex_limits"]["source"] == "live" and len(standin["runs"]()) == 1
+
+
+def test_limits_route_shares_active_shape_and_codex_cache(standin, atlas_env, live_server, monkeypatch):
+    from atlas import server
+
+    monkeypatch.setenv("ATLAS_CODEX_HOME", standin["home"])
+    monkeypatch.setattr(server, "active_sessions", lambda conn: [])
+    monkeypatch.setattr(server.active, "recently_closed", lambda *args, **kwargs: [])
+    claude = {"windows": [{"key": "five_hour", "used_percentage": 27}]}
+    monkeypatch.setattr(server.limits, "read_limits", lambda: claude)
+    base, _ = live_server
+
+    def get(route):
+        with urllib.request.urlopen(base + route) as response:
+            return json.load(response)
+
+    light = get("/api/limits")
+    assert light.keys() == {"limits", "codex_limits"}
+    assert light["limits"] == claude
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline and not light["codex_limits"]:
+        time.sleep(0.05)
+        light = get("/api/limits")
+    active = get("/api/active?codex_usage=1")
+    assert light["codex_limits"]["source"] == "live"
+    assert active["codex_limits"]["windows"] == light["codex_limits"]["windows"]
+    assert active["limits"] == light["limits"]
+    assert len(standin["runs"]()) == 1
+
+
+def test_limits_route_checks_host_and_origin_without_opening_index(atlas_env, live_server, monkeypatch):
+    from atlas import server
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("limits route should neither open the catalog nor launch a missing Codex binary")
+
+    monkeypatch.setattr(server.db, "connect", unexpected)
+    monkeypatch.setattr(codex_usage, "read_rate_limits", unexpected)
+    base, _ = live_server
+    for headers in ({"Host": "example.test"}, {"Origin": "https://example.test"}):
+        request = urllib.request.Request(base + "/api/limits", headers=headers)
+        with pytest.raises(urllib.error.HTTPError) as exc:
+            urllib.request.urlopen(request)
+        assert exc.value.code == 403
+    # Like the other read-only routes, this accepts the local origin without a token.
+    request = urllib.request.Request(base + "/api/limits", headers={"Origin": base})
+    with urllib.request.urlopen(request) as response:
+        assert json.load(response) == {"limits": None, "codex_limits": None}
+    assert codex_usage._state["tried"] is None
+
+
+@pytest.mark.parametrize("value", [["/invalid/agent"], {"path": "/invalid/agent"}, 42, "bad\0path"])
+def test_malformed_agent_binaries_keep_catalog_available(value, atlas_env, live_server, monkeypatch, tmp_path):
+    from atlas import codex_app, runner
+    from tests.conftest import write_config
+
+    monkeypatch.delenv("ATLAS_CODEX_BIN")
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    monkeypatch.setattr(codex_usage, "read_rate_limits", lambda *args: None)
+    # An explicit malformed override fails the probe even with an executable on PATH.
+    monkeypatch.setattr(runner.shutil, "which", lambda name: "/bin/sh")
+    write_config(os.environ["ATLAS_HOME"], {"claude_bin": value, "codex_bin": value})
+    base, _ = live_server
+    with urllib.request.urlopen(base + "/") as response:
+        assert b"ATLAS_CLAUDE_INSTALLED = false" in response.read()
+    with urllib.request.urlopen(base + "/api/limits") as response:
+        assert json.load(response)["codex_limits"] is None
+    assert codex_usage._state["tried"] is None
+    assert runner.has_claude() is False
+    assert codex_app.find_codex() is None
 
 
 def test_a_newer_rollout_beats_older_live_numbers(standin, write_rollout, monkeypatch):

@@ -166,9 +166,12 @@ CLAUDE_CANDIDATES = (
 
 
 def find_claude() -> str:
-    configured = config.get("claude_bin")
-    if configured and os.access(os.path.expanduser(configured), os.X_OK):
-        return os.path.expanduser(configured)
+    try:
+        configured = config.executable_override("claude_bin")
+    except ValueError as exc:
+        raise RuntimeError(msg("runner.no_claude", paths=", ".join(CLAUDE_CANDIDATES))) from exc
+    if configured:
+        return configured
     found = shutil.which("claude")
     if found:
         return found

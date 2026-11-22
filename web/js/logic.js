@@ -176,11 +176,6 @@
              tone: top >= 90 ? "warn" : top >= 75 ? "mid" : "ok", age, reached: top >= 100 };
   }
 
-  // Ask Codex for its live usage only while its cards are shown.
-  function activeUrl(agents) {
-    return (agents || []).includes("codex") ? "/api/active?codex_usage=1" : "/api/active";
-  }
-
   // Card order does not depend on message freshness, otherwise cards jump on every reply:
   // pinned (in pin order), then by start time, newest on top. Cards hidden until the
   // next message drop out: hidden is {id: last_message_at at hiding time}.
@@ -430,7 +425,7 @@
   }
 
   const api = { AGENTS, findAgent, getAgent, requireAgent, savedAgentSelection, storedAgentSelection, sizeMb, freeTextOption, freeAnswerText, agentOf, agentSelection, agentParam, agentPasses, toggleAgent, newSessionAgents,
-                newSessionAgent, applyFrozenOrder, pruneClosedNotes, CLOSED_NOTE_TTL_MS, pluralRu, tasksSummary, jumpMatches, durationText, stepPasses, relPath, terminalStatus, infoParts, shortTokens, arrangeSessions, contextLevel, limitsText, limitsAge, activeUrl, deliveryState, DELIVERY_WAIT_MS, queuedNotShown, commandMatches,
+                newSessionAgent, applyFrozenOrder, pruneClosedNotes, CLOSED_NOTE_TTL_MS, pluralRu, tasksSummary, jumpMatches, durationText, stepPasses, relPath, terminalStatus, infoParts, shortTokens, arrangeSessions, contextLevel, limitsText, limitsAge, deliveryState, DELIVERY_WAIT_MS, queuedNotShown, commandMatches,
                 historyStep, PERIODS, periodOf, valuesOf, passes, filterOptions, parseLayout,
                 backgroundReasons, unansweredPrompt, nextCard, costText };
   root.AtlasLogic = api;           // own namespace: active.js has wrappers

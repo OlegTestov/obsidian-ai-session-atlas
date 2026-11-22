@@ -154,6 +154,7 @@ function buildHelp() {
 
   h(i18n("help.whatH"));
   p(i18n("help.whatP"));
+  p(i18n("help.limits"));
 
   h(i18n("help.findH"));
   list(keys("help.find", 8));

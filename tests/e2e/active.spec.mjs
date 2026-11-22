@@ -31,16 +31,18 @@ test("both live sessions show by default with badges and statuses", async ({ pag
   await expect(codex.locator(".head .t")).toHaveText("Reconcile the ledger with the invoices");
   await expect(claude.locator(".head .t")).toHaveText("Make the login retry back off");
   await expect(codex.locator(".tags")).toContainText("billing-api");
-  // Codex limits come from Codex itself (a stand-in app server): a separate span in the summary bar,
+  // Codex limits come from Codex itself (a stand-in app server): a separate span in the header,
   // a spent window names its reset, live numbers carry no age.
-  const codexLimits = page.locator("#active-summary .limits", { hasText: "Codex" });
+  const header = page.locator("#header-limits");
+  const codexLimits = header.locator(".shown .limits", { hasText: "Codex" });
   await expect(codexLimits).toHaveText(t.codexLimits);
   await expect(codexLimits).toHaveClass(/\bwarn\b/);
-  await expect(codexLimits).toHaveAttribute("title", new RegExp(t.codexLive));
+  await expect(header).toHaveAttribute("title", new RegExp(t.codexLive));
   // Claude Code's status line file is 3 hours old: the same line, with its age.
-  const claudeLimits = page.locator("#active-summary .limits", { hasText: "Claude" });
+  const claudeLimits = header.locator(".shown .limits", { hasText: "Claude" });
   await expect(claudeLimits).toHaveText(t.claudeLimits);
-  await expect(claudeLimits).toHaveAttribute("title", new RegExp(t.claudeAsOf.replace("(", "\\(")));
+  await expect(header).toHaveAttribute("title", new RegExp(t.claudeAsOf.replace("(", "\\(")));
+  await expect(page.locator("#active-summary .limits")).toHaveCount(0);
   // Only the handshake and the usage read: no thread, no model request.
   const asked = new Set(fs.readFileSync(run.codexStandInLog, "utf8").trim().split("\n"));
   expect([...asked].sort()).toEqual(["account/rateLimits/read", "initialize", "initialized"]);
@@ -117,6 +119,7 @@ test("a Codex card shows its /goal and the message queued for after the turn", a
 
 test("the Agent filter hides and shows each agent's cards", async ({ page, open }) => {
   await open("active");
+  const header = page.locator("#header-limits");
   await expect(card(page, ids.codexLive)).toBeVisible();
   await page.locator("#active-filters .agent-ms .ms-btn").click();
   await expect(agentBox(page, "Codex").locator(".n")).toHaveText("1");
@@ -126,15 +129,16 @@ test("the Agent filter hides and shows each agent's cards", async ({ page, open 
   await pickAgents(page, ["claude"]);
   await expect(card(page, ids.codexLive)).toHaveCount(0);
   await expect(card(page, ids.claudeLive)).toBeVisible();
-  await expect(page.locator("#active-summary .limits", { hasText: "Codex" })).toHaveCount(0);
+  await expect(header).toHaveAttribute("aria-label", /Claude .* · Codex /);
   await page.reload();
   await expect(card(page, ids.claudeLive)).toBeVisible();
   await expect(card(page, ids.codexLive)).toHaveCount(0);
+  await expect(header).toHaveAttribute("aria-label", /Claude .* · Codex /);
 
   await pickAgents(page, ["codex"]);
   await expect(card(page, ids.claudeLive)).toHaveCount(0);
   await expect(card(page, ids.codexLive)).toBeVisible();
-  await expect(page.locator("#active-summary .limits", { hasText: "Codex" })).toBeVisible();
+  await expect(header).toHaveAttribute("aria-label", /Claude .* · Codex /);
 
   await pickAgents(page, ["claude", "codex"]);
   await expect(card(page, ids.claudeLive)).toBeVisible();

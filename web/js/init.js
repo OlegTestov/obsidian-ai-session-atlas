@@ -4,7 +4,7 @@ buildFilters();
 $("#search-agent").appendChild(agentFilter("search", () => loadList(), { named: true }));
 readHash();
 refreshLayoutButton();
+initHeaderLimits();
 setView(state.view);
-if (state.view !== "active") loadActive();   // the tab counter is visible from search too
 api("/api/facets").then(bindFilters).then(loadList)
   .then(() => { if (state.current) openCard(state.current); });

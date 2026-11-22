@@ -108,6 +108,17 @@ def get(key: str):
     return load()[key]
 
 
+def executable_override(key: str) -> str | None:
+    """Return an executable configured path; malformed settings raise ValueError."""
+    value = get(key)
+    if value is None or value == "":
+        return None
+    if not isinstance(value, str):
+        raise ValueError(key)
+    path = os.path.expanduser(value)
+    return path if os.access(path, os.X_OK) else None
+
+
 def expand(p: str) -> str:
     return os.path.normpath(os.path.expanduser(p)) if p else ""
 

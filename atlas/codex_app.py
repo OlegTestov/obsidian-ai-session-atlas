@@ -38,9 +38,12 @@ def find_codex() -> str | None:
     forced = os.environ.get("ATLAS_CODEX_BIN")
     if forced is not None:
         return forced if forced and os.access(forced, os.X_OK) else None
-    configured = config.get("codex_bin")
-    if configured and os.access(os.path.expanduser(configured), os.X_OK):
-        return os.path.expanduser(configured)
+    try:
+        configured = config.executable_override("codex_bin")
+    except ValueError:
+        return None
+    if configured:
+        return configured
     for path in [shutil.which("codex")] + [os.path.expanduser(c) for c in CANDIDATES]:
         if path and os.access(path, os.X_OK):
             return path

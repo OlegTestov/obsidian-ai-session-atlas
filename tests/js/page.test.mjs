@@ -338,11 +338,6 @@ describe("context and limits", () => {
     assert.ok(t.reached && t.tone === "warn");
     assert.equal(L.limitsText(lim).reached, false);
   });
-  test("active poll: asks Codex itself only with Codex shown", () => {
-    assert.equal(L.activeUrl(["claude"]), "/api/active");
-    assert.equal(L.activeUrl(["claude", "codex"]), "/api/active?codex_usage=1");
-    assert.equal(L.activeUrl(["codex"]), "/api/active?codex_usage=1");
-  });
   test("limits: 90% is alarming", () => {
     assert.equal(L.limitsText({ windows: [{ label: "неделя", used_percentage: 93 }] }).tone, "warn");
   });

@@ -7,6 +7,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.17.0] - 2026-11-22
+
+### Changed
+
+- Claude Code and Codex subscription limits moved from the Active toolbar to the header, next to "?", and show on Search, Active and Statistics. The Codex part no longer depends on the Agent filter. In a narrow pane the text shortens to each agent's highest window (`Claude 27% · Codex 42%`), then to the highest one; the full text is in the tooltip.
+- Search and Statistics refresh the limits at most once a minute through a light request; Active keeps feeding them from its own poll.
+- The What's new window shows the header limits.
+
+### Fixed
+
+- A hidden Atlas tab in Obsidian no longer polls sessions or limits; it refreshes when shown again. Active also stops polling while the window is hidden.
+- The Active count and Quick Jump fill in even when Atlas opens on Search or Statistics or starts hidden.
+- A malformed Claude Code or Codex binary setting no longer stops the catalog page from loading.
+- In a very narrow pane or at high zoom, the view tabs shorten and "?" stays reachable.
+- An open limits tooltip updates when the numbers change.
 ## [2.16.0] - 2026-11-22
 
 ### Changed

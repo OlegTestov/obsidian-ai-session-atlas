@@ -2,8 +2,15 @@
 // a button in #views and a panel in index.html; switching, the address bar and refresh on
 // return to the page live here, shared by all.
 // Classic script: shares one global scope with the other page files.
-/* exported registerView, refreshView -- used by other page scripts */
+/* exported registerView, refreshView, pageVisible -- used by other page scripts */
 const VIEWS = {};
+const HOST_SOURCE = "session-atlas-host";
+// A plugin iframe waits for the initial size report. A standalone page uses browser visibility.
+let paneVisible = !EMBEDDED || new URLSearchParams(location.search).get("host_visibility") !== "1";
+
+function pageVisible() {
+  return paneVisible && !document.hidden;
+}
 
 /**
  * name is the address key (#view=name). opts: tab, panel are selectors; show() runs when the section
@@ -25,7 +32,9 @@ function setView(view) {
   });
   writeHash();
   if (prev !== view && VIEWS[prev] && VIEWS[prev].hide) VIEWS[prev].hide();
-  if (VIEWS[view].show) VIEWS[view].show();
+  if (pageVisible()) VIEWS[view].show?.();
+  loadActive();
+  syncHeaderLimits();
 }
 
 // The server answered again: reload what is on screen.
@@ -35,7 +44,17 @@ function refreshView() {
   if (fn) fn();
 }
 
-document.addEventListener("visibilitychange", () => {
-  const v = VIEWS[state.view];
-  if (!document.hidden && v && v.show) v.show();
+function viewVisibilityChanged() {
+  if (pageVisible()) VIEWS[state.view]?.show?.();
+  loadActive();
+  syncHeaderLimits();
+}
+
+document.addEventListener("visibilitychange", viewVisibilityChanged);
+window.addEventListener("message", e => {
+  const d = e.data;
+  if (!EMBEDDED || e.source !== window.parent || d?.source !== HOST_SOURCE || d.type !== "pane-visibility"
+      || typeof d.visible !== "boolean" || d.visible === paneVisible) return;
+  paneVisible = d.visible;
+  viewVisibilityChanged();
 });

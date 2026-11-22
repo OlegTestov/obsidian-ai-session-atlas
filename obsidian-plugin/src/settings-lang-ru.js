@@ -105,10 +105,10 @@ export default {
 
   "adv.integrations": "Дополнительно: интеграции",
   "adv.defaults": "Пустое поле — значение по умолчанию, оно показано серым.",
-  "setup.limits": "Показывать лимиты Claude Code в «Активных»",
+  "setup.limits": "Показывать лимиты Claude Code в верхней панели",
   "setup.limits.desc": "Смотри лимиты подписки в сессиях Claude Code.",
   "setup.limits.off": "Atlas добавит свою строку состояния в Claude Code.",
-  "setup.limits.ours": "Строка состояния Atlas передаёт лимиты в «Активные».",
+  "setup.limits.ours": "Строка состояния Atlas передаёт лимиты в верхнюю панель.",
   "setup.limits.foreign": "У Claude Code уже есть другая строка состояния.",
   "setup.limits.broken": "Исправь файл настроек Claude Code, чтобы изменить этот переключатель.",
   "setup.limitsOn": "Строка состояния Atlas добавлена в {file}.",

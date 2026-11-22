@@ -24,7 +24,7 @@ function renderActive(skipKey, force) {
   const arranged = arrangeActive(activeSessions.filter(s => passes(s)));
   const shown = arranged.visible;
   const any = ACTIVE_FILTERS.some(({ key }) => activeFilter[key].size) || agentFiltered("active");
-  // Short, on one line: "11 · 09:08 · 5h 35% · wk 73% · terminal ● · ?"; the full text is in tooltips.
+  // Keep the Active controls on one line.
   const sep = () => document.createTextNode(" · ");
   // The total is already on the "Active N" tab; here only what the filters keep.
   const parts = [];
@@ -51,49 +51,6 @@ function renderActive(skipKey, force) {
     if (summary.childNodes.length) summary.append(sep());
     summary.append(el("span", null, i18n("active.updated",
       { time: activeUpdated.toLocaleTimeString(I18N.locale(), { hour: "2-digit", minute: "2-digit" }) })));
-  }
-  // A reset within a day shows the time, later ones the date.
-  const when = iso => {
-    const d = new Date(iso);
-    return d - Date.now() < 864e5
-      ? d.toLocaleTimeString(I18N.locale(), { hour: "2-digit", minute: "2-digit" })
-      : d.toLocaleDateString(I18N.locale(), { day: "2-digit", month: "2-digit" });
-  };
-  const lim = AtlasLogic.limitsText(activeLimits, when);
-  const short = { five_hour: i18n("active.limit.fiveHour"), seven_day: i18n("active.limit.week") };
-  // A spent window names its reset; numbers that are not live end with their age.
-  const windows = (l, shown) => l.windows.map(w => {
-    const label = short[w.key] || w.label;
-    return w.used_percentage >= 100 ? i18n("active.limitReached", { label, until: w.resets_at
-      ? i18n("logic.limits.until", { when: when(w.resets_at) }) : "" }) : `${label} ${Math.round(w.used_percentage)}%`;
-  }).join(" · ") + (shown.age ? i18n("active.limitsAge", { age: shown.age }) : "");
-  const stamp = iso => {
-    const d = new Date(iso);
-    const time = d.toLocaleTimeString(I18N.locale(), { hour: "2-digit", minute: "2-digit" });
-    return d.toDateString() === new Date().toDateString() ? time
-      : d.toLocaleDateString(I18N.locale(), { day: "2-digit", month: "2-digit" }) + " " + time;
-  };
-  // Cut the "limits: " prefix from logic.js: the tooltip has its own full one.
-  const hintLimits = l => l.text.replace(/^[^:]*: /, "");
-  // Each agent has its own subscription: Codex limits get their own span, named when both show.
-  const codexLim = agentPick.active.includes("codex") ? AtlasLogic.limitsText(activeCodexLimits, when) : null;
-  if (agentPick.active.includes("claude")) {
-    const text = lim ? windows(activeLimits, lim) : i18n("active.limitsNone");
-    const limSpan = el("span", "limits " + (lim ? lim.tone : "none"),
-      codexLim ? i18n("active.limitsClaude", { limits: text }) : text);
-    limSpan.title = lim ? i18n("active.limitsHint", { limits: hintLimits(lim) })
-        + (lim.age && activeLimits.captured_at ? i18n("active.limitsAsOf", { time: stamp(activeLimits.captured_at) }) : "")
-      : i18n("active.limitsSetup", { snippet: "\"statusLine\": {\"type\": \"command\", \"command\": "
-        + "\"python3.11 ~/Code/session-atlas/tools/statusline.py\"}" });
-    summary.append(sep(), limSpan);
-  }
-  if (codexLim) {
-    const codexSpan = el("span", "limits " + codexLim.tone,
-      i18n("active.limitsCodex", { limits: windows(activeCodexLimits, codexLim) }));
-    const at = activeCodexLimits.captured_at ? stamp(activeCodexLimits.captured_at) : "?";
-    codexSpan.title = i18n(activeCodexLimits.source === "live" ? "active.limitsCodexLive" : "active.limitsCodexRun",
-                           { limits: hintLimits(codexLim), time: at });
-    summary.append(sep(), codexSpan);
   }
   const link = AtlasLogic.terminalStatus(EMBEDDED, hostHealth, tabsAskedAt, Date.now());
   const status = el("span", "link " + (link.ok === false ? "warn" : link.ok ? "ok" : ""), i18n("active.terminal"));

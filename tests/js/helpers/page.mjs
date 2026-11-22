@@ -58,7 +58,9 @@ function domStub() {
  * files: script names under web/js, in load order (default: everything index.html loads).
  * storage: what localStorage holds at page load, {key: string}.
  */
-export function loadPage(files = pageOrder(), { storage = {}, agents = JSON.parse(fs.readFileSync(path.join(ROOT, "atlas/agents.json"))) } = {}) {
+export function loadPage(files = pageOrder(), {
+  storage = {}, agents = JSON.parse(fs.readFileSync(path.join(ROOT, "atlas/agents.json"))), setup,
+} = {}) {
   const noop = () => 0;
   const ctx = vm.createContext({
     URL,
@@ -89,6 +91,7 @@ export function loadPage(files = pageOrder(), { storage = {}, agents = JSON.pars
   ctx.self = ctx;
   ctx.top = ctx;
   ctx.parent = ctx;
+  setup?.(ctx);
   for (const file of files) compileScript(file).runInContext(ctx);
   return ctx;
 }

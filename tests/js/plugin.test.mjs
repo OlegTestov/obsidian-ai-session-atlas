@@ -134,6 +134,7 @@ const SessionAtlasPlugin = pluginClass(BUNDLE ? require(BUNDLE) : loadSrc("main"
 const agents = loadSrc("agents");
 const i18n = loadSrc("i18n");
 const { AgentTerminalView, specialKey, canFit, applyTheme, isCloseRequest } = loadSrc("term-view");
+const { AtlasView } = loadSrc("view");
 const { attachProcesses } = loadSrc("terminal");
 Module._load = realLoad;
 // No plugin instance in these tests writes to the real data folder.
@@ -155,6 +156,42 @@ const good = {
   data: { source: "session-atlas", type: "resume", command: "cd '/x' && claude --resume 1",
           cwd: "/x", title: "Test" },
 };
+
+it("reports the Atlas iframe's initial pane visibility and both resize transitions", async () => {
+  const messages = [];
+  const host = { atlasOrigin: () => good.origin, lang: () => "en", ensureServer: async () => true };
+  const view = new AtlasView({}, host);
+  const frame = {
+    addEventListener(type, fn) { this[type] = fn; },
+    contentWindow: { postMessage: (message, origin) => messages.push([message, origin]) },
+  };
+  view.contentEl = { clientWidth: 0, empty() {}, addClass() {}, createEl: () => frame };
+  const resizeObserver = getGlobal("ResizeObserver");
+  let resize;
+  setGlobal("ResizeObserver", class {
+    constructor(fn) { resize = fn; }
+    observe() {}
+    disconnect() {}
+  });
+  try {
+    await view.renderOnce();
+    await view.onOpen();
+    assert.equal(new URL(frame.src).searchParams.get("host_visibility"), "1");
+    assert.deepEqual(messages, []);
+    frame.load();
+    view.contentEl.clientWidth = 300;
+    resize();
+    resize();
+    view.contentEl.clientWidth = 0;
+    resize();
+    assert.deepEqual(messages, [false, true, false].map(visible => [
+      { source: "session-atlas-host", type: "pane-visibility", visible }, good.origin,
+    ]));
+  } finally {
+    await view.onClose();
+    setGlobal("ResizeObserver", resizeObserver);
+  }
+});
 
 describe("catalog commands run only from the catalog", () => {
   const cases = [

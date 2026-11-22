@@ -16,6 +16,7 @@ __TERMINAL_ASSETS__
   <button id="view-active" role="tab" aria-selected="false" aria-controls="active"><span data-i18n="nav.active">Active</span><span
     class="n" id="active-count"></span></button>
   <button id="view-stats" role="tab" aria-selected="false" aria-controls="stats" data-i18n="nav.stats">Statistics</button>
+  <div id="header-limits-slot"><span id="header-limits" role="group"></span></div>
   <button id="help-btn" title="How to use this" aria-label="Help"
     data-i18n-title="nav.helpTitle" data-i18n-aria-label="nav.help">?</button>
 </nav>
@@ -138,7 +139,8 @@ __TERMINAL_ASSETS__
   </div>
 </dialog>
 
-<script nonce="__NONCE__">window.ATLAS_TOKEN = "__TOKEN__"; window.ATLAS_AGENTS = __AGENTS__;</script>
+<script nonce="__NONCE__">window.ATLAS_TOKEN = "__TOKEN__"; window.ATLAS_AGENTS = __AGENTS__;
+window.ATLAS_CLAUDE_INSTALLED = __CLAUDE_INSTALLED__;</script>
 <script nonce="__NONCE__" src="/static/i18n.js"></script>
 <script nonce="__NONCE__" src="/static/lang-common.js"></script>
 <script nonce="__NONCE__" src="/static/lang-active.js"></script>
@@ -148,6 +150,7 @@ __TERMINAL_ASSETS__
 <script nonce="__NONCE__" src="/static/markdown.js"></script>
 <script nonce="__NONCE__" src="/static/logic.js"></script>
 <script nonce="__NONCE__" src="/static/core.js"></script>
+<script nonce="__NONCE__" src="/static/header-limits.js"></script>
 <script nonce="__NONCE__" src="/static/agent-filter.js"></script>
 <script nonce="__NONCE__" src="/static/views.js"></script>
 <script nonce="__NONCE__" src="/static/server-status.js"></script>

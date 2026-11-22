@@ -20,6 +20,10 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 MUT = [
+ ("header limits: unvalidated executable setting", "atlas/config.py",
+  '    if not isinstance(value, str):\n        raise ValueError(key)\n', ''),
+ ("header limits: malformed Codex executable falls back to PATH", "atlas/codex_app.py",
+  '    except ValueError:\n        return None\n    if configured:', '    except ValueError:\n        configured = None\n    if configured:'),
  ("settings round 2 R1: index status omits automatic classification", "atlas/server.py",
   '                    _add_classification_status(conn, status)\n', ''),
  ("settings round 3: corrupt classification state fails index status", "atlas/server.py",
@@ -2304,8 +2308,53 @@ JS_MUT = [
   "const age = l.live === true || l.age_seconds == null ? null", "const age = true ? null"),
  ("page: a spent window not marked", "web/js/logic.js",
   '+ (w.used_percentage >= 100 ? I18.i18n("logic.limits.reached") : "")', '+ ""'),
- ("page: Codex asked with Codex hidden", "web/js/logic.js",
-  '(agents || []).includes("codex") ? "/api/active?codex_usage=1" : "/api/active"', '"/api/active?codex_usage=1"'),
+ ("header limits: refresh only on Active", "web/js/header-limits.js",
+  'const data = await api("/api/limits", null, request.signal);', 'return;'),
+ ("header limits: Codex follows the Agent filter", "web/js/header-limits.js",
+  'const limits = AtlasLogic.limitsText(raw, when);',
+  'const limits = name === "Codex" && !agentPick.active.includes("codex") ? null : AtlasLogic.limitsText(raw, when);'),
+ ("header limits: poll while hidden", "web/js/header-limits.js",
+  'return pageVisible() && state.view !== "active";', 'return state.view !== "active";'),
+ ("header limits: Active ignores a hidden host pane", "web/js/active-state.js",
+  'return pageVisible() && (state.view === "active" || !activeUpdated);',
+  'return !document.hidden && (state.view === "active" || !activeUpdated);'),
+ ("header limits: host reports only visible panes", "obsidian-plugin/src/view.js",
+  'if (this.frameLoaded) {', 'if (this.frameLoaded && visible) {'),
+ ("header limits: first Active snapshot is dropped after leaving Active", "web/js/active-state.js",
+  '    updateHeaderLimits(data, limitsSeq);', '    updateHeaderLimits(data, limitsSeq);\n    if (state.view !== "active") return;'),
+ ("header limits: only retry the Active snapshot on Active", "web/js/active-state.js",
+  'if (needsActiveSnapshot()) activeTimer = window.setTimeout(loadActive, ACTIVE_POLL_MS);',
+  'if (state.view === "active" && needsActiveSnapshot()) activeTimer = window.setTimeout(loadActive, ACTIVE_POLL_MS);'),
+ ("header limits: sync missing on view switch", "web/js/views.js",
+  '  loadActive();\n  syncHeaderLimits();\n}\n\n// The server answered again',
+  '  loadActive();\n}\n\n// The server answered again'),
+ ("header limits: sync missing on visibility change", "web/js/views.js",
+  '  loadActive();\n  syncHeaderLimits();\n}\n\ndocument.addEventListener("visibilitychange"',
+  '  loadActive();\n}\n\ndocument.addEventListener("visibilitychange"'),
+ ("header limits: stalled responses replace fresher limits", "web/js/header-limits.js",
+  '  if (seq < appliedLimitsSequence) return;\n', ''),
+ ("header limits: open tooltip keeps old numbers", "web/js/tips.js",
+  '  if (tipTarget === target && tipBox && !tipBox.classList.contains("hidden")) showTip(target);\n', ''),
+ ("header limits: tabs clip Help at 240px", "web/js/atlas.css",
+  '  #views [role=tab]{flex:0 1 auto;min-width:0;padding-inline:4px;font-size:12px;\n'
+  '    overflow:hidden;text-overflow:ellipsis}\n', ''),
+ ("header limits: abbreviate agents in compact layouts", "web/js/header-limits.js",
+  'const summary = { text: `${name} ${pct(peak)}`, tone };',
+  'const summary = { text: `${name === "Claude" ? "C" : "X"} ${pct(peak)}`, tone };'),
+ ("header limits: use the first window in compact layouts", "web/js/header-limits.js",
+  'const peak = raw.windows.reduce((best, w) => w.used_percentage > best.used_percentage ? w : best);',
+  'const peak = raw.windows[0];'),
+ ("header limits: keep the first agent in the single layout", "web/js/header-limits.js",
+  'if (!highest || peak.used_percentage > highest.used) {', 'if (!highest) {'),
+ ("header limits: lose warning tones in compact layouts", "web/js/header-limits.js",
+  'const summary = { text: `${name} ${pct(peak)}`, tone };',
+  'const summary = { text: `${name} ${pct(peak)}`, tone: "ok" };'),
+ ("header limits: allow wrapping", "web/js/atlas.css",
+  'text-align:right;white-space:nowrap;font-size:12px;color:var(--dim);overflow:hidden',
+  'text-align:right;white-space:normal;font-size:12px;color:var(--dim);overflow:hidden'),
+ ("header limits: leave too little room at 360px", "web/js/atlas.css",
+  '  #views{padding-inline:4px}\n  #views button{padding-inline:6px}\n  #header-limits-slot{margin-inline:2px}',
+  '  #views{padding-inline:6px}\n  #views button{padding-inline:6px}'),
  ("page: order by message recency", "web/js/logic.js",
   'const started = s => new Date(s.process_started_at || s.started_at || 0).getTime();',
   'const started = s => new Date(s.last_message_at || 0).getTime();'),
@@ -2959,6 +3008,8 @@ def run_python(name=None):
         focused = ["tests/test_actions_security.py", "-k", "index_status_for_the_setup_screen"]
     elif (name or "").startswith("settings round 3"):
         focused = ["tests/test_actions_security.py", "-k", "index_status_survives_corrupt_classification_state"]
+    elif (name or "").startswith("header limits:"):
+        focused = ["tests/test_codex_usage.py", "-k", "malformed_agent_binaries"]
     return _run([sys.executable, "-m", "pytest", "-q", "-x", "-p", "no:cacheprovider", *focused])
 
 
@@ -2983,6 +3034,14 @@ def run_node(path, name=None):
         tests = ["tests/js/settings-discovery.test.mjs"]
     elif name and name.startswith(("settings round 2", "settings round 3")):
         tests = ["tests/js/settings-fixes.test.mjs", "tests/js/settings-lifecycle.test.mjs"]
+    elif name and name.startswith("header limits:") and path == "web/js/atlas.css":
+        return _run(["npm", "run", "e2e", "--", "tests/e2e/views.spec.mjs", "-g", "subscription limits fit"])
+    elif name == "header limits: open tooltip keeps old numbers":
+        return _run(["npm", "run", "e2e", "--", "tests/e2e/views.spec.mjs", "-g", "header tooltip"])
+    elif name == "header limits: host reports only visible panes":
+        tests = ["--test-name-pattern=initial pane visibility", "tests/js/plugin.test.mjs"]
+    elif name and name.startswith("header limits:"):
+        tests = ["tests/js/header-limits.test.mjs"]
     else:
         tests = js_tests(path)
     # Force-exit: a mutant may leave a timer running. It can cut the TAP tail on macOS, so only the

@@ -140,12 +140,12 @@ Checked with codex-cli 0.167.0. Differences from Claude Code:
   `SKILL.md` (reading it in parts is one use; editing it is none), under the name Codex gives it. A
   subagent counts by its type (`spawn_agent`, "default" without one). A subagent started with its
   parent's context begins with a copy of the parent's turn; that copy counts only in the parent.
-- **Limits.** Codex's 5-hour and weekly limits come from Codex itself, as its `/status` shows them:
-  while Codex cards are shown in Active, the server runs `codex app-server`, asks it once for the
-  account's usage (`account/rateLimits/read`) and exits it, at most every 5 minutes. No thread is
-  started and no model is called. When that fails (Codex not installed or not logged in), the numbers
-  of Codex's last run are shown with their age ("3 h ago"); a window at 100% names its reset time.
-  Claude Code limits need the **Subscription limits** switch.
+- **Limits.** The header on every view shows Codex's 5-hour and weekly limits. The server runs
+  `codex app-server` to read account usage (`account/rateLimits/read`) as `/status` does, at most
+  once every five minutes per Codex home. It skips the live read if the executable or the Codex
+  home is missing. When a live read is unavailable, Atlas shows the last recorded usage with its
+  age ("3 h ago"). A window at 100% shows its reset time. Claude Code limits need the
+  **Subscription limits** switch.
 - **Cost.** Codex writes tokens but no cost. Statistics and live cards price Codex replies at OpenAI
   API prices from a table built into the plugin; a model the table does not know shows no cost.
   Prices can be fixed or added in `config.json` (see Usage).
@@ -305,11 +305,11 @@ developer policies.
   sends data to OpenAI under your Codex login (see "AI features" below).
 - Claude Code and Codex running in terminal tabs connect to their providers as they always do. The
   plugin does not send anything to OpenAI itself.
-- While Codex cards are shown in Active, the server may run your `codex` as `codex app-server` to read
-  Codex's usage limits, at most every 5 minutes. Codex then asks OpenAI for your account's usage with
-  its own login, as its `/status` does. No model is called and nothing from your sessions is sent;
-  the plugin never reads Codex's login. OpenAI prices come from a table inside the plugin, not
-  from the network.
+- For the limits in the header on every view, the server may run your `codex app-server` at most
+  once every five minutes per Codex home. It skips the live read if the executable or the Codex
+  home is missing. Codex asks OpenAI for your account's usage with its own login, as `/status` does.
+  No model is called, no session data is sent, and the plugin never reads Codex's login. OpenAI
+  prices come from a table inside the plugin.
 - When you rename or delete a Codex session, the server runs your `codex` (`codex app-server` for the
   name, `codex delete` for deletion). Codex does that locally; no model is called.
 

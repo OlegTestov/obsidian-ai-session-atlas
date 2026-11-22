@@ -49,18 +49,19 @@ class AtlasView extends ItemView {
   async onOpen() {
     // setState starts rendering. Without a state (an empty tab was opened), render here.
     if (!this.frame) this.render();
-    // A hidden Obsidian tab has zero width. Back on screen, the page may rearrange its cards:
-    // while you are on the tab, it keeps them in place.
+    // A hidden Obsidian tab has zero width even while the iframe document reports visible.
     this.onScreen = this.contentEl.clientWidth > 0;
     this.visibility = new ResizeObserver(() => this.visibilityChanged(this.contentEl.clientWidth > 0));
     this.visibility.observe(this.contentEl);
   }
 
-  visibilityChanged(visible) {
-    if (visible && !this.onScreen && this.frame && this.frame.contentWindow) {
-      this.frame.contentWindow.postMessage({ source: HOST_SOURCE, type: "shown" }, this.plugin.atlasOrigin());
-    }
+  visibilityChanged(visible, loaded = false) {
+    if (!loaded && visible === this.onScreen) return;
     this.onScreen = visible;
+    if (this.frameLoaded) {
+      this.frame?.contentWindow?.postMessage(
+        { source: HOST_SOURCE, type: "pane-visibility", visible }, this.plugin.atlasOrigin());
+    }
   }
 
   async onClose() {
@@ -95,9 +96,15 @@ class AtlasView extends ItemView {
       return;
     }
 
-    this.frame = container.createEl("iframe", { cls: "session-atlas-frame" });
+    const frame = this.frame = container.createEl("iframe", { cls: "session-atlas-frame" });
+    this.frameLoaded = false;
+    frame.addEventListener("load", () => {
+      if (this.frame !== frame) return;
+      this.frameLoaded = true;
+      this.visibilityChanged(container.clientWidth > 0, true);
+    });
     // The page language matches the plugin: Obsidian's language or the one chosen in settings.
-    this.frame.src = this.plugin.atlasOrigin() + "/?lang=" + this.plugin.lang() + (this.hash || "");
+    frame.src = this.plugin.atlasOrigin() + "/?lang=" + this.plugin.lang() + "&host_visibility=1" + (this.hash || "");
   }
 }
 

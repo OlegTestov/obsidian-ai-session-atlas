@@ -1,4 +1,4 @@
-"""Subscription limits for the top bar of "Active", read from the file the status line writes.
+"""Subscription limits for the header, read from the file the status line writes.
 
 Claude Code gives `rate_limits` only to the status line script (`tools/statusline.py`),
 which saves them to `rate-limits.json`. No file means the status line is not connected.

@@ -73,15 +73,16 @@ test("subscription limits fit in the header on every view", async ({ page, open,
     await expect(header).toBeVisible();
     await expect(header).toHaveAttribute("title", full);
     await expect(page.locator("#active-summary .limits")).toHaveCount(0);
-    // Font metrics differ by platform: at 360 and 600 px a narrower step is fine; the poll below checks that the
-    // widest step that fits is the one shown.
+    // Font metrics differ by platform: at 360 and 600 px a narrower step is fine (on macOS the 360 px step must still
+    // show); the poll below checks that the widest step that fits is the one shown.
     const steps = ["Claude 78% · Codex 100%", "Codex 100%"];
     for (const [width, allowed] of [[360, steps.slice(1)], [600, steps], [900], [1400, [full]]]) {
       await page.setViewportSize({ width, height: 900 });
       if (width === 360) await expectHeaderControlsInBounds(page);
       if (allowed) {
         await expect.poll(async () => {
-          if (!await shown.count()) return width === 360;   // hidden: the last step, allowed only where space is tight
+          // Hidden (the last step) is allowed at 360 px only off macOS, whose fonts the steps are tuned for.
+          if (!await shown.count()) return width === 360 && process.platform !== "darwin";
           const text = await shown.textContent();
           return allowed.some(step => step instanceof RegExp ? step.test(text) : text === step);
         }).toBe(true);
@@ -91,7 +92,7 @@ test("subscription limits fit in the header on every view", async ({ page, open,
         const available = node.parentElement.getBoundingClientRect().width;
         const versions = [...node.children];
         const fits = versions.find(version => version.getBoundingClientRect().width <= available);
-        return fits?.classList.contains("shown");
+        return fits ? fits.classList.contains("shown") : !node.querySelector(".shown");   // nothing fits: hidden
       })).toBe(true);
       if (!await shown.count()) continue;
       expect(await shown.evaluate(part => {
@@ -124,6 +125,18 @@ test("subscription limits fit in the header on every view", async ({ page, open,
   }
   await page.locator("#help-btn").click();
   await expect(page.locator("#help")).toBeVisible();
+});
+
+// Wider fonts (Linux CI, user font settings) leave no room at 360 px: the limits hide, nothing wraps or overflows,
+// and the full text stays in the accessible label.
+test("with wide tab labels the header hides the limits and keeps every control in place", async ({ page, open }) => {
+  await open();
+  await page.evaluate(() => document.querySelectorAll("#views [role=tab]").forEach(tab => { tab.style.letterSpacing = "2.5px"; }));
+  await page.setViewportSize({ width: 360, height: 900 });
+  const header = page.locator("#header-limits");
+  await expect(header.locator(".shown")).toHaveCount(0);
+  await expect(header).toHaveAttribute("aria-label", /^Claude .*%.*Codex .*%/);
+  await expectHeaderControlsInBounds(page);
 });
 
 test("the header tooltip follows a light limits refresh while hovered", async ({ page, open }) => {

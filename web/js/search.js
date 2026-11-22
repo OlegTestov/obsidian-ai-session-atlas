@@ -26,6 +26,7 @@ async function loadList(keepScroll) {
     return;
   }
   if (seq !== listSeq) return;
+  setOpenCodeAvailable(data.opencode_available);
   // Snapshot only after the response: the user may have scrolled while it was in flight.
   const scrollTop = keepScroll ? box.scrollTop : 0;
   const top = box.getBoundingClientRect().top;
@@ -154,6 +155,7 @@ function refillDependentFilters() {
 
 function bindFilters(data) {
   facets = data;
+  setOpenCodeAvailable(data.opencode_available);
   const box = $("#domains");
   box.replaceChildren();
   data.domains.forEach(d => {

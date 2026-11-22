@@ -1,4 +1,6 @@
 #!/bin/zsh
+# A login shell can reintroduce these before the launcher runs.
+unset OPENCODE_PASSWORD OPENCODE_SERVER_PASSWORD
 set -u
 
 APP="${1:-}"

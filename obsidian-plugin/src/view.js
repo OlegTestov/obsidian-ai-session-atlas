@@ -97,6 +97,8 @@ class AtlasView extends ItemView {
     }
 
     const frame = this.frame = container.createEl("iframe", { cls: "session-atlas-frame" });
+    // The clipboard button runs inside the cross-origin catalog frame.
+    frame.allow = `clipboard-write ${this.plugin.atlasOrigin()}`;
     this.frameLoaded = false;
     frame.addEventListener("load", () => {
       if (this.frame !== frame) return;

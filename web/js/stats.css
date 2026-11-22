@@ -29,6 +29,8 @@
 .tbar span,.legend i{background:var(--accent)}
 .tbar .cache,.legend i.cache{background:var(--accent-soft);box-shadow:inset 0 0 0 1px var(--accent)}
 .tbar .out,.legend i.out{background:#3b82a6}
+.tbar .cache-write,.legend i.cache-write{background:var(--dim)}
+.tbar .reasoning,.legend i.reasoning{background:#8764a0}
 .legend{display:flex;flex-wrap:wrap;gap:2px 10px}
 .legend span{display:flex;align-items:center;gap:4px}
 .legend i{display:inline-block;width:8px;height:8px;border-radius:2px}
@@ -44,6 +46,7 @@
 .bars .col{flex:1 1 0;min-width:0;height:100%;display:flex;flex-direction:column;
   justify-content:flex-end;align-items:stretch}
 .bars .bar{background:var(--accent);border-radius:3px 3px 0 0;min-height:1px;opacity:.85}
+.bars .bar.unknown{background:transparent;min-height:16px;color:var(--dim);text-align:center;overflow:hidden}
 .bars .col:hover .bar{opacity:1}
 .bars .x{font-size:10.5px;color:var(--dim);text-align:center;height:16px;overflow:visible;
   white-space:nowrap}

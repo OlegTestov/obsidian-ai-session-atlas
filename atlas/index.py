@@ -146,12 +146,14 @@ def _reread_newly_priced(conn: sqlite3.Connection) -> None:
     """Replies stored without a price whose model has one now (an update added it, or an older process
     still running stored them) get it by reading their sessions again: the database keeps no 5-minute /
     1-hour split of a cache write. The sources stay, so a vanished file is still purged."""
-    models = [m for (m,) in conn.execute("SELECT DISTINCT model FROM activity WHERE cost IS NULL AND model IS NOT NULL")
+    models = [m for (m,) in conn.execute("SELECT DISTINCT a.model FROM activity a JOIN sessions s USING (session_id) "
+              "WHERE a.cost IS NULL AND a.model IS NOT NULL AND s.agent = 'claude'")
               if costs.price_for(m) is not None]
     if not models:
         return
     marks = ",".join("?" * len(models))
     stale = (f"SELECT session_id FROM activity WHERE cost IS NULL AND model IN ({marks}) "
+             f"AND session_id IN (SELECT session_id FROM sessions WHERE agent='claude') "
              f"GROUP BY session_id ORDER BY MAX(ts) DESC LIMIT {int(REPRICE_BATCH)}")
     with search_rows.writing(conn):      # a write outside the marker would look like an old indexer's
         conn.execute(f"UPDATE sources SET sig = NULL WHERE sig IS NOT NULL AND session_id IN ({stale})", models)
@@ -195,6 +197,8 @@ def _note_cost(conn: sqlite3.Connection, session_id: str, seconds: float) -> Non
 
 def index_one(conn: sqlite3.Connection, path: str, agent: str) -> None:
     """A transcript Atlas has just written ("Resume with…"): in the catalog without waiting for a pass."""
+    if agent == agents.OPENCODE:
+        agents.require(agent, (agents.CLAUDE, agents.CODEX), "immediate indexing")
     adapter = agents.adapter(agent, operation="immediate indexing")
     ref = agents.SourceRef(agent, path)
     with writer_lock():
@@ -246,6 +250,7 @@ def index_all(conn: sqlite3.Connection, root: str = PROJECTS_ROOT,
     with writer_lock():
         # An old indexer can invalidate the lookup even when every source signature is unchanged.
         with search_rows.writing(conn):
+            db.ensure_activity_schema(conn)
             recovery, generation = conn.execute(
                 "SELECT recovery,generation FROM fts_guard WHERE id=1").fetchone()
         conn.commit()
@@ -277,6 +282,7 @@ def index_all(conn: sqlite3.Connection, root: str = PROJECTS_ROOT,
         known = {r["path"]: r for r in conn.execute("SELECT * FROM sources")}
         protected, owners = _protected_sources(conn, incomplete)
         present = set()
+        passes.sort(key=lambda item: any(ref.agent == agents.OPENCODE for ref in item[1]))
         for adapter, refs in passes:
             getattr(adapter, "_index_refs", _index_refs)(
                 conn, refs, home, known, present, stats, full, paced, protected)

@@ -46,17 +46,17 @@ def fake_registry(tmp_path, monkeypatch):
 
 
 def test_registry_filter_and_grammar(fake_registry):
-    assert agents.all() == ("claude", "codex", "fake")
+    assert agents.all() == ("claude", "codex", "opencode", "fake")
     assert agents.get("fake")["short"] == "Fake"
     assert agents.label("codex") == "Codex"
     assert agents.mail_prefix("claude") == "c"
     assert agents.parse_filter(["fake"]) == ["fake"]
     assert agents.parse_filter(["claude,codex,other,fake"]) == ["claude", "codex", "fake"]
-    assert agents.parse_filter(["claude,codex,fake"]) is None
+    assert agents.parse_filter(["claude,codex,opencode,fake"]) is None
     with pytest.raises(agents.UnknownAgent, match="other"):
         agents.parse_filter(["other"])
-    assert [agents.valid_id(kind, UUID) for kind in agents.all()] == [True, True, False]
-    assert [agents.valid_id(kind, FAKE_ID) for kind in agents.all()] == [False, False, True]
+    assert [agents.valid_id(kind, UUID) for kind in agents.all()] == [True, True, False, False]
+    assert [agents.valid_id(kind, FAKE_ID) for kind in agents.all()] == [False, False, False, True]
     for invalid in ("-" * 36, UUID + "\n", UUID.replace("-", ""), None):
         assert not agents.valid_id("claude", invalid)
     assert not agents.valid_id("fake", FAKE_ID.upper())

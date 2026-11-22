@@ -16,8 +16,8 @@ def test_install_puts_agent_scripts_where_saved_tabs_expect_them(tmp_path):
     mod.install(str(tmp_path), enable=False)
     src = os.path.join(HERE, "obsidian-plugin", "scripts")
     names = sorted(os.listdir(src))
-    assert names == ["agent-claude.zsh", "agent-codex.zsh", "agent-kinds.zsh", "agent-registry-lib.zsh",
-                     "agent-resume-terminal.zsh", "agent-session-hook.zsh",
+    assert names == ["agent-claude.zsh", "agent-codex.zsh", "agent-kinds.zsh", "agent-opencode.zsh",
+                     "agent-registry-lib.zsh", "agent-resume-terminal.zsh", "agent-session-hook.zsh",
                      "agent-sessions-lib.zsh"]
     for name in names:
         dest = tmp_path / ".obsidian" / "scripts" / name

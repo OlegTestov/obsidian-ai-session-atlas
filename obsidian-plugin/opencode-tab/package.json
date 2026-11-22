@@ -1,0 +1,6 @@
+{
+  "name": "session-atlas-opencode-tab",
+  "version": "1.0.0",
+  "type": "module",
+  "exports": { "./tui": "./tui.mjs" }
+}

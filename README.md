@@ -2,12 +2,13 @@
 
 **[Install from Obsidian Community Plugins](https://community.obsidian.md/plugins/session-atlas)** · [Русская версия](README.ru.md)
 
-AI Session Atlas is an Obsidian plugin for macOS for people who work with Claude Code and Codex
-every day. It indexes the session transcripts of both agents (`~/.claude/projects` and Codex's
-`~/.codex/sessions`) into one searchable catalog, shows running sessions as live cards you can answer
-from, counts tokens and cost, and runs Claude Code and Codex in terminal tabs inside Obsidian that
-reopen the same session after a restart. Everything runs locally: the plugin starts a small Python
-server on `127.0.0.1`, and nothing is sent anywhere unless you turn on the optional AI features.
+AI Session Atlas is an Obsidian plugin for macOS that brings Claude Code, Codex and OpenCode 2
+sessions into one searchable catalog. Search and Statistics (tokens and cost) cover all three agents,
+and each runs in an Obsidian terminal tab that reopens the same session after a restart. Active shows
+live cards you can answer from for Claude Code and Codex. For OpenCode, it shows a card for each
+running Atlas tab with its title, folder, **Go** and **Close**. Everything runs locally: the plugin
+starts a small Python server on `127.0.0.1`, and nothing is sent anywhere unless you turn on the
+optional AI features.
 
 ![AI Session Atlas: live agent cards, search, statistics, rhythm and limits (demo data)](https://github.com/OlegTestov/obsidian-ai-session-atlas/raw/main/docs/images/collage-en.png)
 
@@ -27,6 +28,7 @@ server on `127.0.0.1`, and nothing is sent anywhere unless you turn on the optio
   A copy made with **Copy session** (`claude --fork-session` or `codex fork`, also /branch or /fork in
   the agent) that keeps its source's name shows as "Name (2)", "(3)"…; its card links to the source
   ("Copy of …") and the source lists its copies ("Copies: …").
+  OpenCode 2 sessions also appear here, with an **OpenCode** filter and native session actions.
 - **Active.** Every running Claude Code session and every interactive Codex session as a card: what
   it is doing, what it said last, whether it waits for you. For sessions running in an AI Session
   Atlas terminal tab you can also:
@@ -43,16 +45,19 @@ server on `127.0.0.1`, and nothing is sent anywhere unless you turn on the optio
   **Terminal** lets you type into the running session in an Atlas tab and scroll through its output.
   **Steps** shows tools, commands and errors in order. **Files** shows which files the agent read or changed.
   Each card also shows the agent's task list or plan checklist. You can move a session from another
-  terminal app into an Obsidian tab. The header shows each agent's 5-hour and weekly limits when known.
+  terminal app into an Obsidian tab. The header shows Claude Code and Codex subscription limits when
+  known. An OpenCode tab card shows the title, folder, **Go** and **Close**. OpenCode support does
+  not yet include live card content or replies, Agent Mail in Atlas OpenCode tabs, AI summaries,
+  AI classification, **Resume with…**, or subscription limits.
 - **Statistics.** Tokens, active time, cost at API prices and cache hit rate over a period, broken
-  down by agent (Claude Code, Codex), model, category, topic, session, tool, skill and subagent, plus a
-  weekly rhythm heatmap. Claude Code replies are priced at Anthropic API prices, Codex replies at
-  OpenAI API prices. The cache tile also shows what rewriting the cache cost: replies that sent the
-  context again after a pause or a context change. At 10% of the period's cost or more the tile is
-  highlighted; ⓘ shows the causes and a panel lists the sessions that paid the most.
+  down by agent (Claude Code, Codex, OpenCode), model, category, topic, session, tool, skill and
+  subagent, plus a weekly rhythm heatmap. Claude Code replies are priced at Anthropic API prices,
+  Codex replies at OpenAI API prices. OpenCode supplies its own cost estimates. The cache tile also
+  shows the cost of sending context again after a pause or a context change. At 10% of the period's
+  cost or more the tile is highlighted. ⓘ shows the causes and a panel lists the sessions that paid the most.
 - **Updates at a glance.** A short, visual “What’s new” summary once after an update. Reopen it from the command palette; automatic summaries can be turned off in settings.
-- **Agent terminals.** Ribbon buttons and commands open Claude Code or Codex in a terminal tab inside
-  Obsidian. Each tab remembers the session it holds; after Obsidian restarts every agent tab brings its
+- **Agent terminals.** Ribbon buttons and commands open Claude Code, Codex or OpenCode in an Obsidian
+  terminal tab. Each tab remembers the session it holds; after Obsidian restarts every agent tab brings its
   session back by itself, one at a time, without opening each tab. Closing a tab with a running agent
   asks for confirmation. A Claude Code session that runs in a background job of Claude Code (sent there
   with ← on an empty prompt or `/background`, or opened with `claude attach`) outlives its tab: the
@@ -154,6 +159,38 @@ Checked with codex-cli 0.167.0. Differences from Claude Code:
   A request goes only to the agent its preview named: if the settings now point elsewhere, the page
   asks to open the preview again.
 
+### OpenCode support
+
+Search, Statistics and terminal tabs support OpenCode 2. Atlas was checked with **OpenCode 2.3.2**.
+
+- **Sessions.** Atlas opens `opencode.db` read-only and never writes to it directly. The default
+  location is `~/.local/share/opencode/opencode.db` or `$XDG_DATA_HOME/opencode/opencode.db` when set.
+  To use a different folder, set **Settings → AI Session Atlas → Advanced: integrations → OpenCode data folder**.
+  OpenCode 1 databases yield no new sessions in Search or Statistics. **Status → OpenCode** shows
+  “OpenCode 1 is unsupported — upgrade to OpenCode 2”.
+- **Search and Statistics.** Atlas indexes session titles, prompt and reply text, tool names, shell
+  commands and paths passed to OpenCode's read, edit and write tools. Reasoning text, tool output,
+  attachments and compaction text are excluded. Statistics uses the model, token counts (including
+  reasoning and cache tokens) and cost reported by OpenCode. If no positive cost is recorded for a
+  model's replies, its cost is unknown and appears as a dash.
+- **Child sessions and forks.** Child sessions are searchable under the parent and their usage is
+  included in its statistics. Native forks have their own Search entries linked to the original.
+  Statistics counts the fork's new turns without counting the copied turns again.
+- **Tabs.** Open a new tab in the vault folder with the OpenCode ribbon button or the
+  **New OpenCode session** command. When the OpenCode button is enabled, **+ Session** in Active
+  offers OpenCode in the agent list and lets you pick a working folder. **Resume** on a Search card
+  reopens a session in its own folder.
+  With OpenCode 2.3.2, Atlas tracks the tab's session as you use `/new`, `/sessions` and `/fork`, so
+  the tab can reopen its last session after a restart.
+- **Copy session** creates a native fork through the local OpenCode service and opens it in a new tab.
+  **Rename**, **Archive**, **Unarchive** and **Delete** also go through OpenCode, and Atlas reads back
+  the result. The Delete confirmation lists the child sessions that OpenCode will also remove.
+- **Local service.** Indexing and Search read the database without starting OpenCode. Status and
+  the Delete availability check may query a running service. Opening an Atlas OpenCode tab or using
+  a native session action can start OpenCode's managed service when it is stopped. Atlas verifies
+  that the service uses the catalog's database. Atlas connects only over loopback and leaves
+  `OPENCODE_PASSWORD` and `OPENCODE_SERVER_PASSWORD` out of the terminal client's environment.
+
 ### Resume with another agent
 
 **Resume with…** on a Search card lists Claude Code and Codex. The session's own agent is the ordinary
@@ -205,16 +242,17 @@ terminal tab with that agent's ordinary resume. Checked with Claude Code 2.1.289
 | macOS | 12 Monterey or newer |
 | Obsidian | Desktop app, 1.8.7 or newer |
 | Python | `python3` 3.8 or newer whose SQLite supports FTS5 with the trigram tokenizer. The system `python3` comes with Xcode Command Line Tools |
-| Agents | Claude Code installed and signed in. Codex is optional; checked with codex-cli 0.167.0 |
+| Agents | Claude Code installed and signed in. Codex is optional (checked with codex-cli 0.167.0). OpenCode is optional (checked with OpenCode 2.3.2). |
 
 The plugin looks for `python3` in this order: the path set in **Settings → AI Session Atlas → Advanced → Custom
 python3**, `/usr/bin/python3` (only when Command Line Tools are installed, so the plugin never runs
 the stub that opens the installer), `/opt/homebrew/bin/python3`, `/usr/local/bin/python3`. If none
-fits, a notice says so, and **Settings → AI Session Atlas → Installation check** shows every candidate it tried and an
+fits, a notice says so, and **Settings → AI Session Atlas → Status** shows the Python check and an
 **Install Command Line Tools** button (it runs `xcode-select --install`).
 
-`claude` and `codex` are found on the `PATH` of your login shell. The plugin needs no Homebrew, Node,
-tmux or other Obsidian plugins.
+Atlas looks for `claude`, `codex` and `opencode` on the `PATH` of your login shell. For OpenCode it
+also tries `opencode2` if `opencode` is missing. The plugin needs no Homebrew, Node, tmux or other
+Obsidian plugins.
 
 ## Installation
 
@@ -238,9 +276,9 @@ many sessions the first index can take a few minutes.
 - **Catalog.** Click the library icon in the ribbon or run **Open session catalog**. The tab has three
   sections: Search, Active and Statistics.
 - **Agent filter.** Search, Active and Statistics each have an **Agent** list with Claude Code and
-  Codex. Both are ticked by default, one always stays ticked, and the choice is remembered for each
-  section.
-- **Terminals.** Click the Claude Code or Codex icon in the ribbon. A tab starts in the vault folder
+  Codex. The OpenCode filter appears when Atlas detects OpenCode or has indexed OpenCode sessions.
+  Agents are ticked by default, at least one stays ticked, and the choice is remembered for each section.
+- **Terminals.** Click the Claude Code, Codex or OpenCode icon in the ribbon. A tab starts in the vault folder
   and runs your login shell. Sessions opened from the catalog start in their own working folder.
 - **Commands:**
 
@@ -249,23 +287,24 @@ many sessions the first index can take a few minutes.
   | Open session catalog | `open-catalog` |
   | Open Claude Code terminal | `open-claude-code-terminal` |
   | Open Codex terminal (when Codex is enabled) | `open-codex-terminal` |
+  | New OpenCode session (when OpenCode is enabled) | `new-opencode-session` |
   | Reload the plugin (tabs and sessions stay) | `reload-plugin` |
 
   Command names follow the plugin language; the table shows the English ones.
 - **Settings:**
-  - *Installation check:* macOS, `python3`, Claude Code, Codex, the server, the index (with a
-    Rebuild button) and the subscription limits switch.
+  - *Status:* agent availability, OpenCode service status, and catalog status with a **Rescan** button.
+    Details for macOS, Python and executable paths are under **Advanced: diagnostics**.
   - *Language:* English, Russian or as in Obsidian (the default). Topics, summaries and session notes are
     written in the same language.
-  - *Agents:* turn Claude Code and Codex on or off; until you do, each is on when the plugin finds it
-    at start-up, extra launch arguments for each (for example
-    `--chrome`), the Codex "waiting for you" hook (off by default), and the terminal font size.
+  - *Agents:* show or hide the Claude Code, Codex and OpenCode buttons. By default the plugin shows
+    buttons for the agents it finds at start-up. Settings also include extra launch arguments for
+    each agent, the Codex "waiting for you" hook (off by default) and the terminal font size.
   - *Catalog:* note folders, project roots, categories, note areas mapped to categories, sensitive areas
     and projects, ticket prefixes. These live in `config.json` in the data folder.
   - *AI features:* on/off, model and effort for each task, 1M-token window, which agent runs them
     (Auto, Claude Code, Codex) and the Codex model.
   - *Other:* notices and how long they stay, macOS notifications, file explorer clicks.
-  - *Advanced:* custom `python3` path and terminal shell.
+  - *Advanced:* custom `python3` path, terminal shell, subscription limits switch and OpenCode data folder.
 - **Codex prices.** `openai_prices` in `config.json` fixes or adds the price of a Codex model, in US
   dollars per 1 million tokens:
   `{"openai_prices": {"<model>": {"input": 2, "cached_input": 0.2, "output": 10}}}`.
@@ -297,14 +336,17 @@ developer policies.
 
 **Network.**
 - The plugin starts a local HTTP server bound to `127.0.0.1` on port 8787. The catalog tab is a page
-  served by it; the plugin and the page talk only to this server.
-- The plugin and its server make no other network requests. There is no telemetry, no analytics, no
-  update check, no ads and no account.
+  served by it. The page sends catalog requests to this server.
+- For OpenCode, the Atlas server and tab launcher connect to the managed service's registered
+  loopback HTTP address. They authenticate locally and verify the listener. The server checks service
+  status and session activity and sends session actions. The OpenCode terminal client uses the same
+  managed service, handling its own authentication. Atlas does not pass service passwords to the TUI.
+- Atlas has no telemetry, analytics, update checks, ads or account.
 - The optional AI features run your own `claude` CLI, which sends data to Anthropic under your
   Claude Code account, or, when only Codex is installed or you pick it, your own `codex` CLI, which
   sends data to OpenAI under your Codex login (see "AI features" below).
-- Claude Code and Codex running in terminal tabs connect to their providers as they always do. The
-  plugin does not send anything to OpenAI itself.
+- Claude Code, Codex and OpenCode running in terminal tabs connect to their model providers as usual.
+  The plugin does not contact model providers itself.
 - For the limits in the header on every view, the server may run your `codex app-server` at most
   once every five minutes per Codex home. It skips the live read if the executable or the Codex
   home is missing. Codex asks OpenAI for your account's usage with its own login, as `/status` does.
@@ -341,6 +383,9 @@ never started.
 | `~/.codex/skills/`, `~/.agents/skills/`, `~/.codex/models_cache.json` | read | The Codex command list and `/model` picker in Active |
 | `~/.codex/config.toml` | read | The model provider a new Codex session names (**Resume with… → Codex**); its MCP servers, which Active does not count as background commands |
 | `~/.codex/hooks.json` | write, only when you turn on **Codex: "waiting for you" outside tabs** | Adds the AI Session Atlas hook; a copy of an existing file is kept next to it (`hooks.json.session-atlas.bak`); turning it off removes only that hook, and only while it is the last one (otherwise it stays and does nothing) |
+| `~/.local/share/opencode/opencode.db` (or `$XDG_DATA_HOME/opencode/opencode.db`, or the configured folder) | read-only | OpenCode sessions, including SQLite's write-ahead log when present. OpenCode itself writes its database when it runs or carries out native actions. |
+| `~/.config/opencode/cli.json` (or `$XDG_CONFIG_HOME/opencode/cli.json`) | read | Reads existing TUI plugin settings before adding the bundled route tracker for the launched tab through its environment. Atlas also checks for the legacy `tui.json`. |
+| `~/.local/state/opencode/service.json` (or `$XDG_STATE_HOME/opencode/service.json`) | Atlas reads; OpenCode writes when starting its service | Private registration with the local service address, process ID, version and password. The service keeps its own runtime files. |
 | `~/Library/Application Support/session-atlas/` | read, write | The plugin's data folder: unpacked server, index, settings, logs (see "Privacy & data location") |
 | `~/.local/state/obsidian-agent-terminals/` (or `$XDG_STATE_HOME/obsidian-agent-terminals/`) | read, write | Which session each terminal tab holds, so the tab can resume it |
 | `~/.claude/settings.json` | write, on first install when it has no status line, or when you turn on **Subscription limits** | Adds the AI Session Atlas status line (see below) |
@@ -450,7 +495,8 @@ its session files and its subagent threads' files in `~/.codex/sessions/` and
 `~/.codex/archived_sessions/`, its lines in `~/.codex/history.jsonl`, its session notes and its catalog
 data. If Codex cannot delete it (not installed, too old), the files are
 removed anyway and Codex may list the thread for a while, until it notices the file is gone. Files are
-deleted, not moved to the Trash. A running session cannot be deleted.
+deleted, not moved to the Trash. A running session cannot be deleted. For OpenCode, the confirmation
+lists child sessions, and the local OpenCode service deletes the session and its children.
 
 ## Privacy & data location
 
@@ -459,20 +505,24 @@ created with permissions that only your user can read. It contains:
 
 | Item | Content |
 |---|---|
-| `runtime/` | The server, the page and the tab scripts unpacked from `main.js` |
-| `atlas.sqlite3` | The search index of Claude Code and Codex sessions, topics, summaries and your edits |
-| `config.json` | Catalog and AI settings, Codex prices |
+| `runtime/` | The server, the page and the tab scripts unpacked from `main.js`, including the OpenCode launcher in `scripts/agent-opencode.zsh` and the route plugin in `opencode-tab/` |
+| `atlas.sqlite3` | The search index of Claude Code, Codex and OpenCode sessions, topics, summaries and your edits. OpenCode rows include projected text, metadata, usage and records of copy requests. |
+| `config.json` | Catalog and AI settings, Codex prices and the optional OpenCode data folder override |
 | `context.md` | Notes about you for the topic classifier; edit it by hand |
 | `csrf.token` | The token that protects the local server |
 | `server.log` | Server log |
-| `agent-args/` | Extra launch arguments for Claude Code and Codex |
+| `agent-args/` | Extra launch arguments for Claude Code, Codex and OpenCode (`agent-args/opencode`) |
+| `opencode-tabs/` | Per-tab launch `.json` and `.route` files, `layout-*.json` for launches in progress, `.sent` first-prompt markers and `.exited` launch markers. Updates to launch, route and layout records use temporary files. |
+| `opencode-actions.lock` | Coordinates native session actions and tab launches |
 | `agent-mail-args/` | Agent Mail launch flags that Atlas writes for the tab script |
 | `uploads/` | Images attached to replies; removed after 7 days |
 | `handoffs/`, `payloads/`, `runner/` | AI feature output, previews of sent text, the working folder of `claude -p` |
 | `rate-limits.json` | Subscription limits, when the status line is enabled |
 
 Plugin settings (language, agents, notifications) are stored by Obsidian in
-`<vault>/.obsidian/plugins/session-atlas/data.json`.
+`<vault>/.obsidian/plugins/session-atlas/data.json`. Obsidian saves OpenCode terminal tabs with its
+workspace layout. The catalog keeps an unfinished OpenCode copy request ID in local storage so you
+can retry it after a reload.
 
 ## Uninstall
 
@@ -491,21 +541,27 @@ by hand; Codex then asks you to trust the hooks after it again.
 Alternatively, restore `~/.codex/hooks.json.session-atlas.bak` (or delete `hooks.json` if the plugin
 created it). Otherwise the plugin adds nothing to the Codex home.
 
+Deleting the Atlas data folder also removes the OpenCode launcher, route plugin, tab records and
+action lock. OpenCode owns its database and service registration. If you no longer need the shared
+service, stop it using OpenCode after closing its clients.
+
 ## Troubleshooting
 
 | Symptom | Fix |
 |---|---|
-| Notice "Xcode Command Line Tools (python3) are needed" | Run `xcode-select --install` or press **Install Command Line Tools** in **Settings → AI Session Atlas → Installation check**. Then press **Retry** on the AI Session Atlas tab. If you use another Python, set its path in **Settings → AI Session Atlas → Advanced → Custom python3**. |
+| Notice "Xcode Command Line Tools (python3) are needed" | Run `xcode-select --install` or press **Install Command Line Tools** in **Settings → AI Session Atlas → Status**. Then press **Retry** on the AI Session Atlas tab. If you use another Python, set its path in **Settings → AI Session Atlas → Advanced → Custom python3**. |
 | "no python3 fits (...)" | The listed interpreters are older than 3.8 or their SQLite lacks FTS5 with the trigram tokenizer. Update Command Line Tools in Software Update or set a custom `python3`. |
 | "the port is used by another program" | Another program listens on `127.0.0.1:8787`. The port is fixed; stop that program and press **Retry**. A server left over from an older AI Session Atlas version is stopped and replaced automatically. |
-| "the server did not start, see ..." | Read `~/Library/Application Support/session-atlas/server.log`. Press **Restart** in **Settings → AI Session Atlas → Installation check** after fixing the cause. |
+| "the server did not start, see ..." | Read `~/Library/Application Support/session-atlas/server.log`. Press **Restart catalog** in **Settings → AI Session Atlas → Status** after fixing the cause. |
 | Claude Code shows as not found, or a tab cannot start `claude` | Tabs run your login shell (`-l -i`). Make sure your shell profile puts `claude` on the `PATH`, or set another shell in **Settings → AI Session Atlas → Advanced → Terminal shell**. |
-| Search shows old results | Press **Rebuild** next to "Session index" in **Settings → AI Session Atlas → Installation check**. |
+| Search shows old results | Press **Rescan** next to **Catalog** in **Settings → AI Session Atlas → Status**. |
 | Codex shows as not found, or a Codex tab cannot start `codex` | Codex is optional. Make sure your shell profile puts `codex` on the `PATH`, as for `claude`, then turn Codex on in **Settings → AI Session Atlas → Agents**. |
 | Codex sessions are missing from Search | The catalog reads `$CODEX_HOME` or `~/.codex`. If you moved the Codex home with `CODEX_HOME`, Obsidian must have the variable in its environment too (for example `launchctl setenv CODEX_HOME /path/to/codex-home`, then restart Obsidian). Then press **Rebuild**. Check that Codex is ticked in the **Agent** filter. |
 | A Codex tab starts a new session after a restart instead of the old one | The tab script looks for the session in `~/.codex/sessions/` only. With a moved Codex home, resume the session from Search. |
 | A Codex card never shows that it waits for you | Codex permission prompts are read from the screen of the plugin's own tab. Move the session into a tab with **Move**. |
 | A running Codex session is missing from Active | Only interactive terminal clients are shown. Plugin tabs use `--no-daemon` when available. For external clients using a shared server, only an explicit `codex resume <id>` can be matched; switching threads inside that external client cannot be tracked reliably. Restart that client with `codex --no-daemon resume <id>` for full tracking. The shared server is never stopped by Move. |
+| OpenCode sessions are missing from Search or Statistics | Check **Settings → AI Session Atlas → Status → OpenCode**. OpenCode 1 databases are unsupported. Upgrade to OpenCode 2 or point **OpenCode data folder** at the folder containing your OpenCode 2 `opencode.db`, then press **Rescan** and check the **Agent** filter. |
+| OpenCode or its service cannot be found or verified | Put `opencode` (or `opencode2`) and `lsof` on the login shell `PATH`. Check that the OpenCode 2 managed service runs locally with the same data folder as Atlas. If it is stopped, opening a tab or choosing a native session action can start it. |
 
 ## Development
 

@@ -21,7 +21,8 @@ import { AtlasView } from "./view";
 import { AgentTerminalView } from "./term-view";
 import { openTerminalMirror } from "./term-mirror";
 import { HeldMethods, keepHeldTabs } from "./held";
-import { AgentMethods } from "./agents";
+import { AgentMethods, supportsTerminal } from "./agents";
+import { readOpenCodeTab, watchOpenCodeLayout } from "./opencode-tab";
 import { GuardMethods } from "./guard";
 import { BackgroundTabMethods } from "./bg-session";
 import { RuntimeMethods } from "./runtime";
@@ -94,6 +95,7 @@ class SessionAtlasPlugin extends PluginData {
       .then(() => (firstRun ? this.firstRunSetup() : null))
       .catch((error) => console.error("AI Session Atlas: agents check or first-run setup failed", error)));
     this.app.workspace.onLayoutReady(() => this.watchOwnBuild());
+    this.app.workspace.onLayoutReady(() => watchOpenCodeLayout(this));
     // Held processes whose tabs are still in the layout wait for them; the rest are offered back.
     this.app.workspace.onLayoutReady(() => { keepHeldTabs(this.app.workspace); this.offerHeldTabs(); });
     // Every agent comes back without its tab having to be shown first.
@@ -235,7 +237,13 @@ class SessionAtlasPlugin extends PluginData {
     if (!data || data.source !== "session-atlas") return;
     if (data.type === "resume" || data.type === "new-session") {
       if (typeof data.command !== "string" || !data.command) return;
-      this.openCommandInTerminal(data.command, data.cwd, data.title || "Claude");
+      const opened = this.openCommandInTerminal(data.command, data.cwd, data.title || "Claude");
+      if (typeof data.launchRequest === "string" && data.launchRequest.length <= 80) {
+        const report = ok => event.source?.postMessage({
+          source: HOST_SOURCE, type: "launch-result", request: data.launchRequest, ok: ok === true,
+        }, this.atlasOrigin());
+        opened.then(report, () => report(false));
+      }
       return;
     }
     if (data.type === "list-tabs") {
@@ -334,7 +342,7 @@ class SessionAtlasPlugin extends PluginData {
       held: this.heldTabs().map(({ ptyPid, title, agent }) => ({ ptyPid, title, agent })),
       health,
       // The page offers only the agents enabled here (Settings → Agents).
-      agents: Object.fromEntries(agentKinds.map(kind => [kind, this.agentEnabled(kind)])),
+      agents: Object.fromEntries(agentKinds.filter(supportsTerminal).map(kind => [kind, this.agentEnabled(kind)])),
       groups: true,                    // tabs can be put into session groups from the page
       unread: this.unreadIds(),        // sessions that finished while you were not looking
       front: this.atlasInFront(target),      // the page is read even when the keyboard focus is outside it
@@ -352,6 +360,11 @@ class SessionAtlasPlugin extends PluginData {
     if (group) info.group = group;
     const job = leaf.view && leaf.view.backgroundJob;
     if (job) info.background = job;               // the card offers Bring back, as the tab menu does
+    if (this.tabAgent(leaf) === "opencode") {
+      const state = leaf.view.state;
+      const record = readOpenCodeTab(this.dataDir(), state.instance);
+      Object.assign(info, { agent: "opencode", cwd: record?.cwd || state.cwd, sessionId: record?.current });
+    }
     if (this.tabAgent(leaf) === "codex") {
       const lines = this.screenLines(leaf);
       info.agent = "codex";

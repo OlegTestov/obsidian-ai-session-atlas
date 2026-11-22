@@ -12,7 +12,7 @@
    * The session's own agent is always available: it is the ordinary resume.
    */
   function choices(own, host, embedded) {
-    return root.AtlasLogic.AGENTS.map((agent) => {
+    return root.AtlasLogic.AGENTS.filter(agent => agent !== "opencode").map((agent) => {
       const on = !embedded || (agent === "claude" ? !(host && host.claude === false) : host?.[agent] === true);
       return { agent, own: agent === own, enabled: agent === own || on };
     });

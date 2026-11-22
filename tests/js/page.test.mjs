@@ -647,20 +647,21 @@ describe("English: the same functions after switching the language", () => {
 
 // Agent filter: both agents by default, at least one stays ticked, the request names only a narrowed pick.
 describe("agent filter", () => {
-  test("default pick is both agents", () => {
-    assert.equal(json(L.agentSelection(undefined)), '["claude","codex"]');
-    assert.equal(json(L.agentSelection([])), '["claude","codex"]');
+  test("default pick is all registered agents", () => {
+    assert.equal(json(L.agentSelection(undefined)), '["claude","codex","opencode"]');
+    assert.equal(json(L.agentSelection([])), '["claude","codex","opencode"]');
   });
   test("stored pick: unknown values are dropped, order is fixed", () => {
     assert.equal(json(L.agentSelection(["codex", "gemini", "codex"])), '["codex"]');
     assert.equal(json(L.agentSelection(["codex", "claude"])), '["claude","codex"]');
   });
-  test("stored pick of only unknown values or garbage falls back to both", () => {
-    assert.equal(json(L.agentSelection(["gemini"])), '["claude","codex"]');
-    assert.equal(json(L.agentSelection("codex")), '["claude","codex"]');
+  test("stored pick of only unknown values or garbage falls back to all", () => {
+    assert.equal(json(L.agentSelection(["gemini"])), '["claude","codex","opencode"]');
+    assert.equal(json(L.agentSelection("codex")), '["claude","codex","opencode"]');
   });
-  test("request parameter: omitted for both, named for one", () => {
-    assert.equal(L.agentParam(["claude", "codex"]), "");
+  test("request parameter: omitted for all, named for a subset", () => {
+    assert.equal(L.agentParam(["claude", "codex"]), "claude,codex");
+    assert.equal(L.agentParam(["claude", "codex", "opencode"]), "");
     assert.equal(L.agentParam(["codex"]), "codex");
     assert.equal(L.agentParam(["claude"]), "claude");
   });

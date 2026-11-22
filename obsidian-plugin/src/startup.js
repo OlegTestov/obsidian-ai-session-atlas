@@ -7,6 +7,7 @@ import * as childProcess from "child_process";
 import * as path from "path";
 import { AGENT_VIEW_TYPE } from "./constants";
 import { restoreAgent, supportsTerminal } from "./agents";
+import { openCodeChildEnv } from "./opencode-tab";
 
 // Each agent starts its MCP servers: one at a time keeps a start-up with many tabs bearable. The next
 // tab waits for this one's agent to start (a login shell first): its script must see what runs where.
@@ -92,7 +93,8 @@ class StartupMethods {
     let text;
     try {
       text = childProcess.execFileSync("/bin/ps", ["-A", "-o", "pid=,ppid=,command="],
-                                       { encoding: "utf8", timeout: 5000, maxBuffer: 64 << 20 });
+                                       { encoding: "utf8", timeout: 5000, maxBuffer: 64 << 20,
+                                         env: openCodeChildEnv() });
     } catch {
       return 0;
     }
@@ -114,7 +116,8 @@ class StartupMethods {
       let text = "";
       try {
         if (pty) text = childProcess.execFileSync("/bin/ps", ["-A", "-o", "pid=,ppid=,command="],
-                                                  { encoding: "utf8", timeout: 3000, maxBuffer: 64 << 20 });
+                                                  { encoding: "utf8", timeout: 3000, maxBuffer: 64 << 20,
+                                                    env: openCodeChildEnv() });
       } catch { /* try again */ }
       if (pty && agentUnder(text, pty.pid)) return true;
       await new Promise((resolve) => window.setTimeout(resolve, 300));

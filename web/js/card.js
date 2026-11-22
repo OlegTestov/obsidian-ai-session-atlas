@@ -118,6 +118,7 @@ function classifyBlock(s) {
 // the work must not look like a choice among four equal options.
 function actionBar(s) {
   const bar = el("div", null); bar.id = "bar";
+  if (s.agent === "opencode") return openCodeActionBar(bar, s);
   const resume = el("button", "primary", i18n("card.resume"));
   resume.addEventListener("click", () => showResume(s));
   // The same conversation in the other agent (resume-with.js): a menu of both, next to Resume.
@@ -170,22 +171,26 @@ async function openCard(id) {
 
   const frag = document.createDocumentFragment();
   const h3 = el("h3", null, s.title || id);
+  const openCode = s.agent === "opencode";
   h3.title = i18n("card.dblclickRename");
   h3.addEventListener("dblclick", () => renameSession(s));
   frag.appendChild(h3);
   const sub = el("p", "sub");
-  sub.append(agentBadge(s), document.createTextNode(
+  const badge = agentBadge(s);
+  if (openCode) badge.classList.add("brand-size");
+  sub.append(badge, document.createTextNode(
     " " + i18n("card.subUpdated", { kind: s.session_kind, when: ago(s.last_activity_at) })
     + (s.title_source === "manual" ? i18n("card.manualName") : "") + "  "));
   const ren = el("button", "ghost", i18n("card.rename"));
   ren.addEventListener("click", () => renameSession(s));
   sub.appendChild(ren);
+  if (openCode && s.actions?.archived) sub.append(" · ", i18n("opencode.archived"));
   frag.appendChild(sub);
   const lineage = lineageBlock(s);
   if (lineage) frag.appendChild(lineage);
 
   frag.appendChild(stateBlock(s.state));
-  frag.appendChild(summaryBlock(s.summary, s.card_line, s.topic_confidence));
+  if (!openCode) frag.appendChild(summaryBlock(s.summary, s.card_line, s.topic_confidence));
 
   if (s.files && s.files.length) {
     // Collapsed, like prompts and metadata: a long list does not push the rest down.
@@ -207,7 +212,7 @@ async function openCard(id) {
 
   frag.appendChild(classifyBlock(s));
 
-  frag.appendChild(catalogFeed(s));
+  frag.appendChild(openCode ? catalogPrompts(s) : catalogFeed(s));
 
   // Technical details go down and collapsed: continuing the work does not need them.
   const tech = el("details", "block");
@@ -237,7 +242,8 @@ function renameSession(s) {
   input.value = s.title || "";
   error.textContent = "";
   // Codex renames its own thread (Codex's own command); Claude Code reads the appended record.
-  $("#rename-note").textContent = i18n(s.agent === "codex" ? "card.renameNoteCodex" : "card.renameNote");
+  const note = { codex: "card.renameNoteCodex", opencode: "opencode.renameNote" };
+  $("#rename-note").textContent = i18n(note[s.agent] || "card.renameNote");
   $("#rename").showModal();
   input.focus();
   input.select();

@@ -1,7 +1,7 @@
 // Agent filter (Claude Code / Codex) for Search, Active and Statistics, and the agent badge.
 // Classic script: shares one global scope with the other page files.
 /* exported agentFilter, agentQuery, agentFiltered, agentPassesView, resetAgents, closeAgentFilters -- used by other page scripts */
-/* exported agentBadge, agentName, agentShort, agentPick, agentControls, withTabScreen -- used by other page scripts */
+/* exported agentBadge, agentName, agentShort, agentPick, agentControls, withTabScreen, setOpenCodeAvailable -- used by other page scripts */
 // The same dropdown as the Active filters (.ms), but both agents are ticked by default and one
 // always stays ticked. The pick is remembered per view in this browser: losing it is harmless.
 const AGENTS_KEY = "atlas.agents";
@@ -12,6 +12,7 @@ const agentPick = (() => {
   AGENT_VIEWS.forEach(v => { out[v] = AtlasLogic.savedAgentSelection(saved && saved[v]); });
   return out;
 })();
+let opencodeAvailable = window.ATLAS_OPENCODE_AVAILABLE === true;
 const agentUI = {};                  // view → {btn, pop, list, fill}
 
 function agentName(agent) {
@@ -55,24 +56,43 @@ function agentBadge(s) {
   return b;
 }
 
-function agentFiltered(view) {
-  return agentPick[view].length < AtlasLogic.AGENTS.length;
+function shownAgents(view) {
+  return AtlasLogic.AGENTS.filter(kind => kind !== "opencode" || opencodeAvailable);
 }
 
-/** The `agent` request parameter of a view: "" when both agents are picked. */
+function setOpenCodeAvailable(available) {
+  if (typeof available !== "boolean" || available === opencodeAvailable) return;
+  opencodeAvailable = available;
+  for (const view of AGENT_VIEWS) refreshAgentButton(view);
+}
+
+function viewSelection(view) {
+  const visible = shownAgents(view);
+  const selected = visible.filter(kind => agentPick[view].includes(kind));
+  return selected.length ? selected : visible;
+}
+
+function agentFiltered(view) {
+  return shownAgents(view).length > viewSelection(view).length;
+}
+
+/** Omit the parameter when every visible agent is selected. */
 function agentQuery(view) {
-  return AtlasLogic.agentParam(agentPick[view]);
+  return agentFiltered(view) ? AtlasLogic.agentParam(viewSelection(view)) : "";
 }
 
 function agentPassesView(view, s) {
-  return AtlasLogic.agentPasses(s, agentPick[view]);
+  return viewSelection(view).includes(AtlasLogic.agentOf(s));
 }
 
 function setAgents(view, list) {
   agentPick[view] = AtlasLogic.agentSelection(list);
-  store(AGENTS_KEY, Object.fromEntries(AGENT_VIEWS.map(v => [
-    v, AtlasLogic.storedAgentSelection(agentPick[v]),
-  ])));
+  store(AGENTS_KEY, Object.fromEntries(AGENT_VIEWS.map(v => {
+    const selected = viewSelection(v);
+    const originalPair = AtlasLogic.AGENTS.length === 3 && selected.join(",") === "claude,codex"
+      && !shownAgents(v).includes("opencode");
+    return [v, originalPair || selected.length === 1 ? selected : AtlasLogic.storedAgentSelection(agentPick[v])];
+  })));
   refreshAgentButton(view);
 }
 
@@ -98,18 +118,19 @@ function agentFilter(view, onChange, opts) {
   pop.appendChild(list);
   const fill = () => {
     const n = counts ? counts() : null;
-    list.replaceChildren(...AtlasLogic.AGENTS.map(a => {
+    const selected = viewSelection(view);
+    list.replaceChildren(...shownAgents(view).map(a => {
       const label = el("label");
       const box = el("input");
       box.type = "checkbox";
-      box.checked = agentPick[view].includes(a);
-      box.disabled = box.checked && agentPick[view].length === 1;
+      box.checked = selected.includes(a);
+      box.disabled = box.checked && selected.length === 1;
       if (box.disabled) label.title = i18n("agent.lastOne");
       box.addEventListener("change", () => {
-        setAgents(view, AtlasLogic.toggleAgent(agentPick[view], a, box.checked));
+        setAgents(view, AtlasLogic.toggleAgent(selected, a, box.checked));
         onChange();
       });
-      label.append(box, document.createTextNode(agentName(a)));
+      label.append(box, a === "opencode" ? agentBadge({ agent: a }) : document.createTextNode(agentName(a)));
       if (n) label.appendChild(el("span", "n", String(n[a] || 0)));
       return label;
     }));
@@ -136,9 +157,10 @@ function refreshAgentButton(view) {
   if (!ui) return;
   const label = i18n("agent.filter");
   const on = agentFiltered(view);
-  const text = ui.named ? agentPick[view].map(agentName).join(", ") : label;
+  const visible = viewSelection(view);
+  const text = ui.named ? visible.map(agentName).join(", ") : label;
   ui.btn.replaceChildren(text, ...(on ? [el("span", "fdot", "●")] : []), " ▾");
-  ui.btn.title = on ? `${label}: ${agentPick[view].map(agentName).join(", ")}`
+  ui.btn.title = on ? `${label}: ${visible.map(agentName).join(", ")}`
     : i18n("active.filterAll", { label });
   ui.btn.classList.toggle("on", on);
   if (!ui.pop.classList.contains("hidden")) ui.fill();   // an open list follows the poll

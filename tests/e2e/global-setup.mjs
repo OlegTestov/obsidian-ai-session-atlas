@@ -190,6 +190,8 @@ export default async function globalSetup() {
     const codexStandIn = writeCodexStandIn(root);
     const env = {
       ...process.env,
+      ATLAS_OPENCODE_BIN: "",
+      ATLAS_OPENCODE_HOME: path.join(root, "opencode-empty"),
       ATLAS_CODEX_BIN: codexStandIn.bin,
       HOME: corpus.home,
       ATLAS_HOME: corpus.atlasHome,

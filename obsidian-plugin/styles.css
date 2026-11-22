@@ -355,3 +355,8 @@ body.theme-dark {
 /* First-run notice: what the install turned on. */
 .session-atlas-first-run-title { font-weight: var(--font-semibold); }
 .session-atlas-first-run-list { margin: 6px 0; padding-left: 18px; }
+.session-atlas-status .sa-opencode-mark {
+  display: inline-flex;
+  margin-inline-end: 0.35em;
+  vertical-align: middle;
+}

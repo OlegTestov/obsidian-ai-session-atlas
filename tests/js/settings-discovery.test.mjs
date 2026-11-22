@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { context, flat, controls, Element, STRINGS, translate } from "./helpers/settings.mjs";
+import { context, flat, controls, Element, STRINGS, settled, translate } from "./helpers/settings.mjs";
 
 describe("settings discovery",()=>{
  it("cached server definitions read current values whenever settings reopen",async()=>{
@@ -35,6 +35,46 @@ describe("settings discovery",()=>{
   assert.equal(plugin.settings.agents.codex,false);
   assert.equal(plugin.settings.agentArgs.codex,"--example");
   assert.equal(saved.length,2);assert.deepEqual(effects,["buttons","args"]);
+ });
+ it("validates the OpenCode data folder and persists both an override and the automatic choice",async()=>{
+  const {tab,plugin,config}=context();
+  plugin.shellInfo={XDG_DATA_HOME:"/tmp/fixture-xdg"};
+  plugin.t=(key,vars)=>vars?.value || key;
+  const field=controls(flat(tab.getSettingDefinitions()).find(d=>d.name==="opencode.home"));
+  assert.match(field.placeholder,/\/tmp\/fixture-xdg\/opencode/);
+  await field.type("relative");
+  await field.blur();
+  assert.equal(plugin.settings.opencodeHome,"");
+  await field.type("/tmp/OpenCode Data");
+  await field.blur();
+  assert.equal(plugin.settings.opencodeHome,"/tmp/OpenCode Data");
+  assert.equal(config.opencode_home,"/tmp/OpenCode Data");
+  await field.type("");
+  await field.blur();
+  assert.equal(config.opencode_home,"");
+ });
+ it("localizes the OpenCode status from the shell probe and the database",async()=>{
+  const cases=[
+   ["missing",false,"Not found — optional","Не найден — необязательно"],
+   ["missing",true,"Found","Найден"],
+   ["v2",false,"Found","Найден"],
+   ["v1",true,"OpenCode 1 is unsupported — upgrade to OpenCode 2","OpenCode 1 не поддерживается — обнови до OpenCode 2"],
+   ["unsupported",true,"This OpenCode version is unsupported","Версия OpenCode не поддерживается"],
+  ];
+  for(const [state,found,en,ru] of cases){
+   for(const [lang,expected] of [["en",en],["ru",ru]]){
+    const {tab,plugin}=context();
+    plugin.t=(key,vars)=>translate(lang,key,vars);
+    plugin.shellProbe=async()=>found?{opencode:"/bin/opencode"}:{};
+    plugin.atlasRequest=async()=>({status:200,data:{sessions:0,indexing:false,opencode:{state}}});
+    const status=new Element({setTimeout(){},clearTimeout(){}});
+    const def=flat(tab.getSettingDefinitions()).find(d=>d.name===plugin.t("setup.index"));
+    const cleanup=def.render({settingEl:status});
+    await settled();
+    assert.equal(status.children[0].children[1].children.find(r=>r.name==="OpenCode")?.desc,expected);
+    cleanup();
+   }
+  }
  });
  it("the AI agent choice starts at auto and saves to config.json",async()=>{
   const {tab,config}=context();const def=flat(tab.getSettingDefinitions()).find(d=>d.name==="ai.agent");
@@ -184,15 +224,15 @@ it("settings layout keeps all master controls in the specified section and row o
  assert.deepEqual(defs.map(def=>[def.heading||def.name,def.items?.map(row=>row.name)]),[
   ["setup.heading",["setup.index"]],
   ["settings.generalHeading",["settings.language","updates.setting","settings.explorer"]],
-  ["settings.agentsHeading",["settings.agent.claude","settings.agent.codex","settings.loadAgentTabs","settings.fontSize","mail.wake"]],
+  ["settings.agentsHeading",["settings.agent.claude","settings.agent.codex","settings.agent.opencode","settings.loadAgentTabs","settings.fontSize","mail.wake"]],
   ["cfg.heading",["cfg.vaults","cfg.roots","cfg.domains","cfg.rules","cfg.tickets"]],
   ["ai.heading",["ai.enabled","ai.agent","cfg.sensitive","ai.classification"]],
   ["settings.notificationsHeading",["settings.notify","settings.systemNotify","settings.noticeHold"]],
-  ["adv.integrations",["adv.defaults","setup.limits","codexHook","codexHook.home"]],
-  ["adv.launch",["settings.args.claude","settings.args.codex","adv.shell"]],
+  ["adv.integrations",["adv.defaults","setup.limits","codexHook","codexHook.home","opencode.home"]],
+  ["adv.launch",["settings.args.claude","settings.args.codex","settings.args.opencode","adv.shell"]],
   ["adv.models",["ai.model.classification","ai.model.catalog_summary","ai.model.handoff","ai.force1m","ai.codexModel"]],
   ["adv.mail",["mail.root","mail.script"]],
-  ["adv.diagnostics",["setup.macos","setup.python","adv.python","setup.agentPath.Claude Code","setup.agentPath.Codex","setup.address"]],
+  ["adv.diagnostics",["setup.macos","setup.python","adv.python","setup.agentPath.Claude Code","setup.agentPath.Codex","setup.agentPath.OpenCode","setup.address"]],
  ]);
  const rows=flat(defs);
  for(const [key,[name,type]] of Object.entries(MASTER_CONTROLS)){

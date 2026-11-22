@@ -7,11 +7,11 @@ import sqlite3
 
 from . import search_rows
 
-SCHEMA_VERSION = 14   # 14: invalidate row lookup on legacy writes, recover existing search damage
+SCHEMA_VERSION = 15   # OpenCode catalog rows, reasoning tokens and durable fork attempts
 
 # Three tiers, and they must not be mixed up.
 # 1) Edited by hand; cannot be restored from transcripts.
-AUTHORITATIVE = ("user_overrides", "pending_launches", "egress_grants", "conversions")
+AUTHORITATIVE = ("user_overrides", "pending_launches", "egress_grants", "conversions", "opencode_fork_intents")
 
 # 2) Restorable but expensive: every row was paid for with a model call. On a schema change,
 # columns are added and the table is kept. Cleared only by an explicit purge-cache.
@@ -21,7 +21,7 @@ EXPENSIVE = ("enrichment", "classification")
 DERIVED = (
     "sources", "sessions", "session_projects", "session_files",
     "session_links", "session_tickets", "session_domains", "fts", "fts_paths", "parse_state",
-    "activity", "session_continuations", "session_forks", "fts_rows", "fts_guard", "index_costs",
+    "activity", "session_continuations", "session_forks", "fts_rows", "fts_guard", "index_costs", "opencode_details",
 )
 
 SCHEMA = """
@@ -94,6 +94,17 @@ CREATE TABLE IF NOT EXISTS session_forks (
 );
 CREATE INDEX IF NOT EXISTS ix_forks_parent ON session_forks(parent_id);
 
+CREATE TABLE IF NOT EXISTS opencode_details (
+  session_id TEXT PRIMARY KEY, archived INTEGER NOT NULL, last_answer TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS opencode_fork_intents (
+  request_id TEXT PRIMARY KEY, source_id TEXT NOT NULL, baseline TEXT NOT NULL, fork_id TEXT,
+  state TEXT NOT NULL DEFAULT 'unknown', started_at REAL NOT NULL DEFAULT 0
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ix_opencode_fork_unresolved ON opencode_fork_intents(source_id)
+  WHERE fork_id IS NULL AND state IN ('pending', 'unknown');
+
 CREATE TABLE IF NOT EXISTS session_projects (
   session_id TEXT NOT NULL, project_id TEXT NOT NULL, role TEXT NOT NULL,
   PRIMARY KEY (session_id, project_id)
@@ -127,6 +138,7 @@ CREATE TABLE IF NOT EXISTS activity (
   cost        REAL,
   sub         INTEGER NOT NULL DEFAULT 0,
   tools       TEXT NOT NULL DEFAULT '',
+  reasoning   INTEGER NOT NULL DEFAULT 0,
   PRIMARY KEY (session_id, key)
 );
 CREATE INDEX IF NOT EXISTS ix_activity_ts ON activity(ts);
@@ -296,6 +308,7 @@ def connect(path: str | None = None) -> sqlite3.Connection:
         previous = get_meta(conn, "schema_version")
         guarded = search_rows.ready(conn)
         search_rows.run_schema(conn, SCHEMA)
+        ensure_activity_schema(conn)
         if previous is not None and int(previous) >= 13 and not guarded:
             # A v13 lookup can already be stale; a legacy rebuild can also remove the guards.
             search_rows.repair(conn)
@@ -326,7 +339,17 @@ def _schema_is_current(conn: sqlite3.Connection) -> bool:
     if row is None or int(row["value"]) < SCHEMA_VERSION:
         return False
     present = {r[0] for r in conn.execute("SELECT name FROM sqlite_master")}
-    return present >= _SCHEMA_OBJECTS
+    return present >= _SCHEMA_OBJECTS and _activity_has_reasoning(conn)
+
+
+def _activity_has_reasoning(conn):
+    return "reasoning" in {r[1] for r in conn.execute("PRAGMA table_info(activity)")}
+
+
+def ensure_activity_schema(conn):
+    # A v14 writer can recreate activity while preserving the newer version in meta.
+    if not _activity_has_reasoning(conn):
+        conn.execute("ALTER TABLE activity ADD COLUMN reasoning INTEGER NOT NULL DEFAULT 0")
 
 
 def _migrate(conn: sqlite3.Connection) -> None:
@@ -338,8 +361,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
         return                                   # fresh database: the script creates everything
     if int(row["value"]) >= SCHEMA_VERSION:
         return
-    if int(row["value"]) in (12, 13):
-        return                                   # additive row lookup: no transcript reindex is needed
+    if int(row["value"]) in (12, 13, 14):
+        return                                   # additive changes preserve the existing index
     _add_missing_columns(conn)
     for table in DERIVED:
         conn.execute(f"DROP TABLE IF EXISTS {table}")
@@ -349,11 +372,20 @@ def _migrate(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def drop_derived(conn: sqlite3.Connection) -> None:
+def drop_derived(conn: sqlite3.Connection, *, keep_agent=None) -> None:
     """rebuild touches only cheap data: manual edits and paid model calls stay."""
-    for table in DERIVED:
-        conn.execute(f"DROP TABLE IF EXISTS {table}")
-    conn.executescript(SCHEMA)
+    if keep_agent and conn.execute("SELECT 1 FROM sessions WHERE agent=? LIMIT 1", (keep_agent,)).fetchone():
+        with search_rows.writing(conn):
+            conn.execute("DELETE FROM sessions WHERE agent<>?", (keep_agent,))
+            # Sessions may outlive a missing sources row, and old writers may leave orphaned FTS rows.
+            for table in DERIVED:
+                if table not in {"sessions", "fts", "fts_paths", "fts_rows", "fts_guard"}:
+                    conn.execute(f"DELETE FROM {table} WHERE session_id NOT IN (SELECT session_id FROM sessions)")
+            search_rows.repair(conn)
+    else:
+        for table in DERIVED:
+            conn.execute(f"DROP TABLE IF EXISTS {table}")
+        conn.executescript(SCHEMA)
     conn.execute("INSERT INTO meta(key, value) VALUES('needs_reindex','1') "
                  "ON CONFLICT(key) DO UPDATE SET value='1'")
     conn.commit()

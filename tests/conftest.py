@@ -46,8 +46,10 @@ def _test_profile(tmp_path, monkeypatch):
     monkeypatch.setenv("ATLAS_HOME", str(home))
     # The indexer also reads Codex rollouts: never the real ~/.codex in tests.
     monkeypatch.setenv("ATLAS_CODEX_HOME", str(tmp_path / "codex-home"))
+    monkeypatch.setenv("ATLAS_OPENCODE_HOME", str(tmp_path / "opencode-home"))
     # Never the real codex: an empty value turns the binary search off; tests set a stand-in.
     monkeypatch.setenv("ATLAS_CODEX_BIN", "")
+    monkeypatch.setenv("ATLAS_OPENCODE_BIN", "")
     codex_usage.reset()
     write_config(str(home))
     yield

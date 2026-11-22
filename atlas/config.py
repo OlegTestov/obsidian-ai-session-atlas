@@ -46,6 +46,7 @@ DEFAULTS = {
     "codex_exec_config": [],          # extra `-c key=value` for codex exec (it skips config.toml)
     "claude_bin": None,               # path to claude; the plugin finds it via the login shell
     "codex_bin": None,                # path to codex, the same way; reads Codex's usage limits
+    "opencode_home": "",              # empty: XDG_DATA_HOME/opencode or ~/.local/share/opencode
     "service_label": "io.github.session-atlas",
 }
 

@@ -5,7 +5,7 @@ import argparse
 import json
 import sys
 
-from . import actions, classify, db, enrich, index, runner, search as search_mod
+from . import actions, agents, classify, db, enrich, index, runner, search as search_mod
 
 SCHEMA_VERSION = 1
 
@@ -47,7 +47,8 @@ def cmd_index(conn, args) -> int:
 def cmd_rebuild(conn, args) -> int:
     """Rebuilds only derived data; manual edits in user_overrides stay."""
     kept = conn.execute("SELECT count(*) AS n FROM user_overrides").fetchone()["n"]
-    db.drop_derived(conn)
+    with index.writer_lock():
+        db.drop_derived(conn, keep_agent=agents.OPENCODE)
     stats = index.index_all(conn, full=True)
     _emit(_envelope(conn, {"command": "rebuild", "stats": stats, "overrides_kept": kept}))
     return EXIT_OK
@@ -129,8 +130,8 @@ def cmd_resume(conn, args) -> int:
     """Prints the resume command. Runs nothing: the user decides."""
     _refresh(conn, args)
     info = actions.actions_for(conn, args.session_id)
-    if not info["resume_command"]:
-        print("the session's working folder does not exist", file=sys.stderr)
+    if not info.get("resume_command"):
+        print(info.get("resume_error") or "the session's working folder does not exist", file=sys.stderr)
         return EXIT_NOT_FOUND
     _emit(_envelope(conn, {"command": "resume", "session_id": args.session_id, **info}))
     return EXIT_OK

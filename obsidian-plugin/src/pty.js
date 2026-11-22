@@ -5,19 +5,21 @@
 // outside (the kernel sends the program SIGWINCH itself). Checked on macOS 14.
 import { StringDecoder } from "string_decoder";
 import * as childProcess from "child_process";
+import { openCodeChildEnv } from "./opencode-tab";
 
 const SCRIPT = "/usr/bin/script";
 // Inside the tty: set the size and replace itself with the program. Arguments go through "$@", unquoted.
 const INNER = 'stty rows "$1" cols "$2" 2>/dev/null; shift 2; exec "$@"';
 // cat ends when the pipe from Obsidian closes: on a crash or a forced quit nothing kills the tab, and a
 // program in raw mode (Claude Code) never sees end of input. The group then ends as on closing the tab.
-const OUTER = '{ cat; kill -HUP 0; } | exec ' + SCRIPT + ' -q /dev/null "$@"';
+// In the other direction, script sees its child exit even if it died before the first ps lookup.
+const OUTER = '{ cat; kill -HUP 0; } | { ' + SCRIPT + ' -q /dev/null "$@"; kill -HUP 0; }';
 const LIVENESS_MS = 3000;
 const RECENT_BYTES = 256 * 1024;     // output tail: a new tab picks up the process and shows it
 
 function execFile(file, args) {
   return new Promise((resolve) => {
-    childProcess.execFile(file, args, { timeout: 3000, encoding: "utf8" },
+    childProcess.execFile(file, args, { timeout: 3000, encoding: "utf8", env: openCodeChildEnv() },
       (error, stdout) => resolve(error ? "" : stdout));
   });
 }
@@ -90,6 +92,7 @@ function spawnPty({ file, args = [], cwd, env, cols = 80, rows = 24 }) {
     if (exitSink) exitSink(code);
   };
   child.on("exit", finish);
+  child.on("error", () => finish(null));
 
   const findTty = async () => {
     if (tty) return tty;

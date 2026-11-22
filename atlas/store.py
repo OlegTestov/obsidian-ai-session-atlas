@@ -41,6 +41,7 @@ def purge(conn: sqlite3.Connection, session_id: str, keep_text: bool = False, go
             conn.execute(f"DELETE FROM {table} WHERE session_id=?", (session_id,))
         if gone:
             conn.execute("DELETE FROM session_forks WHERE session_id=?", (session_id,))
+            conn.execute("DELETE FROM opencode_details WHERE session_id=?", (session_id,))
         if not keep_text:
             search_rows.delete(conn, session_id)
             conn.execute("DELETE FROM parse_state WHERE session_id=?", (session_id,))
@@ -60,7 +61,7 @@ def _write_fork(conn, session_id: str, st, facts: SessionFacts) -> None:
     if source:
         # When the copy was made is set once: the copy's own records can keep the source's id for
         # days (/branch), so their last timestamp moves on with every reply. A Codex copy says when.
-        made = facts.forked_at if facts.agent == "codex" else None
+        made = facts.forked_at if facts.agent in (agents.CODEX, agents.OPENCODE) else None
         conn.execute("INSERT INTO session_forks VALUES (?,?,?) "
                      "ON CONFLICT(session_id) DO UPDATE SET parent_id=excluded.parent_id",
                      (session_id, source, made or _created(st) or facts.forked_at))
@@ -76,6 +77,8 @@ def _write_meta(conn, session_id: str, path: str, st, sig: str, facts: SessionFa
     sensitivity = resolve.resolve_sensitivity(facts.cwds, [r for _, r in resolved_files])
     kind = resolve.session_kind(facts.entrypoint, facts.human_turns, facts.spawned,
                                 continued=bool(facts.continued_from and facts.last_activity_at))
+    if facts.agent == agents.OPENCODE and not facts.spawned:
+        kind = "interactive"  # An explicitly created OpenCode session may still be empty.
     title, title_source = resolve.fallback_title(
         facts.title, [facts.first_user_text] if facts.first_user_text else [], facts.last_prompt,
         [facts.first_assistant_text] if facts.first_assistant_text else [], session_id)
@@ -239,8 +242,22 @@ def store_full(conn, path: str, st, sig: str, subagents: list[str], sub_sig: str
     if session_id in protected:
         return None
     _converted(conn, session_id, facts)
+    return store_snapshot(conn, path, st, sig, facts, subs, sub_sig=sub_sig)
+
+
+def store_snapshot(conn, path, st, sig, facts, subs, *, sub_sig=None) -> str:
+    """Persist the common projection of a complete file or database session."""
+    session_id = facts.session_id
+    if facts.agent == agents.OPENCODE:
+        subs = list(subs)
+        resolved = list(dict.fromkeys(pair for group in [facts, *subs] for pair in _resolved(group)))
     sub_commands, sub_paths, sub_rows = _merge_subagents(facts, subs)
-    resolved = _resolved(facts)
+    if facts.agent == agents.OPENCODE:
+        prices = [item["cost"] for item in sub_rows.values() if item["cost"] is not None]
+        if prices:
+            facts.cost_usd = (facts.cost_usd or 0) + sum(prices)
+    else:
+        resolved = _resolved(facts)
     with search_rows.writing(conn):
         purge(conn, session_id)
         activity.store(conn, session_id, facts.activity)
@@ -257,28 +274,17 @@ def store_full(conn, path: str, st, sig: str, subagents: list[str], sub_sig: str
 
 def store_codex(conn, path: str, st, sig: str, title: str | None = None,
                 subagents: list[str] | None = None) -> str:
-    """A Codex rollout is reread in full on any change: the largest is ~25 MB, a pass is ~0.2 s.
-    Its subagents' rollouts (index.codex_subagents) are part of it, as Claude Code's subagents are."""
+    """A Codex rollout and its subagents are reread in full on any change."""
     ref = agents.SourceRef(agents.CODEX, path)
     facts, subs = agents.adapter(ref.agent).read(ref, conn=conn, title=title, subagents=subagents or [])
     session_id = facts.session_id
     _converted(conn, session_id, facts)
     if not session_id:
         raise ValueError("no thread id in the rollout name or its session_meta")
-    sub_commands, sub_paths, sub_rows = _merge_subagents(facts, subs)
-    resolved = _resolved(facts)
-    with search_rows.writing(conn):
-        purge(conn, session_id)
-        activity.store(conn, session_id, facts.activity)
-        activity.store(conn, session_id, sub_rows, sub=True)
-        title = _write_meta(conn, session_id, path, st, sig, facts, resolved)
-        _write_meta_row(conn, session_id, title, facts, resolved)
-        _write_subagent_row(conn, session_id, facts, sub_commands, sub_paths)
-        _write_turns(conn, session_id, facts)
-        _record_source(conn, path, session_id, st, sig, facts)
-        # "Continue fresh" for Codex: the thread's id is known only now (atlas/actions.py).
-        actions.link_codex_launch(conn, session_id, facts.first_user_text)
-        return session_id
+    store_snapshot(conn, path, st, sig, facts, subs)
+    # "Continue fresh" for Codex: the thread's id is known only now (atlas/actions.py).
+    actions.link_codex_launch(conn, session_id, facts.first_user_text)
+    return session_id
 
 
 def store_tail(conn, path: str, st, sig: str, sub_sig: str) -> bool:

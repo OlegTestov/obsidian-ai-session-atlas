@@ -58,6 +58,7 @@ async function loadStats() {
   try {
     data = await api(statsUrl());
     if (seq !== statsSeq) return;                 // another period was picked while waiting
+    setOpenCodeAvailable(data.opencode_available);
     statsData = data;
   } catch (e) {
     if (seq === statsSeq && !statsData) $("#stats-body").replaceChildren(el("p", "empty", i18n("stats.error", { msg: e.message })));
@@ -77,7 +78,10 @@ function pollStats(seq, shownAsOf, tries) {
     try { data = await api(statsUrl()); } catch { /* keep the shown snapshot and ask again */ }
     if (seq !== statsSeq) return;
     const newer = data && data.until !== shownAsOf;
-    if (newer) statsData = data;
+    if (newer) {
+      setOpenCodeAvailable(data.opencode_available);
+      statsData = data;
+    }
     const waiting = data ? data.stale && !data.refresh_failed : true;   // a busy server may time out once
     statsUpdating = !newer && waiting && tries < STATS_POLL_TRIES;
     renderStatsBar();
@@ -106,8 +110,14 @@ function tile(title, value, sub, dlt, hint) {
 function tokenBar(tk) {
   const box = el("div", "ts");
   const bar = el("div", "tbar");
-  const parts = [["in", tk.input, i18n("stats.tok.input")], ["cache", tk.cache_read, i18n("stats.tok.cache")],
-                 ["out", tk.output, i18n("stats.tok.output")]];
+  const cacheWrite = tk.cache_write || 0;
+  const parts = [
+    ["in", tk.input - cacheWrite, "stats.tok.input"],
+    ...(cacheWrite ? [["cache-write", cacheWrite, "stats.tok.cacheWrite"]] : []),
+    ["cache", tk.cache_read, "stats.tok.cache"],
+    ["out", tk.output, "stats.tok.output"],
+    ...(tk.reasoning ? [["reasoning", tk.reasoning, "stats.tok.reasoning"]] : []),
+  ];
   parts.forEach(([cls, v]) => {
     const seg = el("span", cls);
     seg.style.width = S.share(v, tk.total) + "%";
@@ -117,7 +127,7 @@ function tokenBar(tk) {
   const legend = el("div", "legend");
   parts.forEach(([cls, v, label]) => {
     const item = el("span");
-    item.append(el("i", cls), `${label} ${S.bigNum(v)}`);
+    item.append(el("i", cls), `${i18n(label)} ${S.bigNum(v)}`);
     legend.appendChild(item);
   });
   box.appendChild(legend);
@@ -189,16 +199,22 @@ function renderChart(d) {
   const title = d.series.unit === "hour" ? i18n("stats.chart.hours") : i18n("stats.chart.days");
   panel.appendChild(el("h3", null, `${title} · ${S.METRICS.find(m => m.value === metric).label.toLowerCase()}`));
   if (!pts.length) { panel.appendChild(el("p", "none", i18n("stats.chart.empty"))); return panel; }
-  const max = Math.max(...pts.map(p => p[metric]));
+  const values = pts.filter(p => p.sessions && p[metric] != null);
+  const max = values.length ? Math.max(...values.map(p => p[metric])) : null;
   const bars = el("div", "bars");
   const step = S.labelStep(pts.length, 14);
   pts.forEach((p, i) => {
     const col = el("div", "col");
     const bar = el("div", "bar");
     bar.style.height = S.share(p[metric], max) + "%";
+    if (p[metric] == null) {
+      bar.classList.add("unknown");
+      bar.textContent = "—";
+    }
+    const cost = p.cost == null ? i18n("stats.chart.costUnknown") : S.money(p.cost);
     col.title = i18n("stats.chart.pointHint", {
       when: S.pointLabel(p.t, d.series.unit) + (d.series.unit === "day" ? "." + p.t.slice(0, 4) : ""),
-      cost: S.money(p.cost), tokens: S.bigNum(p.tokens), time: S.hoursText(p.active_s), sessions: p.sessions });
+      cost, tokens: S.bigNum(p.tokens), time: S.hoursText(p.active_s), sessions: p.sessions });
     col.appendChild(bar);
     col.appendChild(el("span", "x", i % step === 0 ? S.pointLabel(p.t, d.series.unit) : ""));
     bars.appendChild(col);
@@ -215,11 +231,13 @@ function breakdown(title, items, opts) {
   const panel = el("div", "spanel");
   panel.appendChild(el("h3", null, title));
   const rows = S.ranked(items, metric, LIST_ROWS);
+  if (opts?.keepUnpriced) rows.push(...items.filter(row => row.name === "opencode" && !rows.includes(row)));
   if (!rows.length) { panel.appendChild(el("p", "none", i18n("stats.noData"))); return panel; }
   const max = rows[0][metric];
   rows.forEach(r => {
     const row = el("div", "brow" + (opts && opts.onPick ? " link" : ""));
     const name = el("span", "bn", (opts && opts.label ? opts.label(r) : r.name));
+    if (opts?.keepUnpriced && r.name === "opencode") name.replaceChildren(agentBadge({ agent: r.name }));
     const fill = el("span", "bf");
     fill.style.width = S.share(r[metric], max) + "%";
     const track = el("span", "bt");
@@ -293,10 +311,14 @@ function renderStats() {
   if (!d) return;
   const openSession = r => { setView("search"); openCard(r.session_id); };
   const panels = el("div", "spanels");
+  const byAgent = [...(d.by_agent || [])];
+  if (opencodeAvailable && agentPick.stats.includes("opencode") && !byAgent.some(r => r.name === "opencode")) {
+    byAgent.push({ name: "opencode", cost: null, tokens: 0, active_s: 0 });
+  }
   panels.append(
     // Per agent only once the server sends it; older servers have no such field.
-    ...(d.by_agent ? [breakdown(i18n("stats.panel.byAgent"), d.by_agent,
-                                { label: r => agentName(r.name || r.key) })] : []),
+    ...(d.by_agent ? [breakdown(i18n("stats.panel.byAgent"), byAgent,
+                                { label: r => agentName(r.name || r.key), keepUnpriced: true })] : []),
     breakdown(i18n("stats.panel.domains"), d.domains),
     breakdown(i18n("stats.panel.models"), d.models),
     breakdown(i18n("stats.panel.topics"), d.topics),

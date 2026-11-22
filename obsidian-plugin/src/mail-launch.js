@@ -57,7 +57,7 @@ class MailLaunchMethods {
       const dir = path.join(this.dataDir(), "agent-mail-args");
       fsSync.mkdirSync(dir, { recursive: true, mode: 0o700 });
       const blocked = sideloadBlocked(this.claudeManagedSettings);
-      for (const kind of agentKinds.filter(supportsTerminal)) {
+      for (const kind of agentKinds.filter(kind => kind !== "opencode" && supportsTerminal(kind))) {
         const words = input && !(kind === "claude" && blocked) ? mailLaunchWords(kind, input) : [];
         fsSync.writeFileSync(path.join(dir, kind), words.map(shellQuote).join(" ") + "\n");
       }

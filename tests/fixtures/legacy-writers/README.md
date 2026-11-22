@@ -5,3 +5,6 @@ Unmodified `atlas/db.py`, `index.py`, `store.py` (and the 2.4.2 `search_rows.py`
 the current package in a temporary directory and run them in a separate process.
 Only the historical SQLite/index writer is under test; remaining parser/config
 modules are shared. No network, installed agent CLI or user data is used.
+
+`v14.zip` preserves the registry, schema and writer modules from the 2.17.0 release (`207e5cf`).
+Tests open both schema versions in either order and cover incremental indexing, rebuilds and fork intents.

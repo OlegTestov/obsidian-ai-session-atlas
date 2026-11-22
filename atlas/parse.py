@@ -41,7 +41,7 @@ _TEXT_BLOCK = "text"
 class SessionFacts:
     session_id: str = ""
     source_path: str = ""
-    agent: str = "claude"         # which agent wrote the transcript: claude | codex
+    agent: str = "claude"         # which agent wrote the transcript
     spawned: bool = False         # started by another agent (a Codex subagent thread), not a human
     title: str | None = None
     title_source: str | None = None
@@ -342,7 +342,7 @@ def _note_fork(facts: SessionFacts, rec: dict) -> None:
 
 
 def fork_source(facts: SessionFacts) -> str | None:
-    """The session this one is a copy of (Claude Code or Codex). A parked conversation's background
+    """The session this one is a copy of. A parked conversation's background
     job and a "Resume with…" conversion copy records too, but they are continuations, not copies."""
     if facts.continued_from:
         return None

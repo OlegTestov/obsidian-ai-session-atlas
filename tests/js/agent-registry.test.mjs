@@ -29,11 +29,13 @@ const ID = "fk_ab12cd34";
 test("the plugin payload contains the production registry and launcher modules", () => {
   const { files } = payload();
   assert.deepEqual(JSON.parse(files["atlas/agents.json"]), real);
-  for (const { id } of real) {
+  for (const id of ["claude", "codex"]) {
     assert.equal(files[`scripts/agent-${id}.zsh`],
                  fs.readFileSync(path.join(ROOT, `obsidian-plugin/scripts/agent-${id}.zsh`), "utf8"));
   }
-  assert.deepEqual(real.map(row => row.id), ["claude", "codex"]);
+  assert.deepEqual(real.map(row => row.id), ["claude", "codex", "opencode"]);
+  assert.match(files["scripts/agent-opencode.zsh"], /atlas\.opencode_tabs/);
+  assert.equal(JSON.parse(files["opencode-tab/package.json"]).exports["./tui"], "./tui.mjs");
 });
 
 test("Python, the plugin and generated zsh agree on every session ID grammar", t => {
@@ -50,7 +52,7 @@ test("Python, the plugin and generated zsh agree on every session ID grammar", t
                payload().files["scripts/agent-kinds.zsh"]);
   const { agentKinds, idPattern, getAgent, validId } = load("agent-registry");
   assert.deepEqual(agentKinds, rows.map(row => row.id));
-  const ids = [UUID, UUID.toLowerCase(), UUID + "\n", "-".repeat(36), ID, ID.toUpperCase(), ID + "-", ""];
+  const ids = [UUID, UUID.toLowerCase(), UUID + "\n", "-".repeat(36), ID, ID.toUpperCase(), ID + "-", "ses_" + "Ab01".repeat(6) + "x2", "ses_short", ""];
   const python = execFileSync("/usr/bin/python3", ["-c", [
     "import json, sys",
     "from pathlib import Path",
@@ -93,7 +95,7 @@ test("a registered fake appears in settings without inheriting terminal dispatch
   const settings = new AtlasSettingTab({}, plugin);
   const definitions = settings.getSettingDefinitions();
   const group = definitions.find(def => def.heading === "settings.agentsHeading");
-  assert.deepEqual(group.items.slice(0, real.length + 1).map(item => item.name).at(-1), fake.label);
+  assert.deepEqual(group.items.find(item => item.name === fake.label)?.name, fake.label);
   const { AgentMethods, parseLaunch, agentArgs } = load("agents");
   for (const words of [`fake resume ${ID}`, `fake --resume ${ID}`]) {
     assert.throws(() => parseLaunch("cd /tmp && " + words), /fake does not support terminal tabs/);
@@ -113,8 +115,8 @@ test("a registered fake appears in settings without inheriting terminal dispatch
   const palette = [];
   installed.addCommand = cmd => palette.push(cmd.id);
   AgentMethods.prototype.addAgentButtons.call(installed);
-  assert.deepEqual(ribbons, ["atlas-claude", "atlas-codex"]);
-  assert.deepEqual(palette, ["open-claude-code-terminal", "open-codex-terminal"]);
+  assert.deepEqual(ribbons, ["atlas-claude", "atlas-codex", "atlas-opencode"]);
+  assert.deepEqual(palette, ["open-claude-code-terminal", "open-codex-terminal", "new-opencode-session"]);
 });
 
 test("restore, held tabs and startup refuse fake without rewriting its kind", async t => {
@@ -183,7 +185,7 @@ test("the page keeps legacy all, displays fake labels and rejects native fallbac
     stats: { selected: ["fake"] },
   }) };
   const page = loadPage(undefined, { agents: [...real, fake], storage });
-  assert.deepEqual(Array.from(page.AtlasLogic.AGENTS), ["claude", "codex", "fake"]);
+  assert.deepEqual(Array.from(page.AtlasLogic.AGENTS), ["claude", "codex", "opencode", "fake"]);
   assert.equal(page.agentQuery("search"), "");
   assert.equal(page.agentQuery("active"), "claude,codex");
   assert.equal(JSON.stringify(page.AtlasLogic.storedAgentSelection(["claude", "codex"])),
@@ -199,6 +201,25 @@ test("the page keeps legacy all, displays fake labels and rejects native fallbac
   assert.throws(() => page.activeCard({ agent: "fake", session_id: ID, status: "idle" }), /fake does not support live cost/);
 });
 
+test("OpenCode launches in Atlas without enabling cross-agent or live-input features", () => {
+  const page = loadPage();
+  page.setOpenCodeAvailable(true);
+  const sid = "ses_" + "ab".repeat(13);
+  assert.equal(page.AtlasLogic.getAgent("opencode").mailPrefix, "o");
+  assert.equal(page.agentPassesView("search", { agent: "opencode" }), true);
+  assert.equal(page.agentPassesView("active", { agent: "opencode" }), true);
+  assert.equal(page.ResumeWith.choices("claude", { opencode: true }, true).some(r => r.agent === "opencode"), false);
+  assert.equal(page.AtlasLogic.newSessionAgents({ opencode: true }).includes("opencode"), true);
+  const { parseLaunch } = load("agents");
+  assert.equal(parseLaunch(`cd /tmp && opencode /tmp --session ${sid}`).sessionId, sid);
+  assert.throws(() => parseLaunch(`cd /tmp && opencode /wrong --session ${sid}`), /Invalid OpenCode/);
+  for (const [lang, label] of [["en", "Archive"], ["ru", "Архивировать"]]) {
+    page.I18N.setLang(lang);
+    assert.equal(page.i18n("opencode.archive"), label);
+    assert.equal(page.agentBadge({ agent: "opencode" }).textContent, "OpenCode");
+  }
+});
+
 test("a newer agent row leaves the Active list and catalog rendering usable", () => {
   const page = loadPage();
   const unknown = { agent: "newer-agent", session_id: ID, status: "idle" };
@@ -212,4 +233,22 @@ test("a newer agent row leaves the Active list and catalog rendering usable", ()
   assert.doesNotThrow(() => page.activeCard(unknown));
   assert.equal(page.agentPassesView("active", unknown), false);
   assert.throws(() => page.agentControls(unknown), /Unknown agent: newer-agent/);
+});
+
+test("a list response after initial facets reveals OpenCode to Search and Statistics", async () => {
+  const page = loadPage();
+  assert.equal(page.agentPassesView("search", { agent: "opencode" }), false);
+  assert.equal(page.agentPassesView("stats", { agent: "opencode" }), false);
+  page.api = async () => ({ count: 0, shown: 0, plan: [], opencode_available: true });
+  await page.loadList();
+  assert.equal(page.agentPassesView("search", { agent: "opencode" }), true);
+  assert.equal(page.agentPassesView("stats", { agent: "opencode" }), true);
+});
+
+test("OpenCode first input waits for the real composer, including the model footer", () => {
+  const { openCodePromptReady } = load("opencode-tab");
+  const composer = ["  ┃  Ask anything…", "  ┃  ", "  ┃  Build · Fixture model", "  ╹▀▀▀▀▀"];
+  assert.equal(openCodePromptReady(composer), true);
+  assert.equal(openCodePromptReady(composer.slice(0, 2).concat(composer[3])), false);
+  assert.equal(openCodePromptReady(["What's new in 2.3.2", ...composer]), false);
 });

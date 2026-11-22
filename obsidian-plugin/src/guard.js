@@ -171,6 +171,7 @@ class GuardMethods {
     if (this.pendingCloseConfirms.has(leaf) || (this.stoppingLeaves && this.stoppingLeaves.has(leaf))) return;
     this.pendingCloseConfirms.add(leaf);
     const atlas = this.guardKind(leaf) === "atlas";
+    const agentText = leaf.view?.state?.kind === "opencode" ? "close.opencode.text" : "close.terminal.text";
     const job = atlas ? null : this.backgroundJobOf(leaf);
     if (job) {
       new ConfirmCloseModal(this.app, {
@@ -188,7 +189,7 @@ class GuardMethods {
     new ConfirmCloseModal(this.app, {
       title: this.t(atlas ? "close.atlas.title" : "close.terminal.title"),
       text: atlas ? this.t("close.atlas.text")
-        : this.t("close.terminal.text", { label: label || this.terminalLabel(leaf) }),
+        : this.t(agentText, { label: label || this.terminalLabel(leaf) }),
       keep: this.t("close.keep"),
       close: this.t("close.close"),
       onConfirm: () => leaf.detach(),

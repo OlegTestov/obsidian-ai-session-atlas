@@ -328,12 +328,24 @@ def lineage(conn: sqlite3.Connection, session_id: str) -> dict:
 
 def actions_for(conn: sqlite3.Connection, session_id: str) -> dict:
     """Everything a card needs: ready commands and warnings, without running anything."""
-    cwd = resume_cwd(conn, session_id)
     row = conn.execute(
-        "SELECT last_activity_at, content_hash, agent FROM sessions WHERE session_id=?",
+        "SELECT last_activity_at, content_hash, agent, cwd_last, COALESCE(d.archived,0) archived, "
+        "human_turns, machine_turns FROM sessions LEFT JOIN opencode_details d USING(session_id) WHERE session_id=?",
         (session_id,)).fetchone()
     agent = row["agent"] if row else None
     kind = agent if row else agents.CLAUDE
+    if kind == agents.OPENCODE:
+        from . import opencode_actions, opencode_service
+
+        result = {"agent": kind, "archived": bool(row["archived"]),
+                  "empty": not (row["human_turns"] or row["machine_turns"]),
+                  "lineage": lineage(conn, session_id)}
+        try:
+            result["resume_command"] = opencode_actions.resume(session_id)["command"]
+        except opencode_service.ServiceError as exc:
+            result["resume_error"] = str(exc)
+        return result
+    cwd = resume_cwd(conn, session_id)
     resume, cwd = session_resume_command(conn, cwd, session_id, kind)
     warnings = []
     if cwd is None:

@@ -10,7 +10,7 @@ import { agentKinds, getAgent } from "./agent-registry";
 import { supportsTerminal } from "./agents";
 
 const DEFAULT_SETTINGS = { notify: true, systemNotify: true, explorerClicks: false, language: "auto",
-                           wakeOnMail: true, agentMailRoot: "", agentMailScript: "", codexHome: "", agents: {}, agentArgs: Object.fromEntries(agentKinds.map(kind => [kind, ""])), terminalFontSize: DEFAULT_FONT_SIZE,
+                           wakeOnMail: true, agentMailRoot: "", agentMailScript: "", codexHome: "", opencodeHome: "", agents: {}, agentArgs: Object.fromEntries(agentKinds.map(kind => [kind, ""])), terminalFontSize: DEFAULT_FONT_SIZE,
                            noticeHold: DEFAULT_NOTICE_HOLD, loadAgentTabs: true, showWhatsNew: true };
 
 class AtlasSettingTab extends PluginSettingTab {

@@ -168,7 +168,7 @@ def pending(conn: sqlite3.Connection, include_automation: bool = False) -> list[
           ON c.session_id = s.session_id
          AND c.content_hash = s.content_hash
          AND c.classifier_version = ?
-        WHERE c.session_id IS NULL
+        WHERE c.session_id IS NULL AND s.agent <> 'opencode'
           AND COALESCE((SELECT sensitivity FROM user_overrides u WHERE u.session_id = s.session_id),
                        s.sensitivity_rule) != 'sensitive'
     """

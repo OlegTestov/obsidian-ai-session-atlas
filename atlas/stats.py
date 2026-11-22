@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 
 from . import cache_rewrites, config, forks, openai_costs
-from .agents import CLAUDE, CODEX, UnknownAgent, require
+from .agents import CLAUDE, CODEX, OPENCODE, UnknownAgent, require
 from .messages import msg
 
 PERIODS = {"today": None, "7d": 7, "30d": 30, "90d": 90, "all": None}
@@ -45,7 +45,7 @@ _ROWS = """
 WITH d AS (
   SELECT a.key, MIN(a.session_id) AS sid, MIN(a.ts) AS ts, a.kind,
          MAX(a.active_s) AS act, MAX(a.model) AS model,
-         MAX(a.input) AS inp, MAX(a.output) AS out, MAX(a.cache_read) AS cr,
+         MAX(a.input) AS inp, MAX(a.output) AS out, MAX(a.reasoning) AS reasoning, MAX(a.cache_read) AS cr,
          MAX(a.cache_write) AS cw, MAX(a.cost) AS cost, MAX(a.tools) AS tools,
          MAX(COALESCE(NULLIF(s.agent, ''), :claude)) AS agent, MAX(a.sub) AS sub,
          MAX(COALESCE(s.session_kind, '') <> 'interactive') AS bg
@@ -69,7 +69,7 @@ def _rows(conn: sqlite3.Connection, since: datetime | None, until: datetime, aut
     for raw in conn.execute(_ROWS.format(agents=where), params):
         r = dict(raw)
         try:
-            agent = require(r["agent"], (CLAUDE, CODEX), "statistics pricing")
+            agent = require(r["agent"], (CLAUDE, CODEX, OPENCODE), "statistics pricing")
         except UnknownAgent as exc:
             _LOG.warning("Skipping activity for session %s (key %s): %s", r["sid"], r["key"], exc)
             continue
@@ -127,7 +127,7 @@ def _totals(rows) -> dict:
             t["prompts"] += 1
             continue
         t["answers"] += 1
-        for k in ("inp", "out", "cr", "cw"):
+        for k in ("inp", "out", "cr", "cw", "reasoning"):
             t[k] += r[k] or 0
         if r["cost"] is None:
             unknown.add(r["model"] or "?")
@@ -136,12 +136,13 @@ def _totals(rows) -> dict:
             t["priced"] += 1
             if r.get("bg"):
                 t["auto_cost"] += r["cost"]
-    # One formula for both agents: cached ÷ all input (fresh + cache writes + cached).
+    # Cache efficiency across agents: cached ÷ all input (fresh + cache writes + cached).
     fresh = t["inp"] + t["cw"] + t["cr"]
     return {
         "sessions": len(sessions), "prompts": t["prompts"], "answers": t["answers"],
         "tokens": {"input": t["inp"] + t["cw"], "output": t["out"], "cache_read": t["cr"],
-                   "total": t["inp"] + t["cw"] + t["cr"] + t["out"]},
+                   "cache_write": t["cw"], "reasoning": t["reasoning"],
+                   "total": t["inp"] + t["cw"] + t["cr"] + t["out"] + t["reasoning"]},
         "cache_hit": (t["cr"] / fresh) if fresh else None,
         "active_s": round(t["active_s"]), "wall_s": round(wall_seconds(rows)),
         # No priced reply at all is "unknown", not $0 (a Codex-only period with unpriced models).
@@ -150,6 +151,10 @@ def _totals(rows) -> dict:
         "auto_cost": round(t["auto_cost"], 2),
         "unpriced_models": sorted(unknown),
     }
+
+
+def _message_tokens(row):
+    return sum(row[key] or 0 for key in ("inp", "out", "cr", "cw", "reasoning"))
 
 
 def _series(rows, since: datetime | None, until: datetime) -> dict:
@@ -162,7 +167,9 @@ def _series(rows, since: datetime | None, until: datetime) -> dict:
         b = r["lh"][:width]
         acc[b]["active_s"] += r["act"] or 0
         acc[b]["cost"] += r["cost"] or 0
-        acc[b]["tokens"] += (r["inp"] or 0) + (r["out"] or 0) + (r["cr"] or 0) + (r["cw"] or 0)
+        if r["kind"] == "a":
+            acc[b]["unknown" if r["cost"] is None else "priced"] += 1
+        acc[b]["tokens"] += _message_tokens(r)
         sess[b].add(r["sid"])
     if not acc:
         return {"unit": "hour" if hourly else "day", "points": []}
@@ -172,7 +179,8 @@ def _series(rows, since: datetime | None, until: datetime) -> dict:
     cur, last, points = datetime.strptime(first, fmt), until.strftime(fmt), []
     while (key := cur.strftime(fmt)) <= last and len(points) < 2000:
         c = acc.get(key, Counter())
-        points.append({"t": key, "cost": round(c["cost"], 2), "tokens": c["tokens"],
+        cost = None if c["unknown"] and not c["priced"] else round(c["cost"], 2)
+        points.append({"t": key, "cost": cost, "tokens": c["tokens"],
                        "active_s": round(c["active_s"]), "sessions": len(sess.get(key, ()))})
         cur += step
     return {"unit": "hour" if hourly else "day", "points": points}
@@ -204,14 +212,14 @@ def _breakdowns(conn: sqlite3.Connection, rows) -> dict:
     for r in rows:
         meta = names.get(r["sid"])
         cost, act = r["cost"] or 0, r["act"] or 0
-        tokens = (r["inp"] or 0) + (r["out"] or 0) + (r["cr"] or 0) + (r["cw"] or 0)
+        tokens = _message_tokens(r)
         keys = {"project": (meta["project"] if meta else None) or "—",
                 "domain": (meta["domain"] if meta else None) or "—",
                 "topic": (meta["topic"] if meta else None) or msg("stats.no_topic"),
                 "session": r["sid"], "agent": r["agent"]}
         agent_sessions[r["agent"]].add(r["sid"])
         if r["kind"] == "a":
-            keys["model"] = _short_model(r["model"])
+            keys["model"] = (r["model"] or "?") if r["agent"] == OPENCODE else _short_model(r["model"])
         for dim, key in keys.items():
             c = by[dim][key]
             c["cost"] += cost
@@ -275,7 +283,7 @@ def _chunks(seq, n):
 def summary(conn: sqlite3.Connection, period: str = "7d", automation: bool = False,
             now: datetime | None = None, agents: list[str] | None = None,
             prices: dict | None = None) -> dict:
-    """`agents`: claude and/or codex (atlas.agents.parse_filter); None means every agent.
+    """`agents`: registered catalog agents (atlas.agents.parse_filter); None means every agent.
     `prices`: `openai_prices` read once by the caller; None reads config.json now."""
     # One snapshot of the data and one of the prices: the current and the previous span agree.
     own = not conn.in_transaction
@@ -290,16 +298,20 @@ def summary(conn: sqlite3.Connection, period: str = "7d", automation: bool = Fal
 
 
 def _summary(conn, period, automation, now, agents, prices) -> dict:
+    from . import agent_opencode
+
     period = period if period in PERIODS else "7d"
     started = time.monotonic()
     since, until = window(period, now)
     rows = _rows(conn, since, until, automation, agents, prices)
     out = {"period": period, "since": since.isoformat() if since else None,
            "until": until.isoformat(), "automation": automation, "agent_filter": agents,
-           "totals": _totals(rows), "series": _series(rows, since, until)}
+           "totals": _totals(rows), "series": _series(rows, since, until),
+           "opencode_available": agent_opencode.status(conn)["available"]}
     out.update(_breakdowns(conn, rows))
     out["cache_rewrites"] = cache_rewrites.summarize(
-        conn, rows, out["totals"]["cost"], prices, _utc(since) if since else None)
+        conn, [r for r in rows if r["agent"] != OPENCODE], out["totals"]["cost"], prices,
+        _utc(since) if since else None)
     # The previous span of equal length, for "more / less than usual" comparison.
     if since is not None:
         prev = _rows(conn, since - (until - since), since, automation, agents, prices)

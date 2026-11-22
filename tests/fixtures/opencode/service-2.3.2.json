@@ -1,0 +1,243 @@
+{
+  "active": {
+    "data": {}
+  },
+  "changed": {
+    "data": {
+      "cost": 0,
+      "id": "ses_dfd16cdd4ffe7zv2eiWQhakHZY",
+      "location": {
+        "directory": "/atlas-fixture/work"
+      },
+      "outcome": "succeeded",
+      "projectID": "fc7f86b0934247d03a012b3a1c5f368d21846f20",
+      "time": {
+        "archived": 1795345168009,
+        "busy": 1795345167850,
+        "created": 1795345166903,
+        "idle": 1795345167895,
+        "updated": 1795345168009
+      },
+      "title": "A2 renamed",
+      "tokens": {
+        "cache": {
+          "read": 2,
+          "write": 0
+        },
+        "input": 10,
+        "output": 4,
+        "reasoning": 1
+      }
+    }
+  },
+  "children": {
+    "cursor": {
+      "next": "eyJwYXJlbnRJRCI6InNlc19kZmQxNmNkZDRmZmU3enYyZWlXUWhha0haWSIsImFuY2hvciI6eyJpZCI6InNlc19kZmQxNmNkYzFmZmVYR2pCaVVjWk9hYjIzNCIsInRpbWUiOjE3OTUzNDUxNjY5MTIsImRpcmVjdGlvbiI6Im5leHQifX0",
+      "previous": "eyJwYXJlbnRJRCI6InNlc19kZmQxNmNkZDRmZmU3enYyZWlXUWhha0haWSIsImFuY2hvciI6eyJpZCI6InNlc19kZmQxNmNkYzFmZmVYR2pCaVVjWk9hYjIzNCIsInRpbWUiOjE3OTUzNDUxNjY5MTIsImRpcmVjdGlvbiI6InByZXZpb3VzIn19"
+    },
+    "data": [
+      {
+        "cost": 0,
+        "id": "ses_dfd16cdc1ffeXGjBiUcZOab234",
+        "location": {
+          "directory": "/atlas-fixture/work"
+        },
+        "parentID": "ses_dfd16cdd4ffe7zv2eiWQhakHZY",
+        "projectID": "fc7f86b0934247d03a012b3a1c5f368d21846f20",
+        "time": {
+          "created": 1795345166912,
+          "updated": 1795345166912
+        },
+        "title": "A2 synthetic child",
+        "tokens": {
+          "cache": {
+            "read": 0,
+            "write": 0
+          },
+          "input": 0,
+          "output": 0,
+          "reasoning": 0
+        }
+      }
+    ]
+  },
+  "delete": null,
+  "empty": {
+    "data": {
+      "cost": 0,
+      "id": "ses_dfd16c985ffeSNKfkCUl6bWTlj",
+      "location": {
+        "directory": "/atlas-fixture/work"
+      },
+      "projectID": "fc7f86b0934247d03a012b3a1c5f368d21846f20",
+      "time": {
+        "created": 1795345167999,
+        "updated": 1795345167999
+      },
+      "title": "A2 empty",
+      "tokens": {
+        "cache": {
+          "read": 0,
+          "write": 0
+        },
+        "input": 0,
+        "output": 0,
+        "reasoning": 0
+      }
+    }
+  },
+  "fork": {
+    "data": {
+      "cost": 0,
+      "fork": {
+        "boundary": {
+          "messageID": "msg_202e93617001tT7XPiRsnKRCgo",
+          "type": "through"
+        },
+        "sessionID": "ses_dfd16cdd4ffe7zv2eiWQhakHZY"
+      },
+      "id": "ses_dfd16c97dffeKKYW2nNutQLnv4",
+      "location": {
+        "directory": "/atlas-fixture/work"
+      },
+      "projectID": "fc7f86b0934247d03a012b3a1c5f368d21846f20",
+      "time": {
+        "created": 1795345168002,
+        "updated": 1795345168002
+      },
+      "title": "A2 synthetic source (fork #1)",
+      "tokens": {
+        "cache": {
+          "read": 0,
+          "write": 0
+        },
+        "input": 0,
+        "output": 0,
+        "reasoning": 0
+      }
+    }
+  },
+  "info": {
+    "capabilities": {
+      "persistentPty": true
+    },
+    "hostname": "atlas-fixture",
+    "paths": {
+      "tmp": "/atlas-fixture/tmp/opencode"
+    },
+    "pid": 211,
+    "urls": [
+      "http://127.0.0.1:12345"
+    ],
+    "version": "2.3.2"
+  },
+  "observed_database": "/atlas-fixture/data/opencode/opencode.db",
+  "listing": {
+    "cursor": {
+      "next": "eyJhbmNob3IiOnsiaWQiOiJzZXNfZGZkMTZjZGMxZmZlWEdqQmlVY1pPYWIyMzQiLCJ0aW1lIjoxNzk1MzQ1MTY2OTEyLCJkaXJlY3Rpb24iOiJuZXh0In19",
+      "previous": "eyJhbmNob3IiOnsiaWQiOiJzZXNfZGZkMTZjZGQ0ZmZlN3p2MmVpV1FoYWtIWlkiLCJ0aW1lIjoxNzk1MzQ1MTY4MDA5LCJkaXJlY3Rpb24iOiJwcmV2aW91cyJ9fQ"
+    },
+    "data": [
+      {
+        "cost": 0,
+        "id": "ses_dfd16cdd4ffe7zv2eiWQhakHZY",
+        "location": {
+          "directory": "/atlas-fixture/work"
+        },
+        "outcome": "succeeded",
+        "projectID": "fc7f86b0934247d03a012b3a1c5f368d21846f20",
+        "time": {
+          "archived": 1795345168009,
+          "busy": 1795345167850,
+          "created": 1795345166903,
+          "idle": 1795345167895,
+          "updated": 1795345168009
+        },
+        "title": "A2 renamed",
+        "tokens": {
+          "cache": {
+            "read": 2,
+            "write": 0
+          },
+          "input": 10,
+          "output": 4,
+          "reasoning": 1
+        }
+      },
+      {
+        "cost": 0,
+        "fork": {
+          "boundary": {
+            "messageID": "msg_202e93617001tT7XPiRsnKRCgo",
+            "type": "through"
+          },
+          "sessionID": "ses_dfd16cdd4ffe7zv2eiWQhakHZY"
+        },
+        "id": "ses_dfd16c97dffeKKYW2nNutQLnv4",
+        "location": {
+          "directory": "/atlas-fixture/work"
+        },
+        "projectID": "fc7f86b0934247d03a012b3a1c5f368d21846f20",
+        "time": {
+          "created": 1795345168002,
+          "updated": 1795345168006
+        },
+        "title": "A2 synthetic source (fork #1)",
+        "tokens": {
+          "cache": {
+            "read": 0,
+            "write": 0
+          },
+          "input": 0,
+          "output": 0,
+          "reasoning": 0
+        }
+      },
+      {
+        "cost": 0,
+        "id": "ses_dfd16c985ffeSNKfkCUl6bWTlj",
+        "location": {
+          "directory": "/atlas-fixture/work"
+        },
+        "projectID": "fc7f86b0934247d03a012b3a1c5f368d21846f20",
+        "time": {
+          "created": 1795345167999,
+          "updated": 1795345167999
+        },
+        "title": "A2 empty",
+        "tokens": {
+          "cache": {
+            "read": 0,
+            "write": 0
+          },
+          "input": 0,
+          "output": 0,
+          "reasoning": 0
+        }
+      },
+      {
+        "cost": 0,
+        "id": "ses_dfd16cdc1ffeXGjBiUcZOab234",
+        "location": {
+          "directory": "/atlas-fixture/work"
+        },
+        "parentID": "ses_dfd16cdd4ffe7zv2eiWQhakHZY",
+        "projectID": "fc7f86b0934247d03a012b3a1c5f368d21846f20",
+        "time": {
+          "created": 1795345166912,
+          "updated": 1795345166912
+        },
+        "title": "A2 synthetic child",
+        "tokens": {
+          "cache": {
+            "read": 0,
+            "write": 0
+          },
+          "input": 0,
+          "output": 0,
+          "reasoning": 0
+        }
+      }
+    ]
+  }
+}

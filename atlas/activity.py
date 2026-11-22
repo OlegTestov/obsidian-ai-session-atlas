@@ -113,7 +113,7 @@ def store(conn, session_id: str, rows: dict, sub: bool = False) -> None:
             continue
         conn.execute(
             """INSERT INTO activity (session_id, key, kind, ts, active_s, model, input, output,
-                 cache_read, cache_write, cost, sub, tools) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 cache_read, cache_write, cost, sub, tools, reasoning) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(session_id, key) DO UPDATE SET
                  active_s = active_s + excluded.active_s,
                  tools = CASE WHEN excluded.tools = '' THEN tools
@@ -121,4 +121,4 @@ def store(conn, session_id: str, rows: dict, sub: bool = False) -> None:
                               ELSE tools || ',' || excluded.tools END""",
             (session_id, key, r["kind"], r["ts"], 0.0 if sub else r["active_s"], r["model"],
              r["input"], r["output"], r["cache_read"], r["cache_write"], r["cost"],
-             1 if sub else 0, ",".join(r["tools"])))
+             1 if sub else 0, ",".join(r["tools"]), r.get("reasoning", 0)))

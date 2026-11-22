@@ -60,15 +60,15 @@ def get(kind: str):
     return _REGISTRY[kind]
 
 
-CLAUDE, CODEX = (get(kind)["id"] for kind in ("claude", "codex"))
+CLAUDE, CODEX, OPENCODE = (get(kind)["id"] for kind in ("claude", "codex", "opencode"))
 ALL = all()
 
 _ADAPTERS = {}
 # The Codex hook loads only metadata via a direct import. Catalog startup validates its adapters.
 if __package__:
-    from . import agent_claude, agent_codex
+    from . import agent_claude, agent_codex, agent_opencode
 
-    _ADAPTERS = {CLAUDE: agent_claude, CODEX: agent_codex}
+    _ADAPTERS = {CLAUDE: agent_claude, CODEX: agent_codex, OPENCODE: agent_opencode}
 
 
 class SourceRef(NamedTuple):

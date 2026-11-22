@@ -7,12 +7,14 @@ import sqlite3
 import subprocess
 import sys
 import zipfile
+from contextlib import closing
 from pathlib import Path
 
 import pytest
 
-from atlas import db, index, search, search_rows, store
+from atlas import db, index, opencode_actions, search, search_rows, stats, store
 from tests.conftest import assistant_text, user_text
+from tests.test_opencode_actions import FORK, TOKEN, native  # noqa: F401
 
 
 @pytest.fixture(params=["2.4.1", "2.4.2"])
@@ -23,16 +25,67 @@ def legacy(request, tmp_path, atlas_env):
     with zipfile.ZipFile(fixture) as archive:
         archive.extractall(package)
 
-    def run(*, rebuild=False):
+    def run(*, rebuild=False, version=None):
         script = ("from atlas import db,index; c=db.connect(); "
                   + ("db.drop_derived(c); " if rebuild else "")
-                  + "print(index.index_all(c)); c.close()")
+                  + "print(index.index_all(c)); print(db.get_meta(c, 'schema_version')); c.close()")
         env = dict(os.environ, PYTHONPATH=str(package), PYTHONDONTWRITEBYTECODE="1")
         result = subprocess.run([sys.executable, "-c", script], cwd=package, env=env,
                                 capture_output=True, text=True, timeout=30, check=True)
         assert "'errors': 0" in result.stdout, result.stdout + result.stderr
+        if version is not None:
+            assert result.stdout.splitlines()[-1] == str(version)
 
     return run
+
+
+@pytest.mark.parametrize("legacy", ["v14"], indirect=True)
+@pytest.mark.parametrize("rebuild", [False, True])
+@pytest.mark.parametrize("old_first", [True, False])
+def test_v14_writer_recovers_opencode(legacy, rebuild, old_first, tmp_path, monkeypatch):
+    source = tmp_path / "opencode"
+    source.mkdir()
+    shutil.copyfile(Path(__file__).parent / "fixtures/opencode/opencode.db", source / "opencode.db")
+    monkeypatch.setenv("ATLAS_OPENCODE_HOME", str(source))
+    if old_first:
+        legacy(rebuild=rebuild, version=14)
+    else:
+        with closing(db.connect()) as conn:
+            assert index.index_all(conn)["indexed"] == 8
+        legacy(rebuild=rebuild, version=15)
+    with closing(db.connect()) as conn:
+        assert db.get_meta(conn, "schema_version") == "15"
+        assert stats.summary(conn, "all")["totals"]["answers"] == 0
+        assert index.index_all(conn)["indexed"] == 8
+        assert stats.summary(conn, "all")["totals"]["answers"] == 15
+        assert_lookup(conn)
+
+
+
+@pytest.mark.parametrize("legacy", ["v14"], indirect=True)
+@pytest.mark.parametrize("rebuild", [False, True])
+@pytest.mark.parametrize("old_first", [True, False])
+def test_v14_writer_and_fork_intents(legacy, request, rebuild, old_first):
+    # Close the fixture's initial writer and start with a v14 or a current catalog.
+    fixture = request.getfixturevalue("native")
+    fixture.conn.close()
+    os.unlink(db.db_path())
+    if old_first:
+        legacy(rebuild=rebuild, version=14)
+    with closing(db.connect()) as conn:
+        assert db.get_meta(conn, "schema_version") == "15"
+        assert not conn.execute("SELECT 1 FROM sqlite_master WHERE name='ix_opencode_fork_pending'").fetchone()
+        with conn:
+            conn.execute("INSERT INTO opencode_fork_intents(request_id,source_id,baseline,state) "
+                         "VALUES (?,?,?,'unknown')", (TOKEN, fixture.sid, "[]"))
+        if not old_first:
+            legacy(rebuild=rebuild, version=15)
+        token = "fixture-request-002"
+        assert opencode_actions.fork(conn, fixture.sid, token, confirm_unknown=TOKEN)["session_id"] == FORK
+        assert opencode_actions.fork(conn, fixture.sid, token)["session_id"] == FORK
+        intents = conn.execute("SELECT state,fork_id FROM opencode_fork_intents ORDER BY request_id")
+        assert [tuple(row) for row in intents] == [("superseded", None), ("confirmed", FORK)]
+        assert sum(method == "POST" for method, *_ in fixture.seen) == 1
 
 
 def assert_lookup(conn):

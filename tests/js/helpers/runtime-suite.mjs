@@ -79,7 +79,8 @@ export function defineRuntimeTests(bundle) {
       plugin.app = { vault: { adapter: { getBasePath: () => vault }, getName: () => "My Vault" } };
       plugin.dataDirOverride = path.join(tmp, "data");
       // Every agent folder points into the temp dir: the server never reads the real ~/.claude or ~/.codex.
-      plugin.serverEnvExtra = { ATLAS_PROJECTS_ROOT: projects, ATLAS_CODEX_HOME: path.join(tmp, "codex"),
+      plugin.serverEnvExtra = { ATLAS_OPENCODE_HOME: path.join(tmp, "opencode"),
+                                ATLAS_OPENCODE_BIN: "", ATLAS_PROJECTS_ROOT: projects, ATLAS_CODEX_HOME: path.join(tmp, "codex"),
                                 ATLAS_CLAUDE_SESSIONS: path.join(tmp, "claude-sessions"),
                                 CLAUDE_CONFIG_DIR: path.join(tmp, "claude"), CODEX_HOME: path.join(tmp, "codex") };
       plugin.atlasPort = () => port;
@@ -193,7 +194,7 @@ export function defineRuntimeTests(bundle) {
       assert.ok(!fs.existsSync(path.join(runtime, "atlas/old_module.py")));
       assert.ok(fs.existsSync(path.join(runtime, "atlas/server.py")));
       const registry = JSON.parse(fs.readFileSync(path.join(runtime, "atlas/agents.json")));
-      assert.deepEqual(registry.map(row => row.id), ["claude", "codex"]);
+      assert.deepEqual(registry.map(row => row.id), ["claude", "codex", "opencode"]);
     });
 
     it("without Command Line Tools never runs /usr/bin/python3", async () => {

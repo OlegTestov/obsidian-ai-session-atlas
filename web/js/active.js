@@ -103,8 +103,9 @@ function renderActive(skipKey, force) {
   // Background goes with working: the turn ended, but a monitor, agent or /loop wakes it, not you.
   const isWorking = activity => activity === "busy" || activity === "background";
   // Order comes from arrangeSessions: pinned, then by start; freshness does not reorder.
-  const decide = [], waitingYou = [], working = [];
+  const decide = [], waitingYou = [], working = [], openCode = [];
   for (const s of shown) {
+    if (s.agent === "opencode") { openCode.push(s); continue; }
     const activity = sectionActivity(s);
     (activity === "waiting" ? decide : isWorking(activity) ? working : waitingYou).push(s);
   }
@@ -120,8 +121,11 @@ function renderActive(skipKey, force) {
                              end: focused.selectionEnd, top: focused.scrollTop };
   const scroll = grid.scrollTop;
   // A dialog blocks the session: such cards get their own section on top, shown only when there are any.
+  const standard = !openCode.length || decide.length || waitingYou.length || working.length;
   const sections = [decide.length ? section(i18n("active.sectionDecision"), decide, "decide") : null,
-                    section(i18n("active.sectionWaiting"), waitingYou), section(i18n("active.sectionWorking"), working)];
+                    standard ? section(i18n("active.sectionWaiting"), waitingYou) : null,
+                    standard ? section(i18n("active.sectionWorking"), working) : null,
+                    openCode.length ? section(i18n("opencode.active"), openCode, "open-code") : null];
   const terminalFocus = document.activeElement?.closest(".card-terminal")?.closest(".acard")?.dataset.id;
   const contentFocus = document.activeElement?.matches(".card-view-body")
     && document.activeElement.closest(".acard")?.dataset.id;

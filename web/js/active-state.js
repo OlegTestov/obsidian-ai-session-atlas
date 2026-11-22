@@ -54,6 +54,8 @@ let composing = false;                // IME composition in progress
 document.addEventListener("compositionstart", () => { composing = true; });
 document.addEventListener("compositionend", () => { composing = false; });
 let lastRenderAt = 0;
+let hostOpenCodeTabs = [];
+let openCodeTabMeta = {};
 
 // Short date for the card: the year only when it is not the current one.
 function fmtShort(iso) {
@@ -109,6 +111,8 @@ window.addEventListener("message", e => {
     .map(t => [t.ptyPid, String(t.title || "")]));
   hostInlineTabs = new Set(d.tabs.filter(t => t?.inline === true && Number.isInteger(t.ptyPid)).map(t => t.ptyPid));
   hostScreens = tabScreens(d.tabs);
+  hostOpenCodeTabs = d.tabs.filter(t => t?.agent === "opencode" && Number.isInteger(t.ptyPid));
+  if (hostOpenCodeTabs.length || d.agents?.opencode) setOpenCodeAvailable(true);
   hostBackground = new Map(d.tabs.filter(t => t && Number.isInteger(t.ptyPid) && /^[0-9a-f]{8}$/.test(t.background || ""))
     .map(t => [t.ptyPid, t.background]));
   hostHeld = new Map((Array.isArray(d.held) ? d.held : []).filter(t => t && Number.isInteger(t.ptyPid))
@@ -116,6 +120,7 @@ window.addEventListener("message", e => {
   readTabGroups(d);
   readHostUnread(d);
   activeSessions = screenSessions();
+  $("#active-count").textContent = activeSessions.length ? String(activeSessions.length) : "";
   hostReady = true;
   tabsAskedAt = null;
   // Plugins before Codex launches send no agents: Claude Code only.
@@ -144,10 +149,16 @@ function tabScreens(tabs) {
 
 // A Codex session whose tab shows a prompt waits for you: only the screen knows it. The tab's group comes along.
 function screenSessions() {
-  return activeRaw.filter(s => AtlasLogic.findAgent(AtlasLogic.agentOf(s))).map(s => {
+  const sessions = activeRaw.filter(s => AtlasLogic.findAgent(AtlasLogic.agentOf(s))).map(s => {
     const pid = tabFor(s);
     return withTabGroup(withTabScreen(s, pid ? hostScreens.get(pid) : null), pid);
   });
+  return sessions.concat(hostOpenCodeTabs.map(tab => {
+    const meta = openCodeTabMeta[tab.sessionId] || {};
+    return withTabGroup({ agent: "opencode", session_id: `opencode-tab-${tab.ptyPid}`,
+      opencode_id: tab.sessionId, title: meta.title || tab.title || "OpenCode",
+      cwd: tab.cwd, ancestors: [tab.ptyPid], last_message_at: meta.last_activity_at }, tab.ptyPid);
+  }));
 }
 
 // The claude process descends from its tab's PTY proxy: look for that PID among the ancestors.
@@ -184,6 +195,7 @@ async function loadActive() {
     updateHeaderLimits(data, limitsSeq);
     const previous = activeSessions;
     activeRaw = data.sessions || [];
+    openCodeTabMeta = data.opencode_tabs || {};
     activeSessions = screenSessions();
     replacePendingSlots(previous, activeSessions);
     recentClosed = data.recent_closed || [];

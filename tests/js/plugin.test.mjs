@@ -1810,7 +1810,7 @@ describe("agent settings", () => {
     ag.agentRibbons = { claude: ribbon(1), codex: ribbon(2) };
     ag.shellProbe = async () => ({ PATH: "/x", claude: "/x/claude" });          // codex is not found
     await ag.detectAgents();
-    assert.deepEqual(ag.settings.agentsFound, { claude: true, codex: false });
+    assert.deepEqual(ag.settings.agentsFound, { claude: true, codex: false, opencode: false });
     assert.equal(ag.agentEnabled("codex"), false);
     assert.equal(ag.agentRibbons.codex.style.display, "none");
     assert.equal(ag.agentRibbons.claude.style.display, "");
@@ -1825,7 +1825,7 @@ describe("agent settings", () => {
     await p.detectAgents();
     assert.equal(p.agentEnabled("claude"), true);
     assert.equal(p.agentEnabled("codex"), true);
-    assert.deepEqual(p.stored.agentsFound, { claude: true, codex: true });
+    assert.deepEqual(p.stored.agentsFound, { claude: true, codex: true, opencode: false });
   });
   it("only Codex found: Claude Code off; nothing found: Claude Code stays on", async () => {
     const p = new SessionAtlasPlugin();
@@ -2223,8 +2223,8 @@ describe("plugin start-up", () => {
     ready.forEach((fn) => fn());
     assert.equal(started, 1);
   });
-  it("one plugin: catalog, Claude Code and Codex buttons; default settings", () => {
-    assert.equal(alone.ribbons.map((r) => r.icon).join(), "library,atlas-claude,atlas-codex");
+  it("one plugin registers the catalog and three agent ribbons with the existing defaults", () => {
+    assert.equal(alone.ribbons.map((r) => r.icon).join(), "library,atlas-claude,atlas-codex,atlas-opencode");
     assert.equal(alone.settings.explorerClicks, false);   // changes core explorer clicks: opt-in
     assert.equal(alone.settings.language, "auto");          // as in Obsidian
     assert.equal(alone.settings.terminalFontSize, 12);
@@ -2232,21 +2232,22 @@ describe("plugin start-up", () => {
 });
 
 describe("agent marks", () => {
-  it("registers the two centered paths with the current color", () => {
+  it("registers each official mark in the current color", () => {
     const start = registeredIcons.length;
     new SessionAtlasPlugin().addAgentButtons();
     const marks = registeredIcons.slice(start);
-    assert.deepEqual(marks.map(([id]) => id), ["atlas-claude", "atlas-codex"]);
+    assert.deepEqual(marks.map(([id]) => id), ["atlas-claude", "atlas-codex", "atlas-opencode"]);
     const sourcePaths = {
       "atlas-claude": { prefix: "m4.7144 15.9555 4.7174-2.6471.079-.2307-", length: 1811 },
       "atlas-codex": { prefix: "M22.2819 9.8211a5.9847 5.9847 0 0 0-.515", length: 1460 },
     };
-    for (const [id, svg] of marks) {
+    for (const [id, svg] of marks.slice(0, 2)) {
       const match = /^<path fill="currentColor" transform="translate\(8 8\) scale\(3\.5\)" d="([^"]+)"\/>$/.exec(svg);
       assert.ok(match, `${id} should be a centered path filled with currentColor`);
       assert.equal(match[1].slice(0, 40), sourcePaths[id].prefix, id);
       assert.equal(match[1].length, sourcePaths[id].length, id);
     }
+    assert.match(marks[2][1], /fill="currentColor".*M180 60H60V240H180V60Z/);
   });
   it("leaves both marks in the theme's icon colour, like the other ribbon icons", () => {
     const css = fs.readFileSync(path.join(ROOT, "obsidian-plugin", "styles.css"), "utf8");
@@ -2951,7 +2952,9 @@ describe("Codex new sessions from the catalog", () => {
     await p.replyTabs(target);
     p.settings = { agents: { claude: true } };
     await p.replyTabs(target);
-    assert.deepEqual(sent.map(([m]) => m.agents), [{ claude: true, codex: true }, { claude: true, codex: false }]);
+    assert.deepEqual(sent.map(([m]) => m.agents), [
+      { claude: true, codex: true, opencode: false }, { claude: true, codex: false, opencode: false },
+    ]);
     assert.ok(sent.every(([m, origin]) => m.type === "tabs" && m.source === "session-atlas-host" && origin === p.atlasOrigin()));
   });
 });
@@ -3377,4 +3380,80 @@ describe("tabs closed with the plugin: the agents are offered back", () => {
     assert.ok(!hp.heldTabs().some((t) => t.ptyPid === 7101));
     assert.ok(!reg().has("claude-h1"));
   });
+});
+
+it("Claude Code and Codex resume fall back to the original shell command when managed launch fails", async () => {
+  const plugin = new SessionAtlasPlugin();
+  const opened = [];
+  plugin.settings = { language: "en" };
+  plugin.openAgent = async () => false;
+  plugin.app = { workspace: {
+    getLeaf: () => ({ setViewState: async state => opened.push(state.state) }),
+    revealLeaf() {},
+  } };
+  const id = "6e4043ad-81c1-49a2-87f4-47c469933cf3";
+  for (const command of [`cd /tmp && claude --resume ${id}`, `cd /tmp && codex resume ${id}`]) {
+    await plugin.openCommandInTerminal(command, "/tmp", "Retry");
+  }
+  assert.deepEqual(opened.map(state => state.kind), ["shell", "shell"]);
+  assert.match(opened[0].command, /claude --resume/);
+  assert.match(opened[1].command, /codex resume/);
+});
+
+for (const shellRemains of [false, true]) it(
+  `an exited OpenCode launch is retried with the expected ID (shell remains: ${shellRemains})`, async () => {
+  const plugin = new SessionAtlasPlugin();
+  const sid = "ses_" + "f".repeat(26);
+  const instance = "opencode-exited";
+  const root = fs.mkdtempSync(path.join(TMP, "open-code-retry-"));
+  const dir = path.join(root, "opencode-tabs");
+  fs.mkdirSync(dir);
+  fs.writeFileSync(path.join(dir, instance + ".json"),
+    JSON.stringify({ nonce: "a".repeat(32), pid: process.pid, current: sid, last: sid }));
+  const attempt = "b".repeat(32);
+  if (shellRemains) fs.writeFileSync(path.join(dir, instance + ".exited"), attempt);
+  const leaf = { view: { pty: { exited: !shellRemains, openCodeAttempt: attempt } },
+    getViewState: () => ({ type: "session-atlas-terminal", state: { kind: "opencode", instance, seedId: sid } }) };
+  plugin.dataDirOverride = root;
+  plugin.registryFile = path.join(root, "registry");
+  plugin.settings = { language: "en" };
+  const opened = [];
+  plugin.openAgent = async (kind, opts) => { opened.push([kind, opts.seed.sessionId]); return false; };
+  let revealed = false;
+  plugin.app = { workspace: { iterateAllLeaves: fn => fn(leaf), revealLeaf: () => { revealed = true; } } };
+  assert.equal(await plugin.openCommandInTerminal(`cd /tmp && opencode /tmp --session ${sid}`, "/tmp", "Copy"), false);
+  assert.deepEqual(opened, [["opencode", sid]]);
+  assert.equal(revealed, false);
+});
+
+it("OpenCode resume only acknowledges a fresh route for the requested session", async () => {
+  const plugin = new SessionAtlasPlugin();
+  const sid = "ses_" + "a".repeat(26);
+  const instance = "opencode-await";
+  const nonce = "b".repeat(32);
+  const root = fs.mkdtempSync(path.join(TMP, "open-code-confirm-"));
+  const dir = path.join(root, "opencode-tabs");
+  fs.mkdirSync(dir);
+  fs.writeFileSync(path.join(dir, instance + ".json"),
+    JSON.stringify({ nonce, pid: process.pid, current: sid, last: sid }));
+  const route = path.join(dir, instance + "." + nonce + ".route");
+  const leaf = { view: { pty: { exited: false } },
+    getViewState: () => ({ type: "session-atlas-terminal", state: { kind: "opencode", instance, seedId: sid } }) };
+  plugin.dataDirOverride = root;
+  plugin.settings = { language: "en" };
+  plugin.registryFile = path.join(root, "registry");
+  plugin.app = { workspace: { iterateAllLeaves: fn => fn(leaf), revealLeaf() {} } };
+  const write = (current, at) => fs.writeFileSync(route,
+    JSON.stringify({ nonce, pid: process.pid, current, route: "session", at }));
+  write(sid, Date.now() - 9000);
+  let acknowledged = false;
+  const launched = plugin.openCommandInTerminal(`cd /tmp && opencode /tmp --session ${sid}`, "/tmp", "Copy")
+    .then(ok => { acknowledged = true; return ok; });
+  await delay(50);
+  assert.equal(acknowledged, false);
+  write("ses_" + "z".repeat(26), Date.now());
+  await delay(150);
+  assert.equal(acknowledged, false);
+  write(sid, Date.now());
+  assert.equal(await launched, true);
 });

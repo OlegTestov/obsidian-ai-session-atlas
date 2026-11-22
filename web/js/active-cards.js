@@ -12,6 +12,7 @@ function decisionStrip(s) {
 }
 
 function activeCard(s) {
+  if (s.agent === "opencode") return openCodeActiveCard(s);
   if (s.pending) return pendingActiveCard(s);
   const full = activeMode === "full";
   const act = s.activity || s.status;
@@ -159,6 +160,20 @@ function activeCard(s) {
     card.appendChild(dialog);
   }
   card.appendChild(foot);
+  return card;
+}
+
+function openCodeActiveCard(s) {
+  const card = el("article", "acard opencode-tab");
+  card.dataset.id = s.session_id;
+  const title = el("div", "t", s.title);
+  const folder = el("div", "d", s.cwd || "");
+  folder.title = s.cwd || "";
+  const tags = el("div", "tags");
+  tags.appendChild(agentBadge(s));
+  const foot = el("div", "foot");
+  foot.append(...tabButtons(s, tabFor(s), null, s.title));
+  card.append(title, folder, tags, foot);
   return card;
 }
 

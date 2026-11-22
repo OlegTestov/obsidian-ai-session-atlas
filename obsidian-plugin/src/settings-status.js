@@ -1,7 +1,8 @@
-import { Notice, Setting } from "obsidian";
+import { Notice, Setting, setIcon } from "obsidian";
 import * as childProcess from "child_process";
 import { once } from "events";
 import { agentKinds, getAgent } from "./agent-registry";
+import { AGENT_ICONS } from "./agent-icons";
 import { automatic, definition, group, pluginText } from "./settings-fields";
 
 const MIN_MACOS = 12;
@@ -46,6 +47,21 @@ function reportEnvironmentError(error) {
   console.error("AI Session Atlas: environment checks failed", error);
 }
 
+function openCodeStatus(state, found) {
+  if (state === "v1") return "setup.opencodeV1";
+  if (state === "unsupported") return "setup.opencodeUnsupported";
+  return found || state === "v2" ? "setup.found" : "setup.notFoundOptional";
+}
+
+function openCodeDetail(t, info, found) {
+  const state = info?.opencode?.state;
+  const base = t(openCodeStatus(state, found));
+  const service = info?.opencode_service;
+  if (state === "v1" || state === "unsupported" || !service?.message) return base;
+  const version = service.version ? ` · ${service.version}` : "";
+  return service.message + version;
+}
+
 function renderStatus(tab, container, inspect, readIndex) {
   const { plugin } = tab;
   const t = (key, vars) => plugin.t(key, vars);
@@ -76,12 +92,13 @@ function renderStatus(tab, container, inspect, readIndex) {
   });
   const checks = box.createDiv();
   let timer;
-  let index;
+  let index, openCodeRow, openCodeFound;
   let renderId = 0;
   const updateIndex = info => {
     index = info;
     catalog.setDesc(catalogDetail(plugin, info));
     rescan.setDisabled(!!info?.indexing);
+    openCodeRow?.setDesc(openCodeDetail(t, info, openCodeFound));
   };
   const pollIndex = id => {
     timer = view.setTimeout(async () => {
@@ -126,12 +143,20 @@ function renderStatus(tab, container, inspect, readIndex) {
     restart.buttonEl.hidden = !!info;
     restart.setDisabled(false);
     if (agentKinds.some(kind => shell[kind])) {
-      for (const kind of agentKinds) {
+      for (const kind of agentKinds.filter(kind => kind !== "opencode")) {
         const detail = shell[kind] ? "setup.found" : kind === "claude" ? "setup.claudeMissing" : "setup.notFoundOptional";
         row(getAgent(kind).label, t(detail));
       }
     } else {
       row(t("setup.noAgents"), "");
+    }
+    openCodeFound = !!shell.opencode;
+    openCodeRow = row(getAgent("opencode").label, openCodeDetail(t, info, openCodeFound));
+    if (openCodeRow.nameEl?.createSpan) {
+      const icon = openCodeRow.nameEl.createSpan({ cls: "sa-opencode-mark" });
+      icon.setAttribute("aria-hidden", "true");
+      setIcon(icon, AGENT_ICONS.opencode);
+      openCodeRow.nameEl.prepend(icon);
     }
     if (macos && Number(macos.split(".")[0]) < MIN_MACOS) {
       row("macOS", t("setup.macosOld", { version: macos, min: MIN_MACOS }));

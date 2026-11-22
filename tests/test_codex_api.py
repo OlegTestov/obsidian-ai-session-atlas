@@ -37,10 +37,11 @@ def both(atlas_env, write_session, write_rollout, tmp_path):
 
 def test_agent_filter_is_a_known_subset_or_nothing():
     assert agents.parse_filter(None) is None
-    assert agents.parse_filter(["claude,codex"]) is None            # both = no filter
+    assert agents.parse_filter(["claude,codex,opencode"]) is None   # all = no filter
+    assert agents.parse_filter(["claude,codex"]) == ["claude", "codex"]
     assert agents.parse_filter(["codex"]) == ["codex"]
     assert agents.parse_filter(["Codex, gemini"]) == ["codex"]       # unknown values ignored
-    assert agents.parse_filter(["claude", "codex"]) is None
+    assert agents.parse_filter(["claude", "codex", "opencode"]) is None
     with pytest.raises(agents.UnknownAgent, match="gemini"):
         agents.parse_filter(["gemini", ""])
 

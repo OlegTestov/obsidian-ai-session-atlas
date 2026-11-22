@@ -618,7 +618,7 @@ def recently_closed(conn: sqlite3.Connection, live_ids: set[str], now: datetime 
                   s.human_turns, s.cost_usd, s.cwd_last, s.continued_from,
                   (SELECT c.summary FROM classification c WHERE c.session_id = s.session_id) AS summary
              FROM sessions s LEFT JOIN user_overrides u ON u.session_id = s.session_id
-            WHERE s.session_kind = 'interactive' AND s.last_activity_at >= ?{picked}
+            WHERE s.session_kind = 'interactive' AND s.agent <> 'opencode' AND s.last_activity_at >= ?{picked}
               AND NOT EXISTS (SELECT 1 FROM sessions j WHERE j.session_id = s.continued_in)
             ORDER BY s.last_activity_at DESC LIMIT ?""",
         (cutoff, *(agents or []), limit + len(live_ids))).fetchall()

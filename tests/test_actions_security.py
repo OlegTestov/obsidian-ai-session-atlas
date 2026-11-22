@@ -498,7 +498,8 @@ def test_index_status_for_the_setup_screen(live_server, write_session):
     write_session("-Users-u-Code-demo", [user_text("привет")])
     with urllib.request.urlopen(f"{base}/api/index-status", timeout=20) as r:
         data = json.loads(r.read())
-    assert set(data) == {"sessions", "indexing", "auto_classify"}
+    assert set(data) == {"sessions", "indexing", "opencode", "opencode_service", "auto_classify"}
+    assert data["opencode_service"]["state"] == "not_installed"
     assert isinstance(data["sessions"], int)
     assert data["auto_classify"]["enabled"] is False
 
@@ -511,7 +512,7 @@ def test_index_status_survives_corrupt_classification_state(live_server, capsys)
         with urllib.request.urlopen(f"{base}/api/index-status", timeout=20) as response:
             assert response.status == 200
             data = json.load(response)
-        assert set(data) == {"sessions", "indexing"}
+        assert set(data) == {"sessions", "indexing", "opencode", "opencode_service"}
         assert isinstance(data["sessions"], int)
         assert isinstance(data["indexing"], bool)
     assert capsys.readouterr().err.count("not a timestamp") == 1

@@ -13,7 +13,7 @@ function tabRoutes(sessions, tabs, limitForTab = () => null) {
   for (const session of sessions) {
     const id = session?.session_id;
     const agent = session?.agent;
-    if (!supportsTerminal(agent) || !validId(agent, id)) continue;
+    if (agent === "opencode" || !supportsTerminal(agent) || !validId(agent, id)) continue;
     if (!Array.isArray(session.ancestors)) continue;
     const tab = tabs.find(t => session.ancestors.includes(t.pid));
     const title = tab?.title?.trim();

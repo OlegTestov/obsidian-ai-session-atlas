@@ -25,6 +25,7 @@ const PAYLOAD = [
   ["web", ["index.html"]],
   ["web/js", [".js", ".css"]],
   ["obsidian-plugin/scripts", [".zsh"]],
+  ["obsidian-plugin/opencode-tab", [".mjs", ".json"]],
 ];
 
 // The card's terminal renderer: the e2e specs serve exactly this build.
@@ -45,7 +46,7 @@ export function payload() {
     for (const name of fs.readdirSync(path.join(ROOT, folder)).sort()) {
       if (folder === "obsidian-plugin/scripts" && name === SHELL_REGISTRY) continue;
       if (!suffixes.some((s) => name.endsWith(s))) continue;
-      const rel = path.posix.join(folder, name).replace("obsidian-plugin/scripts/", "scripts/");
+      const rel = path.posix.join(folder, name).replace(/^obsidian-plugin\//, "");
       files[rel] = fs.readFileSync(path.join(ROOT, folder, name), "utf8");
     }
   }

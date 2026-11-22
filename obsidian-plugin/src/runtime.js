@@ -9,13 +9,15 @@ import * as os from "os";
 import * as path from "path";
 import EMBEDDED_PAYLOAD from "./payload";
 import { agentKinds } from "./agent-registry";
+import { openCodeChildEnv } from "./opencode-tab";
 
-const SHELL_KEYS = ["PATH", ...agentKinds, "CODEX_HOME"];
+const XDG_KEYS = ["XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CONFIG_HOME", "XDG_CACHE_HOME"];
+const SHELL_KEYS = ["PATH", ...agentKinds, "CODEX_HOME", ...XDG_KEYS];
 
 const DATA_DIR = path.join(os.homedir(), "Library/Application Support/session-atlas");
 const DEV_DATA_DIR = path.join(os.homedir(), "Library/Application Support/session-atlas-dev");
 const RUNTIME_SUBDIR = "runtime";         // no version in the name: hooks of live sessions point here
-const MANAGED_DIRS = ["atlas", "web", "scripts"];
+const MANAGED_DIRS = ["atlas", "web", "scripts", "opencode-tab"];
 const MIN_PYTHON = [3, 8];    // 3.8 is the python3 of Command Line Tools 13 (macOS 12)
 const SERVER_WAIT_MS = 20000;
 const SHELL_TIMEOUT_MS = 8000;
@@ -106,9 +108,12 @@ class RuntimeMethods {
     if (this.shellInfo) return this.shellInfo;
     const shell = process.env.SHELL && /\/(zsh|bash)$/.test(process.env.SHELL) ? process.env.SHELL : "/bin/zsh";
     const format = ["", "__ATLAS__", ...SHELL_KEYS.map(key => key + "=%s"), ""].join("\\n");
-    const binaries = agentKinds.map(kind => `"$(command -v ${kind} 2>/dev/null)"`);
-    const script = `printf '${format}' "$PATH" ${binaries.join(" ")} ` + '"${CODEX_HOME-}"';
-    const r = await run(shell, ["-l", "-i", "-c", script], { env: Object.assign({}, process.env, { TERM: "dumb" }) });
+    const binaries = agentKinds.map(kind => kind === "opencode"
+      ? '"$(command -v opencode 2>/dev/null || command -v opencode2 2>/dev/null)"'
+      : `"$(command -v ${kind} 2>/dev/null)"`);
+    const roots = ["CODEX_HOME", ...XDG_KEYS].map(key => '"${' + key + '-}"').join(" ");
+    const script = `printf '${format}' "$PATH" ${binaries.join(" ")} ${roots}`;
+    const r = await run(shell, ["-l", "-i", "-c", script], { env: { ...openCodeChildEnv(), TERM: "dumb" } });
     this.shellInfo = parseShellProbe(r.stdout);
     return this.shellInfo;
   }
@@ -219,6 +224,7 @@ class RuntimeMethods {
     }
     if (!payload) return { ok: false, reason: this.t("server.noPayload") };
     const python = await this.findPython();
+    this.serverPython = python?.path;
     if (!python) {
       this.setupProblem = "python";
       return { ok: false, reason: this.t("server.noPython") };
@@ -232,8 +238,9 @@ class RuntimeMethods {
     const env = Object.assign({}, process.env, { PYTHONPATH: dir, PYTHONDONTWRITEBYTECODE: "1",
                                                  ATLAS_HOME: this.dataDir(), CODEX_HOME: this.codexHome() }, this.serverEnvExtra || {});
     if (shell.PATH) env.PATH = shell.PATH;
+    for (const key of XDG_KEYS) if (shell[key] && !this.serverEnvExtra?.[key]) env[key] = shell[key];
     this.serverProcess = childProcess.spawn(python.path, ["-m", "atlas.cli", "serve", "--port", String(this.atlasPort())],
-                                            { cwd: dir, env, stdio: ["ignore", log, log] });
+                                            { cwd: dir, env: openCodeChildEnv(env), stdio: ["ignore", log, log] });
     this.serverProcess.on("exit", () => { this.serverProcess = null; });
     fsSync.closeSync(log);
     for (let waited = 0; waited < SERVER_WAIT_MS; waited += 250) {

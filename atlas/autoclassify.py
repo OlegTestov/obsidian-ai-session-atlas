@@ -115,7 +115,7 @@ def candidates(conn: sqlite3.Connection, now: float | None = None) -> list[tuple
                   EXISTS (SELECT 1 FROM classification c WHERE c.session_id = s.session_id) AS done,
                   m.turns_sig AS seen
              FROM sessions s LEFT JOIN auto_marks m ON m.session_id = s.session_id
-            WHERE s.session_kind = 'interactive' AND s.started_at <= ?
+            WHERE s.session_kind = 'interactive' AND s.agent <> 'opencode' AND s.started_at <= ?
               AND COALESCE((SELECT sensitivity FROM user_overrides u
                              WHERE u.session_id = s.session_id), s.sensitivity_rule,
                             'unclassified') != 'sensitive'

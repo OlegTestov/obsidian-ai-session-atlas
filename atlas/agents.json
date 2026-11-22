@@ -1,4 +1,5 @@
 [
   {"id": "claude", "label": "Claude Code", "short": "Claude", "mailPrefix": "c", "idPattern": "uuid"},
-  {"id": "codex", "label": "Codex", "short": "Codex", "mailPrefix": "x", "idPattern": "uuid"}
+  {"id": "codex", "label": "Codex", "short": "Codex", "mailPrefix": "x", "idPattern": "uuid"},
+  {"id": "opencode", "label": "OpenCode", "short": "OpenCode", "mailPrefix": "o", "idPattern": "^ses_[A-Za-z0-9]{26}$"}
 ]

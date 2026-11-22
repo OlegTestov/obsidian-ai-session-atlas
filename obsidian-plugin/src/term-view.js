@@ -8,6 +8,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import * as os from "os";
+import { randomUUID } from "crypto";
 import { themeFromCss, applyTheme, followCodexSurface, followTextContrast } from "./term-theme";
 import { spawnPty } from "./pty";
 import { AGENT_VIEW_TYPE, DEFAULT_FONT_SIZE } from "./constants";
@@ -17,6 +18,7 @@ import { pathLinkProvider, pathClicks, localTarget } from "./term-links";
 import { resolvePath } from "./open-path";
 import { shellQuote, agentTabEnv, terminalAgent, restoreAgent, supportsTerminal } from "./agents";
 import { getAgent } from "./agent-registry";
+import { openCodeChildEnv, readOpenCodeTab, sendOpenCodeFirstPrompt } from "./opencode-tab";
 import { normalizeCodexHome } from "./codex-hook";
 
 import { pasteImageEvent } from "./term-paste";
@@ -173,30 +175,66 @@ class AgentTerminalView extends ItemView {
     });
 
     const key = this.state.instance || null;
+    const openCode = this.state.kind === "opencode";
+    const previouslyResumed = openCode && readOpenCodeTab(this.plugin.dataDir(), key)?.last;
     const held = key ? registry().get(key) : null;
     let pty;
     if (held && !held.pty.exited) {
       // The plugin was reloaded and the process is alive: pick it up and show what was on screen.
       window.clearTimeout(held.timer);
       pty = held.pty;
+      if (openCode && pty.openCodeAttempt && pty.openCodeLaunchAt == null) {
+        // Give an older attempt a bounded startup window from the moment it is adopted.
+        pty.openCodeLaunchAt = Date.now();
+        this.pty = pty;
+        this.plugin.saveOpenCodeLayout?.();
+      }
       if (typeof pty.recent === "function") term.write(pty.recent());   // older versions kept no screen
       pty.resize(term.cols, term.rows);
     } else {
       const shell = settings.shellPath || process.env.SHELL || DEFAULT_SHELL;
       // The tab script reads extra agent arguments and the Agent Mail flags from this install's data folder.
-      const env = Object.assign({}, process.env, { TERM: "xterm-256color", COLORTERM: "truecolor" },
+      const env = Object.assign({}, openCode ? openCodeChildEnv() : process.env,
+        { TERM: "xterm-256color", COLORTERM: "truecolor" },
         agentTabEnv(this.plugin.dataDir()));
+      if (openCode) {
+        Object.assign(env, {
+          OBS_AGENT_ATLAS_HOME: this.plugin.dataDir(), OBS_AGENT_ATLAS_RUNTIME: this.plugin.runtimeDir(),
+          OBS_AGENT_ATLAS_PYTHON: this.plugin.serverPython || settings.pythonPath || "/usr/bin/python3",
+          OBS_AGENT_ATLAS_LANG: this.plugin.lang(),
+          OBS_AGENT_OPENCODE_ATTEMPT: randomUUID().replace(/-/g, ""),
+        });
+      }
       if (!env.LANG) env.LANG = "en_US.UTF-8";      // launched from the Dock, Obsidian has no locale
       const codexHome = this.state.kind === "codex" && normalizeCodexHome(settings.codexHome);
       const command = codexHome ? `export CODEX_HOME=${shellQuote(codexHome)}; ${this.state.command}` : this.state.command;
-      pty = spawnPty({ file: shell, args: ["-l", "-i", "-c", command],
-                       cwd: this.state.cwd || os.homedir(), env, cols: term.cols, rows: term.rows });
+      if (openCode) {
+        this.openCodeLaunching = env.OBS_AGENT_OPENCODE_ATTEMPT;
+        this.openCodeLaunchAt = Date.now();
+        this.plugin.saveOpenCodeLayout?.();
+      }
+      try {
+        pty = spawnPty({ file: shell, args: ["-l", "-i", "-c", command],
+                         cwd: this.state.cwd || os.homedir(), env, cols: term.cols, rows: term.rows });
+        if (openCode) {
+          pty.openCodeAttempt = this.openCodeLaunching;
+          pty.openCodeLaunchAt = this.openCodeLaunchAt;
+        }
+      } finally {
+        if (openCode) {
+          this.pty = pty;
+          this.openCodeLaunching = null;
+          this.openCodeLaunchAt = null;
+          this.plugin.saveOpenCodeLayout?.();
+        }
+      }
     }
     // A tab without an id is listed too, under its PTY: quitting Obsidian must end its process as well.
     this.ptyKey = key || `pty-${pty.pid}`;
     registry().set(this.ptyKey, { pty, timer: null, held: false });
     this.pty = pty;
     this.term = term;
+    if (openCode) sendOpenCodeFirstPrompt(this, pty, previouslyResumed);
     const output = (text) => {
       term.write(text);
       this.escTail = nextTail(this.escTail, text);
@@ -204,6 +242,7 @@ class AgentTerminalView extends ItemView {
     };
     pty.onData(output);
     pty.onExit(() => {
+      if (openCode) this.plugin.saveOpenCodeLayout?.();
       output(`\r\n\x1b[2m[${this.plugin.t("terminal.exited")}]\x1b[0m\r\n`);
       this.mirrorSubscribers.forEach(send => send({ type: "exit" }));
     });
@@ -344,6 +383,7 @@ class AgentTerminalView extends ItemView {
     if (this.textContrast) this.textContrast.dispose();
     if (this.term) this.term.dispose();
     this.pty = null;
+    if (this.state.kind === "opencode") this.plugin.saveOpenCodeLayout?.();
   }
 }
 

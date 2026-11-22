@@ -327,7 +327,7 @@ def run(conn: sqlite3.Connection, query: str, limit: int = 20,
         include_automation: bool = False, topics: list[str] | None = None,
         scope: str = "prompts", order: str = "date", agents: list[str] | None = None) -> dict:
     """Results plus how the query was understood, the full count and a hint about another scope.
-    `agents` narrows to sessions of these agents (claude, codex); None means all."""
+    `agents` narrows to sessions of these registered agents. None means all."""
     # One snapshot for the whole search: an old writer committing midway cannot leave the rowid
     # mapping checked as complete but read as incomplete.
     own = not conn.in_transaction
@@ -572,6 +572,17 @@ def _trim_quote(text: str, limit: int = QUOTE_LIMIT) -> str:
     return head.rstrip() + " …"
 
 
+def _opencode_turns(conn, session_id, limit, *, reverse=False):
+    direction = "DESC" if reverse else "ASC"
+    mapped = not search_rows.pending(conn)
+    source = ("fts_rows r JOIN fts ON fts.rowid=r.row_id AND r.index_name='fts'" if mapped else "fts")
+    key = "r.session_id" if mapped else "fts.session_id"
+    turn = "r.turn" if mapped else "fts.turn"
+    return conn.execute(
+        f"SELECT fts.user_text, fts.assistant_text FROM {source} "
+        f"WHERE {key}=? AND {turn}>0 ORDER BY {turn} {direction} LIMIT ?", (session_id, limit))
+
+
 def local_state(conn: sqlite3.Connection, session_id: str) -> dict | None:
     """The "where we left off" block, built from the transcript without any model call.
 
@@ -582,6 +593,12 @@ def local_state(conn: sqlite3.Connection, session_id: str) -> dict | None:
         "WHERE session_id=?", (session_id,)).fetchone()
     if row is None:
         return None
+    if row["agent"] == agents_mod.OPENCODE:
+        detail = conn.execute("SELECT last_answer FROM opencode_details WHERE session_id=?", (session_id,)).fetchone()
+        recent = detail["last_answer"] if detail else ""
+        files = conn.execute("SELECT COUNT(*) FROM session_files WHERE session_id=?", (session_id,)).fetchone()[0]
+        return {"last_prompt": _trim_quote(row["last_prompt"]), "last_answer": " ".join(recent.split())[:600],
+                "cwd": row["cwd_last"], "branch": None, "files": files}
     facts = agents_mod.parse_session(row["source_path"], session_id, row["agent"])
     tail = facts.assistant_text[-1] if facts.assistant_text else ""
     summary = facts.summaries[-1] if facts.summaries else None
@@ -609,4 +626,6 @@ def load_prompts(conn: sqlite3.Connection, session_id: str, limit: int = 40) -> 
     ).fetchone()
     if row is None:
         return []
+    if row["agent"] == agents_mod.OPENCODE:
+        return [r["user_text"] for r in _opencode_turns(conn, session_id, -1) if r["user_text"]][:limit]
     return agents_mod.parse_session(row["source_path"], session_id, row["agent"]).user_text[:limit]

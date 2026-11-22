@@ -1,5 +1,6 @@
 import { Notice } from "obsidian";
 import * as fs from "fs";
+import * as path from "path";
 import { agentKinds, getAgent } from "./agent-registry";
 import { supportsTerminal } from "./agents";
 import { normalizeCodexHome } from "./codex-hook";
@@ -53,6 +54,11 @@ function codexHookDefinition(tab) {
   });
 }
 
+function openCodeDataHome(shell, env) {
+  const xdg = shell?.XDG_DATA_HOME || env.XDG_DATA_HOME;
+  return xdg ? path.join(xdg, "opencode") : "~/.local/share/opencode";
+}
+
 function advancedDefinitions(tab) {
   const { plugin } = tab;
   const integrations = group(tab, "adv.integrations", [
@@ -67,6 +73,14 @@ function advancedDefinitions(tab) {
         validate: value => value && !normalizeCodexHome(value) ? plugin.t("codexHook.home.invalid") : null,
       }, () => { void tab.refresh(); }),
       aliases: ["Codex"],
+    },
+    {
+      ...pluginText(tab, "opencodeHome", "opencode.home", {
+        placeholder: automatic(tab, openCodeDataHome(plugin.shellInfo, process.env)),
+        normalize: value => value.trim(),
+        validate: value => value && !normalizeCodexHome(value) ? plugin.t("opencode.home.invalid") : null,
+      }, () => plugin.writeServerConfig({ opencode_home: normalizeCodexHome(plugin.settings.opencodeHome) || "" })),
+      aliases: ["OpenCode"],
     },
   ]);
   const launch = group(tab, "adv.launch", [

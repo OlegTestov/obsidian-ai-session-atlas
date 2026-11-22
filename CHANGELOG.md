@@ -7,6 +7,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.18.0] - 2026-11-22
+
+### Added
+
+- OpenCode 2 sessions in Search and Statistics, with an OpenCode filter, child session activity and native forks.
+- Start or resume OpenCode in an Obsidian terminal tab. Active shows the tab’s title and folder with Go and Close buttons.
+- Copy an OpenCode session as a native fork, or rename, archive or delete it from its Search card.
+- Set a custom OpenCode data folder and check the local OpenCode service status in Settings.
+
 ## [2.17.0] - 2026-11-22
 
 ### Changed

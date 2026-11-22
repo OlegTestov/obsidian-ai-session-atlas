@@ -120,11 +120,27 @@ describe("pseudo-terminal: pick-up by a new tab", () => {
 });
 
 describe("pseudo-terminal: closing", () => {
-  it("ends the program inside, even a busy one", async () => {
+  it("reports a launch child killed before the first process-table lookup", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-pty-early-exit-"));
+    const marker = path.join(root, "started");
+    const pty = spawn({ file: "/bin/sh", args: ["-c", ': > "$1"; kill -KILL $$', "launcher", marker], cwd: root, env });
+    try {
+      await outputReady(() => fs.existsSync(marker), "the launcher to start");
+      await outputReady(() => pty.exited, "the early launch exit");
+    } finally {
+      pty.kill();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("ends the program inside, even a busy one", async t => {
     const busy = spawn({ file: "/bin/sh", args: ["-c", "sleep 60"], cwd: "/tmp", env, cols: 80, rows: 24 });
     await sleep(500);
     const inner = await busy.tty();
+    const kill = t.mock.method(process, "kill");
     busy.kill();
+    // The input pipe can close after the wrapper exits. Close must signal the group directly.
+    assert.deepEqual(kill.mock.calls[0].arguments, [-busy.pid, "SIGHUP"]);
     await sleep(500);
     assert.ok(inner, "no tty child found");
     let alive = true;

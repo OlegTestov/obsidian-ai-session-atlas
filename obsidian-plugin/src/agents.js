@@ -2,6 +2,7 @@
 // Every agent tab opens through one script (agent-resume-terminal.zsh): the tab has its own id,
 // the script remembers which session ran in it and brings it back after an Obsidian restart.
 // Mixed into the plugin class.
+import { waitForOpenCodeSession } from "./opencode-tab";
 import { Notice } from "obsidian";
 import * as path from "path";
 import * as fsSync from "fs";
@@ -15,6 +16,7 @@ const AGENTS = Object.freeze(Object.fromEntries(agentKinds.map(kind => [kind, ge
 const TERMINALS = new Map([
   ["claude", { paletteId: "open-claude-code-terminal", icon: AGENT_ICONS.claude, parse: claudeLaunch }],
   ["codex", { paletteId: "open-codex-terminal", icon: AGENT_ICONS.codex, parse: codexLaunch }],
+  ["opencode", { paletteId: "new-opencode-session", icon: AGENT_ICONS.opencode, parse: openCodeLaunch }],
 ]);
 
 function terminalAgent(kind) {
@@ -110,7 +112,19 @@ function parseLaunch(command) {
       || w[2] !== AND || typeof w[3] !== "string" || w.slice(4).some((x) => typeof x !== "string")) return null;
   const args = w.slice(4);
   const start = (mode, id, prompt) => ({ agent: w[3], cwd: w[1], mode, sessionId: id, prompt: prompt || "" });
-  return terminalAgent(w[3]).parse(args, start);
+  const result = terminalAgent(w[3]).parse(args, start);
+  if (!result && w[3] === "opencode") throw new UnknownAgent("Invalid OpenCode tab launch");
+  return result;
+}
+
+function openCodeLaunch(args, start) {
+  const [directory, flag, value] = args;
+  if (directory !== start("new", "").cwd) return null;
+  if (args.length === 1) return start("new", "");
+  if (args.length !== 3) return null;
+  if (flag === "--session" && validId("opencode", value)) return start("resume", value);
+  if (flag === "--prompt" && value.trim()) return start("new", "", value);
+  return null;
 }
 
 function codexLaunch(args, start) {
@@ -139,7 +153,7 @@ function agentArgs(scriptPath, kind, instance, seed) {
   if (seed) {
     // A new Codex thread has no id yet: an empty word keeps the prompt in its place.
     parts.push(seed.mode, seed.sessionId ? shellQuote(seed.sessionId) : "''");
-    if (seed.prompt) parts.push(shellQuote(seed.prompt));
+    if (seed.prompt && kind !== "opencode") parts.push(shellQuote(seed.prompt));
   }
   // -l -i: the user's profile is needed, otherwise claude is not on PATH.
   return ["-l", "-i", "-c", parts.join(" ")];
@@ -261,14 +275,20 @@ class AgentMethods {
       const instance = newInstanceId(kind);
       const leaf = this.app.workspace.getLeaf("tab");
       if (!opts.group) this.placeOutsideGroup(leaf);
+      const openCode = kind === "opencode" ? { firstPrompt: opts.seed?.prompt || "", seedId: opts.seed?.sessionId || "" } : {};
       await leaf.setViewState({
         type: AGENT_VIEW_TYPE,
         active: true,
         state: { kind, instance, cwd: opts.cwd || this.getVaultPath(), title: opts.label || getAgent(kind).label,
-                 command: agentArgs(script, kind, instance, opts.seed || null)[3] },
+                 command: agentArgs(script, kind, instance, opts.seed || null)[3], ...openCode },
       });
       if (opts.group) this.joinGroup(leaf, opts.group);
       this.app.workspace.revealLeaf(leaf);
+      if (kind === "opencode") {
+        this.saveOpenCodeLayout?.();
+        if (opts.seed?.mode === "resume"
+            && !await waitForOpenCodeSession(this.dataDir(), leaf, instance, opts.seed.sessionId)) return false;
+      }
       if (opts.label) new Notice(this.t("terminal.opened", { label: opts.label }));
       return true;
     } catch (error) {

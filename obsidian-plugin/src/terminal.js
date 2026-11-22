@@ -5,6 +5,7 @@ import * as fsSync from "fs";
 import * as path from "path";
 import { parseLaunch, supportsTerminal } from "./agents";
 import { idPattern, UnknownAgent } from "./agent-registry";
+import { openCodeLaunchEnded, readOpenCodeTab, waitForOpenCodeSession } from "./opencode-tab";
 import { attachedSessionState } from "./attach";
 import { codexScreenState } from "./dialog-codex";
 import {
@@ -109,7 +110,7 @@ class TerminalMethods {
   }
 
   emptyAgentPrompt(leaf, agent) {
-    if (!supportsTerminal(agent)) return false;
+    if (!supportsTerminal(agent) || agent === "opencode") return false;
     try {
       const terminal = leaf.view.emulator.terminal;
       const buffer = terminal.buffer.active;
@@ -253,11 +254,16 @@ class TerminalMethods {
       return;
     }
     // The session already has a tab, maybe one Obsidian brought back but has not loaded yet: show it.
-    // A second tab would start a second process on the same conversation once both are open.
-    if (launch && launch.mode === "resume" && this.revealSessionTab(launch.sessionId)) return;
+    // Reuse an OpenCode leaf only after its current route can be confirmed.
+    if (launch?.agent === "opencode") {
+      const existing = launch.mode === "resume" && this.revealOpenCodeSession(launch.sessionId);
+      if (existing) return waitForOpenCodeSession(this.dataDir(), existing.leaf, existing.instance, launch.sessionId);
+      return this.openAgent(launch.agent, { cwd: launch.cwd, seed: launch, label });
+    }
+    if (launch && launch.mode === "resume" && this.revealSessionTab(launch.sessionId)) return true;
     // A background job already shown in a tab: that tab, not a second view of the same conversation.
-    if (launch && launch.mode === "attach" && (await this.revealJobTab(launch.sessionId))) return;
-    if (launch && (await this.openAgent(launch.agent, { cwd: launch.cwd, seed: launch, label }))) return;
+    if (launch && launch.mode === "attach" && (await this.revealJobTab(launch.sessionId))) return true;
+    if (launch && await this.openAgent(launch.agent, { cwd: launch.cwd, seed: launch, label })) return true;
     try {
       const leaf = this.app.workspace.getLeaf("tab");
       await leaf.setViewState({
@@ -278,15 +284,36 @@ class TerminalMethods {
     const workspace = this.app && this.app.workspace;
     if (!workspace || typeof workspace.iterateAllLeaves !== "function") return false;
     const instances = tabInstancesOf(readRegistry(this.registryFile || REGISTRY_FILE), sessionId);
-    if (!instances.size) return false;
     let found = null;
     workspace.iterateAllLeaves((leaf) => {
       const state = !found && leaf.getViewState && leaf.getViewState();
-      if (state && state.type === AGENT_VIEW_TYPE && state.state && instances.has(state.state.instance)) found = leaf;
+      if (state?.type !== AGENT_VIEW_TYPE || !state.state) return;
+      const data = state.state;
+      if (instances.has(data.instance)) found = leaf;
     });
     if (!found) return false;
     workspace.revealLeaf(found);
     return true;
+  }
+
+  revealOpenCodeSession(sessionId) {
+    const workspace = this.app.workspace;
+    let found;
+    const exited = [];
+    workspace?.iterateAllLeaves?.(leaf => {
+      const state = leaf.getViewState?.();
+      if (state?.type !== AGENT_VIEW_TYPE || state.state?.kind !== "opencode") return;
+      const { instance, seedId } = state.state;
+      const record = readOpenCodeTab(this.dataDir(), instance);
+      const pty = leaf.view?.pty;
+      const sid = pty && record?.verified ? record.current : record?.last || seedId;
+      if (sid !== sessionId) return;
+      if (openCodeLaunchEnded(this.dataDir(), instance, pty)) exited.push(leaf);
+      else if (!found) found = { leaf, instance };
+    });
+    exited.forEach(leaf => leaf.detach?.());
+    if (found) workspace.revealLeaf(found.leaf);
+    return found;
   }
 
   /** The tab showing this background job (`claude attach <job>` in its tree), loaded or restored. */

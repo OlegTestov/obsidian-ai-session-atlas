@@ -8,7 +8,7 @@ import { automatic, definition, group, textDefinition } from "./settings-fields"
 const DEFAULT_MODELS = { classification: ["sonnet", "low"], catalog_summary: ["sonnet", "low"],
                          handoff: ["sonnet", "medium"] };
 
-const AI_AGENTS = ["auto", ...agentKinds.filter(supportsTerminal)];
+const AI_AGENTS = ["auto", ...agentKinds.filter(kind => kind !== "opencode" && supportsTerminal(kind))];
 
 function catalogDefinitions(tab) {
   const { plugin } = tab, cfg = () => plugin.readServerConfig() || {};

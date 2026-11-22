@@ -13,12 +13,14 @@ import tempfile
 import threading
 import time
 import traceback
+from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 from . import (
     actions,
     active,
+    agent_opencode,
     agents,
     autoclassify,
     classify,
@@ -36,6 +38,9 @@ from . import (
     launch,
     limits,
     messages,
+    opencode_actions,
+    opencode_service,
+    opencode_tabs,
     plans,
     relocate,
     runner,
@@ -402,6 +407,10 @@ class Handler(BaseHTTPRequestHandler):
                 if url.path == "/api/index-status":           # the checks screen in settings
                     count = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
                     status = {"sessions": count, "indexing": catch_up()}
+                    status["opencode"] = agent_opencode.status(conn)
+                    found = opencode_service.discover()
+                    status["opencode_service"] = {"state": found.state, "version": found.version,
+                                                  "message": msg("opencode." + found.state)}
                     _add_classification_status(conn, status)
                     try:
                         runner.configured_agent()
@@ -419,6 +428,7 @@ class Handler(BaseHTTPRequestHandler):
                     background = (background_sessions(conn)
                                   if not picked or agents.CLAUDE in picked else [])
                     return self._json(200, {"count": len(sessions), "sessions": sessions,
+                                            "opencode_tabs": opencode_tabs.catalog_meta(conn),
                                             "background_jobs": background,
                                             "recent_closed": active.recently_closed(
                                                 conn, {s["session_id"] for s in sessions}
@@ -504,6 +514,11 @@ class Handler(BaseHTTPRequestHandler):
                 kind = agents.session_agent(conn, session_id)
                 if not agents.valid_id(kind if kind is not None else agents.CLAUDE, session_id):
                     return self._json(400, {"error": msg("session_id.invalid")})
+                if kind == agents.OPENCODE:
+                    if url.path in {"/api/terminal", "/api/launch"}:
+                        agents.require(kind, (agents.CLAUDE, agents.CODEX), "session launch")
+                    if url.path in LLM_PATHS | AI_PREVIEWS | {"/api/export"}:
+                        agents.require(kind, (agents.CLAUDE, agents.CODEX), "AI features")
             if not (url.path == "/api/auto-classify" and body.get("enabled") is False):
                 if url.path in LLM_PATHS:
                     runner.require_llm()        # "AI off" first, as before the registry
@@ -515,6 +530,9 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/launch": self._launch, "/api/override": self._override,
                 "/api/export": self._export, "/api/reindex": self._reindex,
                 "/api/rename": self._rename,
+                "/api/opencode/resume": self._opencode_resume,
+                "/api/opencode/fork": self._opencode_fork,
+                "/api/opencode/archive": self._opencode_archive,
                 "/api/classify/preview": self._classify_preview,
                 "/api/classify": self._classify,
                 "/api/upload": self._upload,
@@ -533,6 +551,8 @@ class Handler(BaseHTTPRequestHandler):
             return handler(conn, body)
         except agents.UnknownAgent as exc:
             self._json(400, {"error": str(exc)})
+        except opencode_service.ServiceError as exc:
+            self._json(409, {"error": str(exc), "state": exc.state})
         except runner.EgressDenied as exc:
             self._json(403, {"error": str(exc)})
         except Exception as exc:
@@ -554,8 +574,10 @@ class Handler(BaseHTTPRequestHandler):
             )
         html = html.replace("__TERMINAL_ASSETS__", terminal_assets)
         registry = json.dumps([dict(agents.get(kind)) for kind in agents.all()]).replace("<", "\\u003c")
-        html = (html.replace("__NONCE__", nonce).replace("__TOKEN__", csrf_token())
-                .replace("__AGENTS__", registry)
+        with closing(db.connect()) as conn:
+            opencode = json.dumps(agent_opencode.status(conn)["available"])
+        html = (html.replace("__OPENCODE_AVAILABLE__", opencode).replace("__NONCE__", nonce)
+                .replace("__TOKEN__", csrf_token()).replace("__AGENTS__", registry)
                 .replace("__CLAUDE_INSTALLED__", json.dumps(runner.has_claude())))
         self._send(200, html.encode(), "text/html; charset=utf-8", nonce=nonce)
 
@@ -597,6 +619,7 @@ class Handler(BaseHTTPRequestHandler):
             art = enrich.cached(conn, row["session_id"], "catalog_summary")
             row["summary"] = _summary_view(art)
         return {"count": total, "shown": len(rows), "results": rows,
+                "opencode_available": agent_opencode.status(conn)["available"],
                 "plan": found["plan"], "elsewhere": found["elsewhere"],
                 "error": found["error"],
                 "indexed_through": db.get_meta(conn, "indexed_through")}
@@ -635,6 +658,7 @@ class Handler(BaseHTTPRequestHandler):
                 topics.setdefault(topic, set()).update(domains)
 
         return {
+            "opencode_available": agent_opencode.status(conn)["available"],
             "projects": sorted(project_domains, key=lambda p: -project_count.get(p, 0)),
             "project_domains": {k: sorted(v) for k, v in project_domains.items()},
             "domains": sorted({d for domains, _ in effective.values() for d in domains}),
@@ -740,8 +764,36 @@ class Handler(BaseHTTPRequestHandler):
         self._json(200, {"ok": True})
 
     def _rename(self, conn, body) -> None:
+        if agents.session_agent(conn, body["session_id"]) == agents.OPENCODE:
+            title = body.get("title", "")
+            title = " ".join(title.split())[:actions.MAX_TITLE] if isinstance(title, str) else ""
+            if not title:
+                return self._json(400, {"error": msg("rename.empty")})
+            result = opencode_actions.rename(conn, body["session_id"], title)
+            catch_up(now=True)
+            return self._json(200, result)
         result = actions.rename_session(conn, body["session_id"], body.get("title", ""),
                                         write_to_transcript=body.get("to_claude", True))
+        self._json(200, result)
+
+    def _opencode_resume(self, _conn, body):
+        self._json(200, opencode_actions.resume(body.get("session_id")))
+
+    def _opencode_fork(self, conn, body):
+        self._json(200, opencode_actions.fork(conn, body.get("session_id"), body.get("request_id"),
+                                              confirm_unknown=body.get("confirm_unknown")))
+        catch_up(now=True)
+
+    def _opencode_archive(self, conn, body):
+        sid = body.get("session_id")
+        result = opencode_actions.archive(sid, body.get("archived"))
+        # Refresh the flag from SQLite even if a recent index pass throttles the catalog refresh.
+        with index.writer_lock():
+            row = agent_opencode.session_metadata(sid)
+            if row and bool(row["time_archived"]) == result["archived"]:
+                conn.execute("UPDATE opencode_details SET archived=? WHERE session_id=?", (result["archived"], sid))
+                conn.commit()
+        catch_up(now=True)
         self._json(200, result)
 
     def _export(self, conn, body) -> None:
@@ -837,6 +889,15 @@ class Handler(BaseHTTPRequestHandler):
             self._json(400, {"error": str(exc)})
 
     def _delete_preview(self, conn, body) -> None:
+        sid = body.get("session_id", "")
+        if agents.session_agent(conn, sid) == agents.OPENCODE:
+            if body.get("passive") is not True:
+                return self._json(200, opencode_actions.delete_preview(sid))
+            try:
+                preview = opencode_actions.delete_eligibility(sid)
+            except opencode_service.ServiceError as exc:
+                preview = {"disabled_reason": None if exc.state == "stopped" else str(exc)}
+            return self._json(200, preview)
         try:
             self._json(200, delete.footprint(conn, body.get("session_id", "")))
         except delete.DeleteError as exc:
@@ -846,6 +907,11 @@ class Handler(BaseHTTPRequestHandler):
         """Irreversible: only after a confirmation dialog listing what gets deleted."""
         if body.get("confirmed") is not True:
             return self._json(400, {"error": msg("server.need_confirm")})
+        sid = body.get("session_id", "")
+        if agents.session_agent(conn, sid) == agents.OPENCODE:
+            result = opencode_actions.delete(sid, body.get("children"), generation=body.get("service_generation"))
+            catch_up(now=True)
+            return self._json(200, result)
         try:
             result = delete.delete_session(conn, body.get("session_id", ""))
         except delete.DeleteError as exc:

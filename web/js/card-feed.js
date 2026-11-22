@@ -1,5 +1,5 @@
 // Search cards share the Active dialogue renderer, with their own lazy, paged reader.
-/* exported catalogFeed -- used by card.js */
+/* exported catalogFeed, catalogPrompts -- used by card.js */
 function catalogFeed(session) {
   const details = el("details", "block catalog-feed");
   details.appendChild(el("summary", null, i18n("feed.button.label")));
@@ -71,6 +71,26 @@ function catalogFeed(session) {
   });
   body.addEventListener("scroll", () => {
     if (positioned && !error && body.scrollTop < 80) load();
+  });
+  return details;
+}
+
+
+function catalogPrompts(session) {
+  const details = el("details", "block catalog-feed");
+  details.appendChild(el("summary", null, i18n("card.userPrompts")));
+  const body = el("div", "catalog-feed-body");
+  details.appendChild(body);
+  let loaded = false;
+  details.addEventListener("toggle", async () => {
+    if (!details.open || loaded) return;
+    body.textContent = i18n("feed.loading");
+    try {
+      const { prompts } = await api(`/api/prompts/${encodeURIComponent(session.session_id)}`);
+      body.replaceChildren(...(prompts.length ? prompts.map(text => el("pre", "quote", text))
+        : [el("p", "empty", i18n("feed.noPrompts"))]));
+      loaded = true;
+    } catch (error) { body.textContent = i18n("feed.error", { msg: error.message }); }
   });
   return details;
 }

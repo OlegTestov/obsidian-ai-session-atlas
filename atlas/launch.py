@@ -70,7 +70,6 @@ class LaunchError(ValueError):
 def new_session(conn: sqlite3.Connection, cwd: str, prompt: str, agent: str = agents.CLAUDE) -> dict:
     if agent not in agents.all():
         raise LaunchError(msg("launch.bad_agent"))
-    agents.require(agent, (agents.CLAUDE, agents.CODEX), "new session launch")
     try:
         cwd = folders.check(cwd)
     except folders.FolderError as exc:
@@ -82,7 +81,11 @@ def new_session(conn: sqlite3.Connection, cwd: str, prompt: str, agent: str = ag
         raise LaunchError(msg("launch.prompt_too_long"))
     # Codex chooses its thread id itself; the tab script records it once the thread starts.
     session_id = str(uuid.uuid4()) if agent == agents.CLAUDE else None
-    command = actions.agent_command(cwd, agent, session_id, prompt)
+    if agent == agents.OPENCODE:
+        from . import opencode_actions
+        command = opencode_actions.command(cwd, first_prompt=prompt)
+    else:
+        command = actions.agent_command(cwd, agent, session_id, prompt)
     title = (prompt.splitlines()[0][:60] if prompt else "") or label(cwd)
     return {"session_id": session_id, "cwd": cwd, "command": command, "title": title,
             "agent": agent}

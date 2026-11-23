@@ -1,8 +1,8 @@
-// Agent filter (Claude Code / Codex) for Search, Active and Statistics, and the agent badge.
+// Agent filters, labels and badges for Search, Active and Statistics.
 // Classic script: shares one global scope with the other page files.
 /* exported agentFilter, agentQuery, agentFiltered, agentPassesView, resetAgents, closeAgentFilters -- used by other page scripts */
-/* exported agentBadge, agentName, agentShort, agentPick, agentControls, withTabScreen, setOpenCodeAvailable -- used by other page scripts */
-// The same dropdown as the Active filters (.ms), but both agents are ticked by default and one
+/* exported agentBadge, agentIcon, agentLabel, agentName, agentShort, agentPick, agentControls, withTabScreen, setOpenCodeAvailable -- used by other page scripts */
+// The same dropdown as the Active filters (.ms), but all agents are ticked by default and one
 // always stays ticked. The pick is remembered per view in this browser: losing it is harmless.
 const AGENTS_KEY = "atlas.agents";
 const AGENT_VIEWS = ["search", "active", "stats"];
@@ -17,6 +17,31 @@ const agentUI = {};                  // view → {btn, pop, list, fill}
 
 function agentName(agent) {
   return AtlasLogic.findAgent(agent)?.label || i18n("agent.unknown");
+}
+
+function agentIcon(kind) {
+  if (!Object.hasOwn(AtlasAgentMarks, kind)) return document.createDocumentFragment();
+  const mark = AtlasAgentMarks[kind];
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("class", "agent-icon");
+  svg.setAttribute("data-agent", kind);
+  svg.setAttribute("viewBox", mark.viewBox);
+  svg.setAttribute("fill", "currentColor");
+  svg.setAttribute("aria-hidden", "true");
+  for (const { d, opacity } of mark.paths) {
+    const path = document.createElementNS(ns, "path");
+    path.setAttribute("d", d);
+    if (opacity) path.setAttribute("opacity", opacity);
+    svg.appendChild(path);
+  }
+  return svg;
+}
+
+function agentLabel(kind) {
+  const label = el("span", "agent-label");
+  label.append(agentIcon(kind), el("span", "agent-name", agentName(kind)));
+  return label;
 }
 
 // Reply author on cards and in the feed: "Claude" or "Codex".
@@ -102,7 +127,7 @@ function resetAgents(view) {
 
 /**
  * The dropdown for one view. onChange runs after a click. opts.counts() gives {agent: n} when known;
- * opts.named shows the pick on the button, for a place that already has an "Agent" heading.
+ * opts.named shows the selection on the button itself.
  */
 function agentFilter(view, onChange, opts) {
   const counts = opts && opts.counts;
@@ -130,7 +155,7 @@ function agentFilter(view, onChange, opts) {
         setAgents(view, AtlasLogic.toggleAgent(selected, a, box.checked));
         onChange();
       });
-      label.append(box, a === "opencode" ? agentBadge({ agent: a }) : document.createTextNode(agentName(a)));
+      label.append(box, agentLabel(a));
       if (n) label.appendChild(el("span", "n", String(n[a] || 0)));
       return label;
     }));
@@ -158,10 +183,18 @@ function refreshAgentButton(view) {
   const label = i18n("agent.filter");
   const on = agentFiltered(view);
   const visible = viewSelection(view);
-  const text = ui.named ? visible.map(agentName).join(", ") : label;
-  ui.btn.replaceChildren(text, ...(on ? [el("span", "fdot", "●")] : []), " ▾");
-  ui.btn.title = on ? `${label}: ${visible.map(agentName).join(", ")}`
+  let content = label;
+  if (ui.named) {
+    if (visible.length === 1) content = agentLabel(visible[0]);
+    else {
+      content = el("span", "agent-label");
+      content.append(...visible.map(agentIcon));
+    }
+  }
+  ui.btn.replaceChildren(content, ...(on ? [el("span", "fdot", "●")] : []), " ▾");
+  ui.btn.title = ui.named || on ? `${label}: ${visible.map(agentName).join(", ")}`
     : i18n("active.filterAll", { label });
+  if (ui.named) ui.btn.setAttribute("aria-label", ui.btn.title);
   ui.btn.classList.toggle("on", on);
   if (!ui.pop.classList.contains("hidden")) ui.fill();   // an open list follows the poll
 }

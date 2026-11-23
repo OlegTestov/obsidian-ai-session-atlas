@@ -52,7 +52,9 @@ test("both agents are listed by default with their badges", async ({ page, open,
   await expect(row(page, ids.codexLedger).locator(".agent-badge.codex")).toHaveText("Codex");
   await expect(row(page, ids.claudeMain).locator(".agent-badge.claude")).toHaveText("Claude Code");
   await expect(row(page, ids.claudeMain).locator(".meta")).toContainText("ABC-12");
-  await expect(page.locator("#search-agent .ms-btn")).toContainText("Claude Code, Codex");
+  await expect(page.locator("#search-agent .ms-btn")).toHaveAttribute("title", `${t.agent}: Claude Code, Codex`);
+  await expect(page.locator("#search-agent .ms-btn svg.agent-icon")).toHaveCount(2);
+  await expect(page.locator("#search-agent .ms-btn")).not.toContainText("Claude Code");
   await expectBadges(page);
   // Background runs (a headless Claude run, `codex exec`) are hidden until asked for.
   await expect(row(page, ids.codexExec)).toHaveCount(0);
@@ -85,8 +87,8 @@ test("the Agent filter narrows the list, sends agent= and survives a reload", as
   await page.locator("#list").click({ position: { x: 5, y: 5 } });
 
   await page.reload();
-  await expect(page.locator("#search-agent .ms-btn")).toContainText("Codex");
-  await expect(page.locator("#search-agent .ms-btn")).not.toContainText("Claude Code");
+  await expect(page.locator("#search-agent .ms-btn")).toHaveText("Codex● ▾");
+  await expect(page.locator("#search-agent .ms-btn")).toHaveAttribute("title", `${t.agent}: Codex`);
   await expect(page.locator("#chips .count")).toHaveText(t.sessions(codexOnly.count));
   await expectBadges(page, "codex");
 

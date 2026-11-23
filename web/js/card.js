@@ -177,7 +177,10 @@ async function openCard(id) {
   frag.appendChild(h3);
   const sub = el("p", "sub");
   const badge = agentBadge(s);
-  if (openCode) badge.classList.add("brand-size");
+  if (openCode) {
+    badge.classList.add("brand-size");
+    badge.prepend(agentIcon("opencode"));
+  }
   sub.append(badge, document.createTextNode(
     " " + i18n("card.subUpdated", { kind: s.session_kind, when: ago(s.last_activity_at) })
     + (s.title_source === "manual" ? i18n("card.manualName") : "") + "  "));

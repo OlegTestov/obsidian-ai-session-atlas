@@ -278,6 +278,8 @@ many sessions the first index can take a few minutes.
 - **Agent filter.** Search, Active and Statistics each have an **Agent** list with Claude Code and
   Codex. The OpenCode filter appears when Atlas detects OpenCode or has indexed OpenCode sessions.
   Agents are ticked by default, at least one stays ticked, and the choice is remembered for each section.
+  In Search and Statistics, the button shows the icon and name for one selected agent or icons for several.
+  Hover over the button to see the selected names.
 - **Terminals.** Click the Claude Code, Codex or OpenCode icon in the ribbon. A tab starts in the vault folder
   and runs your login shell. Sessions opened from the catalog start in their own working folder.
 - **Commands:**

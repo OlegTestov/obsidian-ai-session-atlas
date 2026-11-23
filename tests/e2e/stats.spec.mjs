@@ -74,6 +74,63 @@ test("totals for both agents and an Agents panel priced per vendor", async ({ pa
   await expect(page.locator("#stats-body .spanel", { hasText: "sonnet-5" })).toBeVisible();
 });
 
+test("Statistics shows agent icons in the button, options and breakdown", async ({ page, open, t, lang }) => {
+  await page.route(/\/api\/(facets|sessions)(?:\?|$)/, async route => {
+    const response = await route.fetch();
+    await route.fulfill({ response, json: { ...(await response.json()), opencode_available: true } });
+  });
+  await withPayload(page, d => {
+    d.opencode_available = true;
+    d.by_agent.push({ name: "opencode", cost: null, tokens: 800, active_s: 20 });
+  });
+  await open("stats");
+  const button = page.locator("#stats-bar .agent-ms .ms-btn");
+  const names = ["Claude Code", "Codex", "OpenCode"];
+  const kinds = ["claude", "codex", "opencode"];
+  const all = `${t.agent}: ${names.join(", ")}`;
+  const marks = parent => parent.locator("svg.agent-icon");
+  await expect(button).toHaveText("▾");
+  await expect(button).toHaveAttribute("title", all);
+  await expect(button).toHaveAccessibleName(all);
+  await expect(marks(button)).toHaveCount(3);
+  expect(await marks(button).evaluateAll(nodes => nodes.map(node => node.dataset.agent))).toEqual(kinds);
+
+  const panel = agentsPanel(page, t);
+  for (const [index, name] of names.entries()) {
+    const label = agentRow(page, t, name).locator(".bn");
+    await expect(label).toHaveText(name);
+    await expect(marks(label)).toHaveAttribute("data-agent", kinds[index]);
+  }
+  await expect(panel.locator(".agent-badge")).toHaveCount(0);
+  const unpriced = agentRow(page, t, "OpenCode");
+  await expect(unpriced.locator(".bv")).toHaveText("—");
+  await expect(unpriced).toHaveAttribute("title", lang === "ru" ? /^OpenCode: — · 800 токенов/ : /^OpenCode: — · 800 tokens/);
+
+  await page.setViewportSize({ width: 360, height: 900 });
+  await button.scrollIntoViewIfNeeded();
+  await expect(button).toBeInViewport({ ratio: 1 });
+  await button.click();
+  const pop = page.getByRole("group", { name: t.agent, exact: true });
+  await expect(pop).toBeInViewport({ ratio: 1 });
+  for (const [index, name] of names.entries()) {
+    const option = pop.locator("label", { has: page.getByRole("checkbox", { name, exact: true }) });
+    await expect(option).toHaveText(name);
+    await expect(marks(option)).toHaveAttribute("data-agent", kinds[index]);
+  }
+  await expect(pop.locator(".agent-badge")).toHaveCount(0);
+  await pop.getByRole("checkbox", { name: "OpenCode", exact: true }).uncheck();
+  await pop.getByRole("checkbox", { name: "Codex", exact: true }).uncheck();
+  await expect(button).toHaveText("Claude Code● ▾");
+  const one = `${t.agent}: Claude Code`;
+  await expect(button).toHaveAttribute("title", one);
+  await expect(button).toHaveAccessibleName(one);
+  await expect(marks(button)).toHaveAttribute("data-agent", "claude");
+  await expect(marks(button)).toHaveAttribute("aria-hidden", "true");
+  await page.setViewportSize({ width: 240, height: 900 });
+  await button.scrollIntoViewIfNeeded();
+  await expect(button).toBeInViewport({ ratio: 1 });
+});
+
 test("the Agent filter: totals equal that agent's row, and the pick survives a reload", async ({ page, open, t }) => {
   await open("stats");
   await settled(page);

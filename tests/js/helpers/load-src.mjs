@@ -27,6 +27,8 @@ function buildOnce(extraAgents) {
   fs.copyFileSync(path.join(ROOT, "atlas", "default-domains.json"), path.join(dir, "atlas", "default-domains.json"));
   const agents = JSON.parse(fs.readFileSync(path.join(ROOT, "atlas", "agents.json")));
   fs.writeFileSync(path.join(dir, "atlas", "agents.json"), JSON.stringify([...agents, ...extraAgents]));
+  fs.mkdirSync(path.join(dir, "web", "js"), { recursive: true });
+  fs.copyFileSync(path.join(ROOT, "web", "js", "agent-marks.js"), path.join(dir, "web", "js", "agent-marks.js"));
   esbuild.buildSync({
     entryPoints: fs.readdirSync(SRC).filter((f) => f.endsWith(".js")).map((f) => path.join(SRC, f)),
     outdir: path.join(dir, "obsidian-plugin", "src"),

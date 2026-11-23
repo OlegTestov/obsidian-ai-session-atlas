@@ -2060,7 +2060,7 @@ JS_MUT = [
   'action(terminalAgent(kind).icon,',
   'action(terminalAgent("codex").icon,'),
  ('agent marks: the paths lose the centering transform', 'obsidian-plugin/src/agent-icons.js',
-  ' transform="translate(8 8) scale(3.5)"', ''),
+  ' transform="${ribbonTransform}"', ''),
  ('agent marks: the paths are always black', 'obsidian-plugin/src/agent-icons.js',
   'fill="currentColor"', 'fill="#000"'),
  ('agent marks: the Claude mark gets its own colour', 'obsidian-plugin/styles.css',
@@ -2614,6 +2614,14 @@ JS_MUT = [
   "  const block = optionBlock(rows, footer < 0 ? rows.length : footer);"),
  ("page: 11 inflected like 1", "web/js/logic.js",
   'if (m10 === 1 && m100 !== 11) return one;', 'if (m10 === 1) return one;'),
+ ("agent icons: OpenCode badge returns to the filter list", "web/js/agent-filter.js",
+  'label.append(box, agentLabel(a));',
+  'label.append(box, a === "opencode" ? agentBadge({ agent: a }) : agentLabel(a));'),
+ ("agent icons: several selected agents appear by name", "web/js/agent-filter.js",
+  'content.append(...visible.map(agentIcon));', 'content.append(visible.map(agentName).join(", "));'),
+ ("agent icons: the filter tooltip loses the names", "web/js/agent-filter.js",
+  'ui.btn.title = ui.named || on ? `${label}: ${visible.map(agentName).join(", ")}`',
+  'ui.btn.title = ui.named || on ? label'),
  ('codex: page: Claude-only controls on Codex cards',
   'web/js/agent-filter.js',
   'return { commands: commands && !s.pending, plan: agent === "claude", agent };',
@@ -3345,6 +3353,8 @@ def run_node(path, name=None):
         tests = ["--test-name-pattern=initial pane visibility", "tests/js/plugin.test.mjs"]
     elif name and name.startswith("header limits:"):
         tests = ["tests/js/header-limits.test.mjs"]
+    elif name and name.startswith("agent icons:"):
+        tests = ["tests/js/agent-icons.test.mjs"]
     else:
         tests = js_tests(path)
     # Force-exit: a mutant may leave a timer running. It can cut the TAP tail on macOS, so only the

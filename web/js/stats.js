@@ -34,7 +34,7 @@ function renderStatsBar() {
   // The time of the numbers, not of the request: a snapshot may be a minute or more old.
   const asOf = statsData && new Date(statsData.until).toLocaleTimeString(I18N.locale(), { hour: "2-digit", minute: "2-digit" });
   const note = el("span", "shown", statsData ? i18n(statsUpdating ? "stats.updating" : "stats.updated", { time: asOf }) : "");
-  if (!statsAgents) statsAgents = agentFilter("stats", loadStats);
+  if (!statsAgents) statsAgents = agentFilter("stats", loadStats, { named: true });
   $("#stats-bar").replaceChildren(
     segButtons(S.PERIODS, statsPrefs.period, v => { statsPrefs.period = v; saveStatsPrefs(); loadStats(); }),
     statsAgents,
@@ -231,19 +231,19 @@ function breakdown(title, items, opts) {
   const panel = el("div", "spanel");
   panel.appendChild(el("h3", null, title));
   const rows = S.ranked(items, metric, LIST_ROWS);
-  if (opts?.keepUnpriced) rows.push(...items.filter(row => row.name === "opencode" && !rows.includes(row)));
+  if (opts?.byAgent) rows.push(...items.filter(row => row.name === "opencode" && !rows.includes(row)));
   if (!rows.length) { panel.appendChild(el("p", "none", i18n("stats.noData"))); return panel; }
   const max = rows[0][metric];
   rows.forEach(r => {
     const row = el("div", "brow" + (opts && opts.onPick ? " link" : ""));
-    const name = el("span", "bn", (opts && opts.label ? opts.label(r) : r.name));
-    if (opts?.keepUnpriced && r.name === "opencode") name.replaceChildren(agentBadge({ agent: r.name }));
+    const name = el("span", "bn");
+    name.append(opts?.byAgent ? agentLabel(r.name || r.key) : r.name);
     const fill = el("span", "bf");
     fill.style.width = S.share(r[metric], max) + "%";
     const track = el("span", "bt");
     track.appendChild(fill);
     row.append(name, track, el("span", "bv", S.metricText(metric, r[metric])));
-    row.title = i18n("stats.row.hint", { name: opts && opts.label ? opts.label(r) : r.name, cost: S.money(r.cost),
+    row.title = i18n("stats.row.hint", { name: name.textContent, cost: S.money(r.cost),
       tokens: S.bigNum(r.tokens), time: S.hoursText(r.active_s) })
       + (r.prompts ? i18n("stats.row.prompts", { n: r.prompts }) : "");
     if (opts && opts.onPick) row.addEventListener("click", () => opts.onPick(r));
@@ -317,13 +317,12 @@ function renderStats() {
   }
   panels.append(
     // Per agent only once the server sends it; older servers have no such field.
-    ...(d.by_agent ? [breakdown(i18n("stats.panel.byAgent"), byAgent,
-                                { label: r => agentName(r.name || r.key), keepUnpriced: true })] : []),
+    ...(d.by_agent ? [breakdown(i18n("stats.panel.byAgent"), byAgent, { byAgent: true })] : []),
     breakdown(i18n("stats.panel.domains"), d.domains),
     breakdown(i18n("stats.panel.models"), d.models),
     breakdown(i18n("stats.panel.topics"), d.topics),
     ...(d.projects.length > 1 ? [breakdown(i18n("stats.panel.projects"), d.projects)] : []),
-    breakdown(i18n("stats.panel.sessions"), d.sessions, { onPick: openSession, label: r => r.name }),
+    breakdown(i18n("stats.panel.sessions"), d.sessions, { onPick: openSession }),
     ...(d.cache_rewrites && d.cache_rewrites.count && d.cache_rewrites.sessions.length
       ? [rewritesPanel(d.cache_rewrites, openSession)] : []),
     countPanel(i18n("stats.panel.tools"), d.tools),

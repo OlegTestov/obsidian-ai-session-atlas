@@ -43,7 +43,7 @@ test("OpenCode catalog exposes native controls and plain compact badges", async 
     await page.goto(`${base}/?lang=${lang}`);
     const row = page.locator(".row", { hasText: "OpenCode fixture plain" });
     await expect(row.locator(".agent-badge.opencode")).toHaveText("OpenCode");
-    expect(await row.locator(".agent-badge.opencode").evaluate(node => getComputedStyle(node, "::before").content)).toBe("none");
+    await expect(row.locator(".agent-badge.opencode svg")).toHaveCount(0);
     await page.locator("#search-agent .ms-btn").click();
     const filter = page.getByRole("group", { name: t.agent, exact: true });
     const openCode = filter.getByRole("checkbox", { name: "OpenCode" });
@@ -57,8 +57,9 @@ test("OpenCode catalog exposes native controls and plain compact badges", async 
 
     const card = page.locator("#card");
     await expect(card.locator(".agent-badge.brand-size")).toHaveText("OpenCode");
-    const mark = await card.locator(".agent-badge.brand-size").evaluate(el => getComputedStyle(el, "::before").backgroundImage);
-    expect(mark).toContain(lang === "ru" ? "%23EEEEEE" : "%231F1F1F");
+    const mark = card.locator(".agent-badge.brand-size svg[data-agent=opencode]");
+    await expect(mark).toBeVisible();
+    await expect(mark).toHaveCSS("fill", lang === "ru" ? "rgb(238, 238, 238)" : "rgb(31, 31, 31)");
     await expect(card.getByRole("button", { name: t.rename, exact: true })).toBeVisible();
     const commands = card.locator("#bar button");
     await expect(commands).toHaveCount(4);
@@ -193,10 +194,10 @@ test("OpenCode catalog exposes native controls and plain compact badges", async 
     });
     await page.locator("#view-stats").click();
     const agent = page.locator("#stats-body .spanel", { has: page.getByRole("heading", { name: t.agents, exact: true }) })
-      .locator(".brow .agent-badge.opencode");
+      .locator(".brow .bn", { has: page.locator("svg[data-agent=opencode]") });
     await expect(agent).toHaveText("OpenCode");
     await expect(page.locator("#stats-body .legend")).toContainText(lang === "ru" ? "рассуждения 15" : "reasoning 15");
-    await expect(agent.locator("xpath=../..").locator(".bv")).toHaveText(lang === "ru" ? "$0,28" : "$0.28");
+    await expect(agent.locator("..").locator(".bv")).toHaveText(lang === "ru" ? "$0,28" : "$0.28");
     await expect(page.locator(".chart .col:has(.unknown)").first()).toHaveAttribute("title",
       lang === "ru" ? /стоимость неизвестна/ : /unknown cost/);
     await page.locator("#stats-bar .agent-ms .ms-btn").click();

@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.18.1] - 2026-11-23
+
+### Changed
+
+- The Agent filter in Search and Statistics shows one selected agent by name and several by icon.
+- Agent names in the filter list and Statistics appear as plain text with their icons.
+
 ## [2.18.0] - 2026-11-22
 
 ### Added

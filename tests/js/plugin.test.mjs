@@ -2242,7 +2242,7 @@ describe("agent marks", () => {
       "atlas-codex": { prefix: "M22.2819 9.8211a5.9847 5.9847 0 0 0-.515", length: 1460 },
     };
     for (const [id, svg] of marks.slice(0, 2)) {
-      const match = /^<path fill="currentColor" transform="translate\(8 8\) scale\(3\.5\)" d="([^"]+)"\/>$/.exec(svg);
+      const match = /^<g fill="currentColor" transform="translate\(8 8\) scale\(3\.5\)"><path d="([^"]+)"\/><\/g>$/.exec(svg);
       assert.ok(match, `${id} should be a centered path filled with currentColor`);
       assert.equal(match[1].slice(0, 40), sourcePaths[id].prefix, id);
       assert.equal(match[1].length, sourcePaths[id].length, id);

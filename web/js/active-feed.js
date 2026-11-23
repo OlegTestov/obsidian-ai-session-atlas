@@ -12,13 +12,14 @@ function cardViewPicker(s, pid) {
   select.setAttribute("aria-label", i18n("feed.mode"));
   select.title = i18n("feed.mode");
   for (const value of ["turns", "terminal", "steps", "files"]) {
+    if (s.agent === "opencode" && value === "terminal" && !hostInlineTabs.has(pid)) continue;
     const option = el("option", null, i18n(`feed.view.${value}`));
     option.value = value;
     option.disabled = value === "terminal" && !hostInlineTabs.has(pid);
     if (option.disabled) option.title = i18n("feed.terminalUnavailable");
     select.appendChild(option);
   }
-  select.value = cardViewMode(s.session_id);
+  select.value = visibleCardView(s, pid);
   select.addEventListener("change", () => {
     if (select.value === "turns") cardViews.delete(s.session_id);
     else cardViews.set(s.session_id, select.value);
@@ -32,9 +33,14 @@ function cardViewPicker(s, pid) {
   return select;
 }
 
+function visibleCardView(s, pid) {
+  const view = cardViewMode(s.session_id);
+  return s.agent === "opencode" && view === "terminal" && !hostInlineTabs.has(pid) ? "turns" : view;
+}
+
 function attachCardPanel(card, session, pid) {
   const sid = session.session_id;
-  const view = cardViewMode(sid);
+  const view = visibleCardView(session, pid);
   const slot = card.querySelector(".card-view-slot");
   const previous = cardPanels.get(sid);
   let panel = previous;

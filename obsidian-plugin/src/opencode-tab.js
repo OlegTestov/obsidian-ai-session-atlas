@@ -20,7 +20,7 @@ function read(file) {
   } catch { return null; }
 }
 
-function readOpenCodeTab(dataDir, instance) {
+function readOpenCodeTab(dataDir, instance, maxAge = 8000) {
   if (typeof instance !== "string" || !INSTANCE.test(instance)) return null;
   const base = path.join(dataDir, "opencode-tabs", instance);
   const launch = read(base + ".json");
@@ -28,8 +28,8 @@ function readOpenCodeTab(dataDir, instance) {
   const route = read(`${base}.${launch.nonce}.route`);
   const matching = route && route.nonce === launch.nonce && route.pid === launch.pid;
   const session = id => validId("opencode", id) ? id : null;
-  const age = matching ? Date.now() - route.at : Infinity;
-  const verified = age >= 0 && age < 8000 && (route.route === "home"
+  const age = matching && Number.isFinite(route.at) ? Date.now() - route.at : Infinity;
+  const verified = age >= 0 && age <= maxAge && (route.route === "home"
     || (route.route === "session" && session(route.current)));
   return { current: verified ? session(route.current) : null, verified: Boolean(verified),
            last: session(matching ? route.last : null) || session(launch.last), cwd: launch.cwd,

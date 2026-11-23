@@ -14,6 +14,7 @@ const isWaitingSession = s => (s.activity || s.status) === "waiting";
 function requestDialogs() {
   const waiting = new Set();
   activeSessions.filter(isWaitingSession).forEach(s => {
+    if (s.agent === "opencode") return;
     waiting.add(s.session_id);
     const pid = tabFor(s);
     if (pid) tellTabHost("read-dialog", { ptyPid: pid, claudePid: s.pid, sessionId: s.session_id });
@@ -82,6 +83,7 @@ function dialogBlock(s, pid, full) {
   const own = commandOutputs.get(s.session_id);
   if (own && own.panel) return null;
   const box = el("div", "dialog");
+  if (s.agent === "opencode") return openCodeDialog(s, pid, full, box);
   const got = dialogs.get(s.session_id);
   const note = dialogNotes.get(s.session_id);
   const busy = [...dialogAnswers.values()].includes(s.session_id);
@@ -166,10 +168,10 @@ const stopNotes = new Map();          // session id → text
 const canStop = s => ["busy", "waiting"].includes(s.activity || s.status);
 
 function stopButton(s, pid, mini) {
-  if (!canStop(s)) return null;
+  if (!canStop(s) || (s.agent === "opencode" && !pid)) return null;
   const b = el("button", "stop" + (mini ? " mini" : ""), i18n("active.stop"));
   b.type = "button";
-  b.disabled = !hostReady || !pid;
+  b.disabled = !hostReady || !pid || (s.agent === "opencode" && openCodeStopping.has(s.session_id));
   b.title = b.disabled ? i18n("active.stopNeedsTab")
     : (s.activity || s.status) === "waiting" ? i18n("active.stopDialogHint")
     : i18n("active.stopStepHint");
@@ -184,6 +186,7 @@ function confirmStop(s, pid) {
     s.progress ? i18n("active.nowText", { text: s.progress }) : "",
     waiting ? i18n("active.closeDialog") : i18n("active.interrupt"), () => {
       $("#modal").close();
+      if (s.agent === "opencode") { void stopOpenCode(s); return; }
       const nonce = Math.random().toString(36).slice(2);
       stopRequests.set(nonce, s.session_id);
       stopNotes.set(s.session_id, i18n("active.stopping"));

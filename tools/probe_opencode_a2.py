@@ -23,7 +23,7 @@ PINNED = "2.3.2"
 
 
 @contextmanager
-def profile(root, binary):
+def profile(root, binary, *, model_handler=Model, permissions=None):
     env = {"PATH": os.defpath, "USER": "atlas-fixture", "LOGNAME": "atlas-fixture",
            "OPENCODE_DISABLE_AUTOUPDATE": "1", "OPENCODE_DISABLE_MODELS_FETCH": "1"}
     for key, name in (("HOME", "home"), ("XDG_DATA_HOME", "data"), ("XDG_CONFIG_HOME", "config"),
@@ -35,7 +35,7 @@ def profile(root, binary):
     work.mkdir()
     config = root / "config/opencode"
     config.mkdir()
-    model = ThreadingHTTPServer(("127.0.0.1", 0), Model)
+    model = ThreadingHTTPServer(("127.0.0.1", 0), model_handler)
     model_thread = Thread(target=model.serve_forever, daemon=True)
     model_thread.start()
     server_pid = None
@@ -45,7 +45,7 @@ def profile(root, binary):
                         "name": "Atlas Stub", "package": "@opencode/ai/providers/openai-compatible",
                         "settings": {"baseURL": f"http://127.0.0.1:{model.server_port}/v1", "apiKey": "synthetic"},
                         "models": {"fake": {"name": "Fixture", "limit": {"context": 100000, "output": 1000}}}}},
-                    "permissions": [{"action": "*", "resource": "*", "effect": "deny"}]}
+                    "permissions": permissions or [{"action": "*", "resource": "*", "effect": "deny"}]}
         (config / "opencode.json").write_text(json.dumps(settings))
         opts = {"cwd": work, "env": env, "check": True, "timeout": 20, "capture_output": True}
         if subprocess.run([binary, "--version"], **opts).stdout.decode().strip() != "opencode v" + PINNED:

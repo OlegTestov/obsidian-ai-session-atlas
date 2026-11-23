@@ -39,7 +39,7 @@ def _price(value):
 
 
 def _text(facts, turn, field, value):
-    if isinstance(value, str) and value.strip():
+    if text_value(value):
         getattr(facts, field).append(value)
         turn[field].append(value)
         _harvest_tickets(facts, value)
@@ -47,12 +47,39 @@ def _text(facts, turn, field, value):
     return None
 
 
+def text_value(value):
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def content_items(content):
+    return (_object(item) for item in content) if isinstance(content, list) else ()
+
+
+def tool_args(item):
+    return _object(_object(item.get("state")).get("input"))
+
+
+def tool_path(args):
+    return text_value(args.get("filePath")) or text_value(args.get("path"))
+
+
+def assistant_text(data):
+    return "\n".join(text for item in content_items(data.get("content")) if item.get("type") == "text"
+                     if (text := text_value(item.get("text"))))
+
+
+def completed(data):
+    return bool(_object(data.get("time")).get("completed"))
+
+
+def answer_time(message, data):
+    completed_at = _object(data.get("time")).get("completed")
+    return completed_at if type(completed_at) is int and 0 < completed_at < 4e12 else message["time_created"]
+
+
 def _content(facts, turn, content):
     tools = []
-    if not isinstance(content, list):
-        return tools
-    for item in content:
-        item = _object(item)
+    for item in content_items(content):
         if item.get("type") == "text":
             text = _text(facts, turn, "assistant_text", item.get("text"))
             facts.first_assistant_text = facts.first_assistant_text or text
@@ -63,13 +90,17 @@ def _content(facts, turn, content):
             continue
         tools.append(name.replace(",", " "))
         _text(facts, turn, "commands", name)
-        args = _object(_object(item.get("state")).get("input"))
-        path = _text(facts, turn, "paths", args.get("filePath")) if name in {"read", "edit", "write"} else None
+        args = tool_args(item)
+        path = _text(facts, turn, "paths", tool_path(args)) if name in {"read", "edit", "write"} else None
         if path and name in {"edit", "write"}:
             _add_seen(facts.raw_files, path)
         if name in {"bash", "shell"}:
             _text(facts, turn, "commands", args.get("command"))
     return tools
+
+
+def reported_cost(data):
+    return _price(data.get("cost") or _object(data.get("usage")).get("cost"))
 
 
 def _usage(facts, message, data, tools, elapsed):
@@ -80,10 +111,11 @@ def _usage(facts, message, data, tools, elapsed):
     provider, mid = model.get("providerID"), model.get("id")
     name = f"{provider}/{mid}" if isinstance(provider, str) and isinstance(mid, str) else None
     _add_seen(facts.models, name)
-    return {"kind": activity.ANSWER, "ts": _when(message["time_created"]), "active_s": elapsed,
+    timestamp = answer_time(message, data) if message["type"] == "assistant" else message["time_created"]
+    return {"kind": activity.ANSWER, "ts": _when(timestamp), "active_s": elapsed,
             "model": name, "input": _tokens(tokens.get("input")), "output": _tokens(tokens.get("output")),
             "reasoning": _tokens(tokens.get("reasoning")), "cache_read": _tokens(cache.get("read")),
-            "cache_write": _tokens(cache.get("write")), "cost": _price(data.get("cost") or usage.get("cost")),
+            "cache_write": _tokens(cache.get("write")), "cost": reported_cost(data),
             "tools": tools}
 
 
@@ -119,7 +151,10 @@ def project(session, messages, *, fork_source_title=None) -> SessionFacts:
                                        "cache_write": 0, "cost": None, "tools": []}
         elif kind == "assistant":
             facts.machine_turns += 1
+            text_count = len(facts.assistant_text)
             tool_names = _content(facts, _turn(facts), data.get("content"))
+            if completed(data) and len(facts.assistant_text) > text_count:
+                facts.last_completed_answer = facts.assistant_text[-1]
             reply = _usage(facts, message, data, tool_names, elapsed)
             if not inherited:
                 facts.activity[key] = reply

@@ -80,6 +80,7 @@ class SessionFacts:
     turns: list[dict] = field(default_factory=list)
     first_user_text: str | None = None
     first_assistant_text: str | None = None
+    last_completed_answer: str = ""
     turn_base: int = 0            # how many turns are already indexed before the first of self.turns
     # "Stats": reply and prompt rows (new ones only) and time not yet assigned to a row.
     activity: dict = field(default_factory=dict)

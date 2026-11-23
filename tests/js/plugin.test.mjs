@@ -3511,3 +3511,21 @@ it("OpenCode resume only acknowledges a fresh route for the requested session", 
   write(sid, Date.now());
   assert.equal(await launched, true);
 });
+
+it("OpenCode Move and Resume share a launch result and can retry a failed launch", async () => {
+  const plugin = new SessionAtlasPlugin();
+  const sid = "ses_" + "b".repeat(26);
+  const command = `cd /tmp && opencode /tmp --session ${sid}`;
+  const launches = [];
+  plugin.revealOpenCodeSession = () => null;
+  plugin.openAgent = (_agent, options) => new Promise(resolve => launches.push([options.label, resolve]));
+  for (const succeeded of [false, true]) {
+    const move = plugin.openCommandInTerminal(command, "/tmp", "Move");
+    await Promise.resolve();
+    const resume = plugin.openCommandInTerminal(command, "/tmp", "Resume");
+    await Promise.resolve();
+    assert.deepEqual(launches.map(([label]) => label), ["Move"]);
+    launches.pop()[1](succeeded);
+    assert.deepEqual(await Promise.all([move, resume]), [succeeded, succeeded]);
+  }
+});

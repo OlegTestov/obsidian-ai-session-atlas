@@ -65,6 +65,7 @@ async function startArtifact(id, kind, thenLaunch) {
     .map(x => `${x.title}: ${x.items}`).join(" · ");
   const note = i18n("actions.previewNote", { chars: prev.chars.toLocaleString(I18N.locale()), mb,
       k: Math.round(prev.chars / 4000), where, parts, sensitivity: i18nValue("sensitivity", prev.sensitivity) })
+    + (prev.fallback_model ? i18n("actions.limitFallback", { model: `${prev.fallback_model} / ${prev.fallback_effort}` }) : "")
     + (prev.truncated ? i18n("actions.truncated") : "")
     + (prev.full_path ? i18n("actions.fullPath", { path: prev.full_path }) : "");
   modal(i18n(kind === "handoff" ? "actions.handoffPreview" : "actions.summaryPreview"),
@@ -72,7 +73,8 @@ async function startArtifact(id, kind, thenLaunch) {
       $("#m-ok").disabled = true;
       $("#m-note").textContent = i18n("actions.modelWorking");
       try {
-        const job = await api("/api/job", { session_id:id, artifact_kind:kind, confirmed:true, backend:prev.backend });
+        const job = await api("/api/job", { session_id: id, artifact_kind: kind, confirmed: true,
+          backend: prev.backend, fallback_model: prev.fallback_model, content_hash: prev.content_hash });
         await poll(job.job_id, id, kind, thenLaunch);
       } catch (e) {
         $("#m-note").textContent = i18n("common.error", { msg: e.message });

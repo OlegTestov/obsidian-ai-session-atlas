@@ -203,6 +203,19 @@ def test_existing_message_edit_reindexes_last_answer_block(catalog):
     assert search.local_state(conn, sid)["last_answer"] == "finalanswerblock"
 
 
+def test_indexed_answer_uses_completed_steps(catalog):
+    source, conn, scan = catalog
+    scan()
+    sid = titles(conn)["OpenCode fixture plain"]["session_id"]
+    with closing(sqlite3.connect(source)) as writer, writer:
+        seq = writer.execute("SELECT MAX(seq) FROM session_message WHERE session_id=?", (sid,)).fetchone()[0]
+        writer.execute("INSERT INTO session_message VALUES (?, ?, 'assistant', ?, 1, 1, ?)",
+                       ("msg_" + "u" * 26, sid, seq + 1,
+                        json.dumps({"content": [{"type": "text", "text": "Unsettled fixture answer"}]})))
+    assert scan()["indexed"] == 1
+    assert search.local_state(conn, sid)["last_answer"] == "Synthetic assistant reply"
+
+
 def test_purge_only_after_complete_read(catalog, monkeypatch):
     source, conn, scan = catalog
     scan()
@@ -395,7 +408,7 @@ def test_open_code_api_rejects_terminal_and_ai_actions(live_server, catalog, mon
 
 
 def test_open_code_forks_use_shared_copy_numbers(catalog, monkeypatch):
-    from atlas import opencode_tabs
+    from atlas import opencode_live, opencode_tabs
 
     source, conn, scan = catalog
     with closing(sqlite3.connect(source)) as writer, writer:
@@ -412,8 +425,8 @@ def test_open_code_forks_use_shared_copy_numbers(catalog, monkeypatch):
     expected = ["OpenCode fixture multiple (2)", "OpenCode fixture multiple (3)"]
     assert [search.load_session(conn, sid)["title"] for sid in (first_id, second_id)] == expected
     assert [entry["title"] for entry in search.load_session(conn, source_id)["forks"]] == expected
-    monkeypatch.setattr(opencode_tabs, "open_tabs", lambda: ({first_id, second_id}, False))
-    cards = opencode_tabs.catalog_meta(conn)
+    monkeypatch.setattr(opencode_tabs, "active_tabs", lambda _table: {first_id: 101, second_id: 102})
+    cards = {card["session_id"]: card for card in opencode_live.list_live(conn, {})}
     assert [cards[sid]["title"] for sid in (first_id, second_id)] == expected
     with closing(sqlite3.connect(source)) as writer, writer:
         writer.execute("UPDATE session_v2 SET title=? WHERE id=?", ("Manual name (fork #9)", second_id))

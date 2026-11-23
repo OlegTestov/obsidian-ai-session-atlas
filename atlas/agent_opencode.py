@@ -14,7 +14,7 @@ from . import agents, config, db
 DATABASE = "opencode.db"
 STATE = "opencode_state"
 FINGERPRINT = "opencode_fingerprint"
-VERSION = 3
+VERSION = 5
 SESSION = ("id", "title", "directory", "version", "parent_id", "fork_session_id", "fork_boundary",
            "time_created", "time_updated", "time_archived")
 MESSAGE = ("id", "session_id", "type", "seq", "time_created", "time_updated", "data")
@@ -34,12 +34,12 @@ def discover(root: str, codex_root: str) -> agents.Discovery:
 
 
 @contextmanager
-def open_readonly(path: Path):
+def open_readonly(path: Path, *, timeout=3.0):
     path = path.resolve(strict=True)
     before = _stat_key(path.stat())
     cold = _wal_stat(path) is None
     uri = path.as_uri() + "?mode=ro" + ("&immutable=1" if cold else "")
-    with closing(sqlite3.connect(uri, uri=True, timeout=3.0)) as conn:
+    with closing(sqlite3.connect(uri, uri=True, timeout=timeout)) as conn:
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA query_only=1")
         conn.execute("BEGIN")
@@ -182,7 +182,7 @@ def _index_refs(conn, refs, _home, known, present, stats, full, _paced, _protect
     # in index_all's final Atlas transaction, so its watermark can't run ahead of the catalog.
     for ref, sig, (facts, children), archived in changed:
         store.store_snapshot(conn, ref.locator, st, sig, facts, children)
-        answer = facts.assistant_text[-1] if facts.assistant_text else ""
+        answer = facts.last_completed_answer
         conn.execute("INSERT OR REPLACE INTO opencode_details VALUES (?,?,?)",
                      (facts.session_id, bool(archived), " ".join(answer.split())[:600]))
     stats["indexed"] += len(changed)

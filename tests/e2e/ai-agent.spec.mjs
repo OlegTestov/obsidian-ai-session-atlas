@@ -72,3 +72,29 @@ test("a paused auto-classification shows why, a running one does not", async ({ 
   await page.reload();
   await expect(page.locator("#auto-classify-paused")).toBeHidden();
 });
+
+test("the summary preview names the fallback before sending", async ({ page, open, lang }) => {
+  await aiOn(page);
+  await page.route("**/api/preview", route => route.fulfill({ json: {
+    backend: "claude-cli", agent_name: "Claude Code", model: "Opus / low", text: "PREVIEW", chars: 7,
+    sensitivity: "normal", sections: [], fallback_model: "gpt-6.2-sol", fallback_effort: "medium",
+    content_hash: "fixture-digest",
+  } }));
+  const sent = [];
+  page.expectHttpError(/\/api\/job$/);
+  await page.route("**/api/job", route => {
+    sent.push(route.request().postDataJSON());
+    return route.fulfill({ status: 409, json: { error: TX[lang].changed } });
+  });
+  await open("search", `#s=${ids.codexRenameEn}`);
+  await page.locator("#bar button.ghost").click();
+  await page.locator("#menu button", { hasText: TX[lang].summarize }).click();
+  await expect(page.locator("#m-note")).toContainText("Codex (gpt-6.2-sol / medium)");
+  expect(sent).toEqual([]);
+  await page.locator("#m-ok").click();
+  await expect(page.locator("#m-note")).toContainText(TX[lang].changed);
+  expect(sent).toEqual([{
+    session_id: ids.codexRenameEn, artifact_kind: "catalog_summary", confirmed: true, backend: "claude-cli",
+    fallback_model: "gpt-6.2-sol", content_hash: "fixture-digest",
+  }]);
+});

@@ -7,7 +7,7 @@ const VERIFY_TIMEOUT_MS = 3000;
 class MirrorSession {
   // deps: term, serialize(term) -> start fields, post(msg), subscribers (the tab's Set), connected() (the card is still there), alive() (and the PTY is the same and running), front(),
   // writeInput(text), fit(cols, rows), onEnd(), tail() (optional: the half-received escape sequence of the output so far), verify() (async: the target is still the same tab, agent and session), now() (optional clock),
-  // pending(on) (optional: input is waiting for a verification), verifyTimeoutMs (optional)
+  // bound(input) (optional: synchronous route ownership), pending(on) (optional: input is waiting for a verification), verifyTimeoutMs (optional)
   constructor(deps) {
     Object.assign(this, deps);
     this.now = deps.now || Date.now;
@@ -28,7 +28,7 @@ class MirrorSession {
     const tail = this.tail ? this.tail() : "";
     // Queue behind pending terminal writes so the snapshot and the buffered bytes meet at the same point.
     this.term.write("", () => {
-      if (this.ended || !this.alive()) { this.end(); return ready(false); }
+      if (!this.checkBinding() || !this.alive()) { this.end(); return ready(false); }
       let snapshot;
       try { snapshot = this.serialize(this.term); }
       catch { this.end(); return ready(false); }    // in a write callback no promise catches this
@@ -42,8 +42,14 @@ class MirrorSession {
     });
   }
 
+  checkBinding(input = false) {
+    if (this.ended) return false;
+    if (this.bound && !this.bound(input)) { this.fail(input); return false; }
+    return true;
+  }
+
   accept(message) {
-    if (this.ended) return;
+    if (!this.checkBinding()) return;
     if (!this.live) { this.buffer.push(message); return; }
     if (this.connected()) this.post(message);
     if (!this.connected() || message.type === "exit") this.end();
@@ -55,13 +61,15 @@ class MirrorSession {
     if (command?.type === "input" && typeof command.text === "string" && command.text.length > 0
         && command.text.length <= MAX_INPUT && this.front()) this.write(command.text);
     if (command?.type === "size" && Number.isInteger(command.cols) && Number.isInteger(command.rows)
-        && command.cols >= 2 && command.cols <= 400 && command.rows >= 2 && command.rows <= 200) {
+        && command.cols >= 2 && command.cols <= 400 && command.rows >= 2 && command.rows <= 200
+        && this.checkBinding()) {
       this.fit(command.cols, command.rows);
     }
   }
 
   /** Writes at once while the last verification is fresh; otherwise queues, verifies once, then writes in order. */
   write(text) {
+    if (!this.checkBinding(true)) return;
     if (!this.verifying && this.now() - this.verifiedAt < VERIFY_FRESH_MS) return this.writeInput(text);
     if (this.queued + text.length > MAX_QUEUED) return;
     if (!this.queue.length && this.pending) this.pending(true);
@@ -80,7 +88,10 @@ class MirrorSession {
       this.verifiedAt = this.now();
       const held = this.queue;
       this.dropQueue();
-      held.forEach(item => this.writeInput(item));
+      for (const item of held) {
+        if (!this.checkBinding(true)) break;
+        this.writeInput(item);
+      }
     });
   }
 
@@ -91,9 +102,9 @@ class MirrorSession {
     if (was && this.pending) this.pending(false);
   }
 
-  fail() {
+  fail(unavailable = false) {
     this.dropQueue();
-    this.post({ type: "exit" });
+    this.post(unavailable ? { type: "exit", unavailable } : { type: "exit" });
     this.end();
   }
 

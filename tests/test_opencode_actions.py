@@ -668,15 +668,7 @@ def test_passive_delete_refuses_unverified_listener_or_profile(native, tmp_path,
 
 
 def test_passive_delete_rechecks_listener_for_active_request(native, monkeypatch):
-    original = opencode_service._listener_pids
-    calls = 0
-
-    def listeners(files, endpoint):
-        nonlocal calls
-        calls += 1
-        return original(files, endpoint) if calls == 1 else {os.getppid()}
-
-    monkeypatch.setattr(opencode_service, "_listener_pids", listeners)
+    monkeypatch.setattr(opencode_service, "_listener_pids", lambda *_: {os.getppid()})
     with pytest.raises(opencode_service.ServiceError) as error:
         actions.delete_eligibility(native.empty)
     assert error.value.state == "unauthorized"
@@ -759,11 +751,11 @@ def test_passive_delete_checks_identity_and_activity_without_walking_children(na
         assert response[0][0] == 200
         assert "running" in response[0][1]["disabled_reason"]
         assert native.seen == [("GET", "/api/info", None), ("GET", "/api/session/active", None)]
-        assert len(seen) == 2
+        assert len(seen) == 3  # Discovery peer, listener and profile, active read peer.
         print(f"13 descendants: {len(seen)} lsof subprocesses, {sum(seen):.3f}s in lsof, "
               f"{elapsed:.3f}s poll wall time")
         seen.clear()
         native.seen.clear()
         plan = actions.delete_preview(native.sid)
         assert len(plan["children"]) == 13
-        assert len(seen) == 19  # Full-profile lsof, discovery and per-request listener checks.
+        assert len(seen) == 19  # Full-profile lsof, discovery and per-request peer checks.

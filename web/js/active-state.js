@@ -55,7 +55,6 @@ document.addEventListener("compositionstart", () => { composing = true; });
 document.addEventListener("compositionend", () => { composing = false; });
 let lastRenderAt = 0;
 let hostOpenCodeTabs = [];
-let openCodeTabMeta = {};
 
 // Short date for the card: the year only when it is not the current one.
 function fmtShort(iso) {
@@ -153,16 +152,17 @@ function screenSessions() {
     const pid = tabFor(s);
     return withTabGroup(withTabScreen(s, pid ? hostScreens.get(pid) : null), pid);
   });
-  return sessions.concat(hostOpenCodeTabs.map(tab => {
-    const meta = openCodeTabMeta[tab.sessionId] || {};
-    return withTabGroup({ agent: "opencode", session_id: `opencode-tab-${tab.ptyPid}`,
-      opencode_id: tab.sessionId, title: meta.title || tab.title || "OpenCode",
-      cwd: tab.cwd, ancestors: [tab.ptyPid], last_message_at: meta.last_activity_at }, tab.ptyPid);
-  }));
+  const represented = new Set(sessions.filter(s => s.agent === "opencode" && s.pid).map(s => s.pid));
+  return sessions.concat(hostOpenCodeTabs.filter(tab => !tab.sessionId && !represented.has(tab.ptyPid)).map(tab =>
+    withTabGroup({ agent: "opencode", opencode_placeholder: true, session_id: `opencode-tab-${tab.ptyPid}`,
+      title: tab.title || "OpenCode", cwd: tab.cwd, ancestors: [tab.ptyPid] }, tab.ptyPid)));
 }
 
 // The claude process descends from its tab's PTY proxy: look for that PID among the ancestors.
 function tabFor(s) {
+  if (s.agent === "opencode" && !s.opencode_placeholder) {
+    return hostOpenCodeTabs.some(tab => tab.ptyPid === s.pid && tab.sessionId === s.session_id) ? s.pid : null;
+  }
   return (s.ancestors || []).find(pid => hostTabs.has(pid)) || null;
 }
 
@@ -195,7 +195,7 @@ async function loadActive() {
     updateHeaderLimits(data, limitsSeq);
     const previous = activeSessions;
     activeRaw = data.sessions || [];
-    openCodeTabMeta = data.opencode_tabs || {};
+    reconcileOpenCode(activeRaw.filter(s => s.agent === "opencode"), data.opencode_poll_ok);
     activeSessions = screenSessions();
     replacePendingSlots(previous, activeSessions);
     recentClosed = data.recent_closed || [];

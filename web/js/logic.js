@@ -238,7 +238,8 @@
     const cost = shortCost(s);
     if (cost) nums.push(cost);
     const ctx = contextLevel(s);
-    return { when, nums, context: ctx ? { text: shortTokens(s.context_tokens) + "/"
+    return { when, nums, context: ctx ? { text: (s.agent === "opencode" && s.context_tokens < 1000
+        ? s.context_tokens : shortTokens(s.context_tokens)) + "/"
       + shortTokens(s.context_window), tone: ctx.tone, hint: ctx.hint } : null };
   }
 

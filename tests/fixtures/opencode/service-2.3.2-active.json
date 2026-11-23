@@ -1,0 +1,393 @@
+{
+  "active": {
+    "status": 200,
+    "body": {
+      "data": {
+        "ses_df8173b6effezRZEaIHf9ZSXwl": {
+          "type": "running"
+        }
+      }
+    }
+  },
+  "permission": {
+    "status": 200,
+    "body": {
+      "data": {
+        "id": "per_207e8c9e0001hYprfIZR0W6rak",
+        "sessionID": "ses_df8173b6effezRZEaIHf9ZSXwl",
+        "action": "edit",
+        "resources": [
+          "probe-once.txt"
+        ],
+        "save": [
+          "*"
+        ],
+        "metadata": {
+          "files": [
+            {
+              "file": "probe-once.txt",
+              "patch": "Index: probe-once.txt\n===================================================================\n--- probe-once.txt\n+++ probe-once.txt\n@@ -0,0 +1,1 @@\n+Phase B synthetic file\n\\ No newline at end of file\n",
+              "status": "added",
+              "additions": 1,
+              "deletions": 0
+            }
+          ]
+        },
+        "source": {
+          "type": "tool",
+          "messageID": "msg_207e8c9d1001BK3ygbmqPGUFLP",
+          "id": "call_phase_b"
+        }
+      }
+    }
+  },
+  "form": {
+    "status": 200,
+    "body": {
+      "data": {
+        "id": "frm_207e8df2d001hvTRvy21kNPYml",
+        "sessionID": "ses_df8173b6effezRZEaIHf9ZSXwl",
+        "title": "Questions",
+        "metadata": {
+          "kind": "question",
+          "tool": {
+            "messageID": "msg_207e8df20001KKgDaiAVuMlGBs",
+            "id": "call_phase_b"
+          }
+        },
+        "fields": [
+          {
+            "key": "q0",
+            "title": "Color",
+            "description": "Pick a color",
+            "type": "string",
+            "options": [
+              {
+                "value": "Blue",
+                "label": "Blue",
+                "description": "Blue fixture"
+              },
+              {
+                "value": "Green",
+                "label": "Green",
+                "description": "Green fixture"
+              }
+            ],
+            "custom": true
+          },
+          {
+            "key": "q1",
+            "title": "Extras",
+            "description": "Pick additional colors",
+            "type": "multiselect",
+            "options": [
+              {
+                "value": "Blue",
+                "label": "Blue",
+                "description": "Blue fixture"
+              },
+              {
+                "value": "Green",
+                "label": "Green",
+                "description": "Green fixture"
+              }
+            ],
+            "custom": true
+          }
+        ],
+        "state": {
+          "status": "pending"
+        }
+      }
+    }
+  },
+  "required": {
+    "status": 200,
+    "body": {
+      "data": {
+        "id": "frm_207e8e0fd001y661diz0w24xuh",
+        "sessionID": "ses_df8173b6effezRZEaIHf9ZSXwl",
+        "title": "Validation fixture",
+        "fields": [
+          {
+            "key": "fixed",
+            "required": true,
+            "type": "string",
+            "options": [
+              {
+                "value": "blue",
+                "label": "Blue"
+              }
+            ],
+            "custom": false
+          },
+          {
+            "key": "loose",
+            "required": true,
+            "type": "multiselect",
+            "options": [
+              {
+                "value": "green",
+                "label": "Green"
+              }
+            ],
+            "minItems": 1,
+            "custom": true
+          }
+        ],
+        "state": {
+          "status": "pending"
+        }
+      }
+    }
+  },
+  "invalid": {
+    "status": 400,
+    "body": {
+      "_tag": "FormInvalidAnswerError",
+      "id": "frm_207e8e0fd001y661diz0w24xuh",
+      "message": "Missing required form field: fixed"
+    }
+  },
+  "settled": {
+    "status": 200,
+    "body": {
+      "data": {
+        "id": "frm_207e8df2d001hvTRvy21kNPYml",
+        "sessionID": "ses_df8173b6effezRZEaIHf9ZSXwl",
+        "title": "Questions",
+        "metadata": {
+          "kind": "question",
+          "tool": {
+            "messageID": "msg_207e8df20001KKgDaiAVuMlGBs",
+            "id": "call_phase_b"
+          }
+        },
+        "fields": [
+          {
+            "key": "q0",
+            "title": "Color",
+            "description": "Pick a color",
+            "type": "string",
+            "options": [
+              {
+                "value": "Blue",
+                "label": "Blue",
+                "description": "Blue fixture"
+              },
+              {
+                "value": "Green",
+                "label": "Green",
+                "description": "Green fixture"
+              }
+            ],
+            "custom": true
+          },
+          {
+            "key": "q1",
+            "title": "Extras",
+            "description": "Pick additional colors",
+            "type": "multiselect",
+            "options": [
+              {
+                "value": "Blue",
+                "label": "Blue",
+                "description": "Blue fixture"
+              },
+              {
+                "value": "Green",
+                "label": "Green",
+                "description": "Green fixture"
+              }
+            ],
+            "custom": true
+          }
+        ],
+        "state": {
+          "status": "answered",
+          "answer": {
+            "q0": "Blue",
+            "q1": [
+              "Green",
+              "Amber fixture"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "stopped": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "id": "msg_207e8c45c001ECQtBv6F0EdKDJ",
+          "time": {
+            "created": 1795429024860
+          },
+          "type": "idle",
+          "outcome": "interrupted"
+        },
+        {
+          "id": "msg_207e8c163001lvXw192bYytuID",
+          "time": {
+            "created": 1795429024102,
+            "firstToken": 1795429024109,
+            "streamed": 1795429024858,
+            "completed": 1795429024859
+          },
+          "type": "assistant",
+          "agent": "build",
+          "model": {
+            "id": "fake",
+            "providerID": "atlas"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "Phase B partial PROBE_API_STREAM"
+            }
+          ],
+          "finish": "error",
+          "error": {
+            "type": "aborted",
+            "message": "Step interrupted"
+          }
+        },
+        {
+          "id": "msg_207e8c0e7001rYNbLdGi5EQ0D9",
+          "time": {
+            "created": 1795429024094
+          },
+          "text": "PROBE_API_STREAM",
+          "type": "user"
+        }
+      ],
+      "cursor": {
+        "previous": "eyJpZCI6Im1zZ18yMDdlOGM0NWMwMDFFQ1F0QnY2RjBFZEtESiIsIm9yZGVyIjoiZGVzYyIsImRpcmVjdGlvbiI6InByZXZpb3VzIn0",
+        "next": "eyJpZCI6Im1zZ18yMDdlOGMwZTcwMDFyWU5iTGRHaTVFUTBEOSIsIm9yZGVyIjoiZGVzYyIsImRpcmVjdGlvbiI6Im5leHQifQ"
+      }
+    }
+  },
+  "inbox": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "id": "msg_207e7b544001Mnmffw4iItL909",
+          "sessionID": "ses_df81853d9ffeJLT9PybtBVRuca",
+          "time": {
+            "created": 1795428955461
+          },
+          "type": "user",
+          "payload": {
+            "text": "PROBE_QUEUE_ONE"
+          },
+          "delivery": "queue"
+        },
+        {
+          "id": "msg_207e7b548001FgGLGz0BO4XfDd",
+          "sessionID": "ses_df81853d9ffeJLT9PybtBVRuca",
+          "time": {
+            "created": 1795428955464
+          },
+          "type": "user",
+          "payload": {
+            "text": "PROBE_QUEUE_TWO"
+          },
+          "delivery": "queue"
+        },
+        {
+          "id": "msg_207e7b550001I0kM15P6K7rQzx",
+          "sessionID": "ses_df81853d9ffeJLT9PybtBVRuca",
+          "time": {
+            "created": 1795428955472
+          },
+          "type": "user",
+          "payload": {
+            "text": "PROBE_QUEUE_TWO"
+          },
+          "delivery": "queue"
+        }
+      ]
+    }
+  },
+  "admission": {
+    "status": 200,
+    "body": {
+      "data": {
+        "id": "msg_207e7b544001Mnmffw4iItL909",
+        "sessionID": "ses_df81853d9ffeJLT9PybtBVRuca",
+        "time": {
+          "created": 1795428955461
+        },
+        "type": "user",
+        "payload": {
+          "text": "PROBE_QUEUE_ONE"
+        },
+        "delivery": "queue"
+      }
+    }
+  },
+  "usage": {
+    "status": 200,
+    "body": {
+      "data": {
+        "id": "msg_207e7b68e001x3WSkQutRANyoT",
+        "time": {
+          "created": 1795428955792,
+          "firstToken": 1795428955797,
+          "streamed": 1795428955799,
+          "completed": 1795428955800
+        },
+        "type": "assistant",
+        "agent": "build",
+        "model": {
+          "id": "fake",
+          "providerID": "atlas"
+        },
+        "content": [
+          {
+            "type": "text",
+            "text": "Phase B partial PROBE_QUEUE_IDLE | complete"
+          }
+        ],
+        "finish": "stop",
+        "rawFinish": "stop",
+        "cost": 0,
+        "tokens": {
+          "input": 10,
+          "output": 4,
+          "reasoning": 1,
+          "cache": {
+            "read": 2,
+            "write": 0
+          }
+        }
+      }
+    }
+  },
+  "models": {
+    "data": [
+      {
+        "id": "fake",
+        "providerID": "atlas",
+        "limit": {
+          "context": 100000,
+          "output": 1000
+        }
+      },
+      {
+        "id": "folder-a",
+        "providerID": "atlas",
+        "limit": {
+          "context": 110001,
+          "output": 1000
+        }
+      }
+    ]
+  },
+  "stop": {
+    "interrupted": true
+  }
+}

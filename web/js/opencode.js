@@ -183,7 +183,7 @@ function openCodeActionBar(bar, s) {
     null, button => openCodeArchive(s, button));
   const remove = makeButton("delete.menu", "danger", () => openCodeDelete(s));
   bar.append(resume, fork, archive, remove);
-  const open = activeSessions.find(tab => tab.opencode_id === s.session_id);
+  const open = activeSessions.find(tab => tab.session_id === s.session_id);
   if (open) bar.append(makeButton("opencode.hide", null, () => hideCard(open)));
   remove.disabled = true;
   const refreshDelete = async () => {

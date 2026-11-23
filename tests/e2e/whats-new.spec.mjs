@@ -12,12 +12,12 @@ const source = esbuild.buildSync({
 
 const cards = {
   en: [
-    ["OpenCode in the catalog", "OpenCode 2 sessions appear in Search and Statistics next to Claude Code and Codex, with their own filter."],
-    ["OpenCode in Obsidian tabs", "Start or continue OpenCode in a tab, copy a session, and rename, archive or delete it from its card."],
+    ["OpenCode in Active", "See running OpenCode sessions, recent messages and requests waiting for you."],
+    ["Reply from an OpenCode card", "Answer questions and permission prompts, queue a reply, or stop a run from an Atlas tab’s card."],
   ],
   ru: [
-    ["OpenCode в каталоге", "Сессии OpenCode 2 видны в «Поиске» и «Статистике» рядом с Claude Code и Codex, с отдельным фильтром."],
-    ["OpenCode во вкладках Obsidian", "Запускай и продолжай OpenCode во вкладке, копируй сессию, переименовывай, архивируй и удаляй её из карточки."],
+    ["OpenCode в «Активных»", "Смотри работающие сессии OpenCode, последние сообщения и запросы, которые ждут ответа."],
+    ["Ответ из карточки OpenCode", "Отвечай на вопросы и запросы разрешений, ставь ответ в очередь или останови работу из карточки вкладки Atlas."],
   ],
 };
 
@@ -58,10 +58,10 @@ test("What's new shows the two localized OpenCode cards", async ({ page, lang })
   }, lang);
 
   const modal = page.locator(".sa-updates");
-  await expect(modal.locator(".sa-updates-version")).toHaveText("AI Session Atlas · 2.18.0");
+  await expect(modal.locator(".sa-updates-version")).toHaveText("AI Session Atlas · 2.19.0");
   await expect(modal.locator(".sa-update-card h3")).toHaveText(cards[lang].map(([title]) => title));
   await expect(modal.locator(".sa-update-card p")).toHaveText(cards[lang].map(([, description]) => description));
-  await expect(modal.locator(".sa-update-icon[data-icon='search']")).toHaveCount(1);
-  await expect(modal.locator(".sa-update-icon[data-icon='square-terminal']")).toHaveCount(1);
-  await expect(modal.getByRole("link")).toHaveAttribute("href", /\/releases\/tag\/2\.18\.0$/);
+  await expect(modal.locator(".sa-update-icon[data-icon='activity']")).toHaveCount(1);
+  await expect(modal.locator(".sa-update-icon[data-icon='message-square']")).toHaveCount(1);
+  await expect(modal.getByRole("link")).toHaveAttribute("href", /\/releases\/tag\/2\.19\.0$/);
 });

@@ -7,6 +7,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.19.0] - 2026-11-23
+
+### Added
+
+- OpenCode Active cards show running sessions, recent messages, context usage and queued replies.
+- Answer permissions and questions, interrupt runs and queue text replies from OpenCode sessions open in Atlas.
+- Open a running OpenCode session in Atlas while its other clients stay connected.
+
+### Changed
+
+- Session notes and handoffs can use Codex when Claude Code reaches its usage limit. The preview shows both destinations.
+
 ## [2.18.2] - 2026-11-23
 
 ### Fixed

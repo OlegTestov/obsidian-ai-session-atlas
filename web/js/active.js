@@ -89,8 +89,12 @@ function renderActive(skipKey, force) {
   if (composing || document.querySelector("#active-grid .suggest:not(.hidden)")) return;
   // Plan feedback is being typed: the field is not recreated, otherwise focus and caret are lost.
   if (document.activeElement && document.activeElement.matches("#active-grid .planfb textarea")) return;
+  const formControl = document.activeElement;
+  const focusedForm = formControl?.closest("#active-grid .oc-form");
+  const formSelection = focusedForm && typeof formControl.selectionStart === "number"
+    ? [formControl.selectionStart, formControl.selectionEnd, formControl.selectionDirection] : null;
   // Nothing changed: leave the DOM alone entirely, so the text scroll does not reset.
-  const signature = JSON.stringify([shown, activeMode, layout, hostReady, [...hostTabs.keys()], [...hostInlineTabs], [...hostHeld.keys()], [...hostBackground],
+  const signature = JSON.stringify([shown, activeMode, layout, hostReady, shown.map(tabFor), [...hostTabs.keys()], [...hostInlineTabs], [...hostHeld.keys()], [...hostBackground],
     [...justSent].map(([sid, sent]) => [sid, AtlasLogic.deliveryState(
       activeSessions.find(x => x.session_id === sid) || {}, sent, Date.now())]), [...dialogs], [...dialogNotes], [...dialogAnswers.values()], [...stopNotes], [...commandOutputs], pinnedCards, hiddenCards,
     [...attachments].map(([k, v]) => [k, v.length]),
@@ -105,7 +109,7 @@ function renderActive(skipKey, force) {
   // Order comes from arrangeSessions: pinned, then by start; freshness does not reorder.
   const decide = [], waitingYou = [], working = [], openCode = [];
   for (const s of shown) {
-    if (s.agent === "opencode") { openCode.push(s); continue; }
+    if (s.opencode_placeholder) { openCode.push(s); continue; }
     const activity = sectionActivity(s);
     (activity === "waiting" ? decide : isWorking(activity) ? working : waitingYou).push(s);
   }
@@ -134,6 +138,16 @@ function renderActive(skipKey, force) {
   // Keep the mounted body and its scroll position across header and status updates.
   const positions = new Map([...cardPanels].map(([sid, panel]) => [sid, panel.body.scrollTop]));
   grid.replaceChildren(...sections.filter(Boolean), ...closed());
+  // Keep the focused form and repaint its card and the rest of the grid.
+  if (focusedForm) {
+    const replacement = [...grid.querySelectorAll(".oc-form")].find(form =>
+      form.dataset.formId === focusedForm.dataset.formId && form.dataset.sessionId === focusedForm.dataset.sessionId);
+    if (replacement && !replacement.querySelector("fieldset:disabled") && !focusedForm.querySelector("fieldset:disabled")) {
+      replacement.replaceWith(focusedForm);
+      formControl.focus({ preventScroll: true });
+      if (formSelection) formControl.setSelectionRange(...formSelection);
+    }
+  }
   mountCardPanels(grid, shown);
   for (const [sid, top] of positions) {
     const panel = cardPanels.get(sid);

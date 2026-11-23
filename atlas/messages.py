@@ -59,6 +59,16 @@ MESSAGES: dict[str, dict] = {
                           "ru": "Эта сессия или одна из её дочерних сессий работает в OpenCode."},
     "opencode.children_changed": {"en": "The child sessions changed. Review the deletion again.",
                                    "ru": "Список дочерних сессий изменился. Проверь удаление ещё раз."},
+    "opencode.live_needs_tab": {"en": "Open this session in an Atlas tab first.",
+                                  "ru": "Сначала откройте эту сессию во вкладке Atlas."},
+    "opencode.live_generation_changed": {"en": "OpenCode restarted. Check the refreshed card and try again.",
+                                          "ru": "OpenCode перезапустился. Проверь обновлённую карточку и повтори."},
+    "opencode.live_stale": {"en": "Already answered or gone.",
+                              "ru": "Запрос уже обработан или исчез."},
+    "opencode.invalid_answer": {"en": "Check the required fields and allowed choices.",
+                                  "ru": "Проверьте обязательные поля и допустимые варианты."},
+    "opencode.live_dismissed": {"en": "Question dismissed in Atlas.",
+                                 "ru": "Вопрос отклонён в Atlas."},
     "opencode.launch_options": {"en": "OpenCode launch options cannot select a session, prompt, or server.",
                                 "ru": "Дополнительные параметры OpenCode не могут выбирать сессию, запрос или сервер."},
     # --- server.py: routing and protection errors ---
@@ -93,6 +103,8 @@ MESSAGES: dict[str, dict] = {
     "server.agent_changed": {
         "en": "The settings now send this to {agent}, not to the agent in the preview. Open the preview again.",
         "ru": "По настройкам это теперь уйдёт в {agent}, а не в агента из предпросмотра. Открой предпросмотр снова."},
+    "server.artifact_changed": {"en": "The session or model changed. Open the preview again before sending.",
+                                "ru": "Сессия или модель изменились. Открой предпросмотр заново перед отправкой."},
     "server.page_outdated": {
         "en": "This page is from before an update. Reload the page, then try again.",
         "ru": "Эта страница открыта до обновления. Обнови страницу и попробуй снова."},

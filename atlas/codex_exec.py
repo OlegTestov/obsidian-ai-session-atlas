@@ -18,6 +18,16 @@ from .messages import msg
 
 DEFAULT_MODEL = "default"          # Codex picks its own default model
 EFFORTS = {"low": "low", "medium": "medium", "high": "high", "xhigh": "high", "max": "high"}
+SOL_MODEL = "gpt-6.2-sol"
+SOL_EFFORTS = ("low", "medium", "high", "xhigh", "max", "ultra")
+
+
+def fallback_effort(claude_effort: str) -> str:
+    if claude_effort not in SOL_EFFORTS:
+        return "medium"
+    return SOL_EFFORTS[min(SOL_EFFORTS.index(claude_effort) + 1, len(SOL_EFFORTS) - 1)]
+
+
 DEFAULT_EFFORT = {"classification": "low", "catalog_summary": "low", "handoff": "medium"}
 
 
@@ -51,17 +61,20 @@ def model_label(model: str) -> str:
 
 
 def argv(binary: str, cwd: str, out: str, model: str, effort: str, schema: str | None) -> list[str]:
+    reasoning = effort if model == SOL_MODEL and effort in SOL_EFFORTS else EFFORTS.get(effort, "medium")
     args = [binary, "exec", "--ephemeral", "--ignore-user-config", "--ignore-rules", "--disable", "hooks",
             *[a for f in NO_TOOLS for a in ("--disable", f)], "-c", 'web_search="disabled"',
             "-c", "skills.include_instructions=false",       # no skill list from ~/.agents or CODEX_HOME
             "--sandbox", "read-only", "--skip-git-repo-check", "--color", "never", "-C", cwd, "-o", out,
-            "-c", f"model_reasoning_effort={EFFORTS.get(effort, 'medium')}"]
+            "-c", f"model_reasoning_effort={reasoning}"]
     if model != DEFAULT_MODEL:
         args += ["-m", model]
     if schema:
         args += ["--output-schema", schema]
     for item in config.get("codex_exec_config") or []:
         if isinstance(item, str) and "=" in item:
+            if model == SOL_MODEL and item.split("=", 1)[0].strip() == "model_reasoning_effort":
+                continue
             args += ["-c", item]
     return [*args, "-"]                      # "-": the prompt comes on stdin, never on the command line
 

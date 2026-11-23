@@ -177,7 +177,8 @@ def test_the_job_starts_only_with_the_agent_the_preview_showed(atlas_env, write_
     assert started == [] and conn.execute("SELECT count(*) FROM egress_grants").fetchone()[0] == 0
     r = _post(base + "/api/job", dict(job, backend=runner.CODEX_BACKEND), headers)
     assert r.status == 200
-    _, _, kind, backend, model, _ = started[0]
+    _, _, kind, backend, model, _, fallback = started[0]
+    assert fallback is False
     assert (kind, backend, model) == ("catalog_summary", runner.CODEX_BACKEND, "default")
     grant = conn.execute("SELECT backend, model FROM egress_grants WHERE session_id=?", (sid,)).fetchone()
     assert tuple(grant) == (runner.CODEX_BACKEND, "default")
@@ -211,3 +212,80 @@ def test_the_confirmed_batch_runs_with_its_agent(atlas_env, monkeypatch):
     monkeypatch.setattr(actions, "set_job_state", lambda *a, **kw: None)
     server._run_classify("job", ["s"], "en", runner.CODEX_BACKEND)
     assert seen == [runner.CODEX_BACKEND]
+
+
+@pytest.mark.parametrize("confirmed", [False, True])
+def test_claude_limit_fallback_requires_its_own_grant(atlas_env, write_session, codex_cli, monkeypatch, confirmed):
+    conn, sid = _indexed(atlas_env, write_session)
+    kind = "catalog_summary"
+    model, _ = runner.model_for(kind, runner.CLAUDE_BACKEND)
+    payload = runner.build_payload(conn, sid, kind)
+    digest = payload["content_hash"]
+    job_id, _ = actions.claim_job(conn, sid, kind, digest)
+    runner.grant_egress(conn, sid, digest, kind, runner.CLAUDE_BACKEND, model)
+    if confirmed:
+        runner.grant_egress(conn, sid, digest, kind, runner.CODEX_BACKEND, "gpt-6.2-sol")
+
+    calls = []
+
+    def run(prompt, *, model, backend_name, **kwargs):
+        calls.append((prompt, backend_name, model))
+        if backend_name == runner.CLAUDE_BACKEND:
+            raise runner.ClaudeUsageLimit("You've hit your 5-hour limit · resets 11:50pm (Europe/Madrid)")
+        return json.dumps(SUMMARY)
+
+    monkeypatch.setattr(runner, "run_isolated", run)
+    if confirmed:
+        assert json.loads(enrich.produce(conn, sid, kind, job_id, backend=runner.CLAUDE_BACKEND,
+                                        allow_fallback=True)["payload"])["did"] == SUMMARY["did"]
+        assert calls[1] == (calls[0][0], runner.CODEX_BACKEND, "gpt-6.2-sol")
+        row = conn.execute("SELECT backend, model FROM enrichment WHERE session_id=?", (sid,)).fetchone()
+        assert tuple(row) == (runner.CODEX_BACKEND, "gpt-6.2-sol")
+    else:
+        with pytest.raises(runner.ClaudeUsageLimit):
+            enrich.produce(conn, sid, kind, job_id, backend=runner.CLAUDE_BACKEND)
+        assert len(calls) == 1
+
+
+def test_summary_limit_fallback_from_the_confirmed_preview(
+    atlas_env, write_session, codex_cli, live_server, monkeypatch, tmp_path,
+):
+    _set(atlas_env, llm_enabled=True, ai_agent="claude")
+    monkeypatch.setenv("STANDIN_REPLY", json.dumps(SUMMARY))
+    claude = tmp_path / "claude-limit"
+    claude.write_text("#!/bin/sh\n"
+                      "printf \"You've hit your 5-hour limit · resets 11:50pm (Europe/Madrid)\\n\"\nexit 1\n")
+    claude.chmod(0o700)
+    monkeypatch.setattr(runner, "find_claude", lambda: str(claude))
+    conn, sid = _indexed(atlas_env, write_session)
+    base, token = live_server
+    headers = {"Origin": base, "X-Atlas-Token": token}
+    body = {"session_id": sid, "artifact_kind": "catalog_summary"}
+    preview = json.load(_post(base + "/api/preview", body, headers))
+    assert preview["fallback_model"] == "gpt-6.2-sol"
+    job = dict(body, confirmed=True, backend=preview["backend"], fallback_model=preview["fallback_model"])
+    for wrong in ("", "old"):
+        with pytest.raises(urllib.error.HTTPError) as refused:
+            _post(base + "/api/job", dict(job, content_hash=wrong), headers)
+        assert refused.value.code == 409
+    assert conn.execute("SELECT count(*) FROM egress_grants").fetchone()[0] == 0
+    job_id = json.load(_post(base + "/api/job", dict(job, content_hash=preview["content_hash"]), headers))["job_id"]
+    for _ in range(100):
+        request = urllib.request.Request(f"{base}/api/job/{job_id}", headers=headers)
+        status = json.load(urllib.request.urlopen(request, timeout=5))
+        if status["state"] in ("done", "failed"):
+            break
+        time.sleep(0.03)
+    assert status["state"] == "done", status
+    run, = codex_cli["runs"]()
+    args = run["argv"]
+    assert args[args.index("-m") + 1] == "gpt-6.2-sol"
+    assert f"model_reasoning_effort={preview['fallback_effort']}" in args
+
+
+@pytest.mark.parametrize(("claude", "sol"), [
+    ("low", "medium"), ("medium", "high"), ("high", "xhigh"), ("xhigh", "max"), ("max", "ultra"),
+])
+def test_sol_fallback_effort_is_one_step_higher(atlas_env, claude, sol):
+    args = codex_exec.argv("codex", "/tmp", "/tmp/out", "gpt-6.2-sol", codex_exec.fallback_effort(claude), None)
+    assert f"model_reasoning_effort={sol}" in args

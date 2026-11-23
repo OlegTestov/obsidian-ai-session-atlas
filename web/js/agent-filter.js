@@ -53,7 +53,7 @@ function agentShort(s) {
 // plan-mode dialog is Claude Code's only.
 function agentControls(s) {
   const agent = AtlasLogic.agentOf(s);
-  const commands = AtlasLogic.requireAgent(agent, { claude: true, codex: true }, "card input");
+  const commands = AtlasLogic.requireAgent(agent, { claude: true, codex: true, opencode: false }, "card input");
   return { commands: commands && !s.pending, plan: agent === "claude", agent };
 }
 

@@ -43,7 +43,7 @@ async function api(path, body, signal) {
   }
   serverStatus(true);
   const data = await r.json().catch(() => ({ error:i18n("common.badResponse") }));
-  if (!r.ok) throw Object.assign(new Error(data.error || ("HTTP " + r.status)), { state: data.state });
+  if (!r.ok) throw Object.assign(new Error(data.error || ("HTTP " + r.status)), { status: r.status, state: data.state, reason: data.reason });
   return data;
 }
 

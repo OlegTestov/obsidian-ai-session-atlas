@@ -20,6 +20,72 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 MUT = [
+ ("opencode B1e: answers use the start time", "atlas/opencode_parse.py",
+  '    return completed_at if type(completed_at) is int and 0 < completed_at < 4e12 else message["time_created"]',
+  '    return message["time_created"]'),
+ ("opencode B1e: an unexpected OpenCode failure drops the whole Active list", "atlas/active.py",
+  "        log_opencode_error(exc)", "        raise"),
+ ("opencode B1e: verification blocks the poll", "atlas/opencode_live.py",
+  "threading.Thread(target=_verify, args=(database, self._verification), daemon=True).start()",
+  "_verify(database, self._verification)"),
+ ("opencode B1e: stale card generation can authorize actions", "atlas/opencode_live_actions.py",
+  '    if body.get("generation") != client.generation:', '    if False:'),
+ ("opencode B1d: prompt errors assume every 4xx proves refusal", "atlas/opencode_live_actions.py",
+  "if not exc.dispatched or _not_admitted(exc, sid):",
+  "if not exc.dispatched or (exc.status is not None and exc.status < 500):"),
+ ("opencode B1d: reply reconciliation requires a tab", "atlas/opencode_live_actions.py",
+  '    if operation in ("reply", "reply-check"):\n        return _reply(sid, operation, body)',
+  '    if operation in ("reply", "reply-check"):\n        _require_tab(sid)\n        return _reply(sid, operation, body)'),
+ ("opencode B1d: a successful retry clears an ambiguous ID without reconciliation", "atlas/opencode_live_actions.py",
+  'if not body.get("ambiguous") and admission.get("id") == message_id and admission.get("sessionID") == sid:',
+  'if admission.get("id") == message_id and admission.get("sessionID") == sid:'),
+ ("opencode B1d: the latest prompt query scans other message types", "atlas/opencode_live.py",
+  "WHERE session_id=? AND type='user' ORDER BY seq DESC",
+  "WHERE session_id=? ORDER BY seq DESC"),
+ ("opencode B1d: displayed replies can have no timestamp", "atlas/opencode_live.py",
+  'reply_at = (completed_at or _timestamp(answer) or updated) if reply else None',
+  "reply_at = _timestamp(answer)"),
+ ("opencode B1d: the indexed answer includes unfinished steps", "atlas/opencode_parse.py",
+  "if completed(data) and len(facts.assistant_text) > text_count:",
+  "if len(facts.assistant_text) > text_count:"),
+ ("opencode B1d: each poll can spend seconds on peer checks", "atlas/opencode_service.py",
+  "def __init__(self, seconds=0.275, peer_seconds=0.150):",
+  "def __init__(self, seconds=0.275, peer_seconds=2.0):"),
+ ("opencode B1d: slow HTTP reads exceed the Active deadline", "atlas/opencode_service.py",
+  "def __init__(self, seconds=0.275, peer_seconds=0.150):",
+  "def __init__(self, seconds=0.8, peer_seconds=0.150):"),
+ ("opencode B1c: fresh credentialed requests trust the listener instead of the peer", "atlas/opencode_service.py",
+  "            _check_peer(registration, connection.sock, budget, profile_files)",
+  '            if _listener_pid(registration.host, registration.port) != registration.pid:\n'
+  '                raise ServiceError("unauthorized")'),
+ ("opencode B1c: a peer check gives up before the service accepts the connection", "atlas/opencode_service.py",
+  "    for attempt in range(3):\n", "    for attempt in range(1):\n"),
+ ("opencode B1c: ambiguous reply reconciliation turns into a definite refusal", "atlas/opencode_live_actions.py",
+  "    with suppress(service.ServiceError):\n        return {\"delivery\": _delivered(_client(), sid, message_id)}",
+  '    return {"delivery": _delivered(_client(), sid, message_id)}'),
+ ("opencode B1c: a lost tab route reports known pending state", "atlas/opencode_live.py",
+  "    known = bool(pid)\n", "    known = True\n"),
+ ("opencode B1c: the active transcript query has no row limit", "atlas/opencode_live.py",
+  '        ORDER BY seq DESC LIMIT ?\n    """, (sid, MESSAGE_SCAN_ROWS))',
+  '        ORDER BY seq DESC\n    """, (sid,))'),
+ ("opencode B1c: a history without recent text omits the indexed prompt", "atlas/opencode_live.py",
+  '    prompt = user[1] if user else info.get("last_prompt")', "    prompt = user[1] if user else None"),
+ ("opencode B1c: an unavailable service shows cached pending decisions", "atlas/opencode_live.py",
+  "    if running is None:\n        return None, None, None, False\n",
+  '    if running is None:\n        item = live.pending.get(sid, {}).get("form")\n'
+  '        return "question", project_pending(sid, "form", item), None, False\n'),
+ ("opencode B1: answers from outside Atlas are allowed", "atlas/opencode_live_actions.py",
+  '    if sid not in opencode_tabs.active_tabs():', '    if False:'),
+ ("opencode B1: answer skips the pending re-read", "atlas/opencode_live_actions.py",
+  "        item = client.data(route)",
+  '        item = client.data(route) if kind == "form" else {"id": item_id, "sessionID": sid}'),
+ ("opencode B1: form validation is skipped", "atlas/opencode_live_actions.py",
+  '            if not valid_answer(projected["fields"], answer):', '            if False:'),
+ ("opencode B1: identity rechecked on every poll", "atlas/opencode_live.py",
+  "        if key is not None and (self.client is None or time.monotonic() - self.checked >= IDENTITY_REFRESH):",
+  "        if key is not None:"),
+ ("opencode B1: read starts the service", "atlas/opencode_live.py",
+  "        self._identity(database)\n", "        service.ensure()\n        self._identity(database)\n"),
  ("opencode A2d: expired launches keep blocking Delete", "atlas/opencode_tabs.py",
   "or _unrouted_launch_expired(entry)", "or False"),
  ("opencode A2d: fresh launches expire before the TUI starts", "atlas/opencode_tabs.py",
@@ -108,7 +174,7 @@ MUT = [
   'cost = None if c["unknown"] and not c["priced"] else round(c["cost"], 2)',
   'cost = round(c["cost"], 2)'),
  ("opencode A2: card shows the first assistant block", "atlas/agent_opencode.py",
-  'answer = facts.assistant_text[-1]', 'answer = facts.assistant_text[0]'),
+  'answer = facts.last_completed_answer', 'answer = facts.assistant_text[0] if facts.last_completed_answer else ""'),
  ("opencode A2: native fork names bypass shared copy numbering", "atlas/opencode_parse.py",
   'return base if title == f"{base} (fork #{next_number})" else title', 'return title'),
  ("opencode A2: archive waits on a throttled index pass", "atlas/server.py",
@@ -158,7 +224,7 @@ MUT = [
   'if _registration(file) == registration:',
   'if _registration(file).pid == registration.pid:'),
  ("opencode A2b: credentials go to any listener", 'atlas/opencode_service.py',
-  '        elif _listener_pid(registration.host, registration.port) != registration.pid:\n            raise ServiceError("unauthorized")\n',
+  '            _check_peer(registration, connection.sock, budget, profile_files)\n',
   ''),
  ("opencode A2b: resume trusts pre-start session ID", 'atlas/opencode_tabs.py',
   '        if sid:\n            cwd = checked_directory(sid)\n',
@@ -1706,6 +1772,35 @@ source "$SCRIPT_DIR/$module" """.rstrip()),
   'if codex --help 2>/dev/null | /usr/bin/grep -q -- \'--no-daemon\'; then', 'if false; then'),
 ]
 JS_MUT = [
+ ("opencode B1e: a second page forgets the restored request ID", "web/js/opencode-active.js",
+  "retry = restored?.text === text ? restored : null;", "retry = null;"),
+ ("opencode B1e: Move and Resume launch separate OpenCode tabs", "obsidian-plugin/src/terminal.js",
+  "      if (pending) return pending;", '      if (pending && launch.agent !== "opencode") return pending;'),
+ ("opencode B1d: a refused retry unlocks an ambiguous request", "web/js/opencode-active.js",
+  "if (item && !retry && error.status >= 400", "if (item && error.status >= 400"),
+ ("opencode B1d: passive reply reconciliation prevents discard", "web/js/opencode-active.js",
+  "if (!item || openCodeReplying.has(sid)) return;",
+  "if (!item || openCodeReplying.has(sid) || openCodeReplyChecks.has(sid)) return;"),
+ ("opencode B1d: the publisher keeps the heartbeat after a failed unlink", "obsidian-plugin/opencode-tab/tui.mjs",
+  '          if (error.code !== "ENOENT") stopHeartbeat();', '          if (error.code !== "ENOENT") return;'),
+ ("opencode B1c: a failed TUI route write leaves the old route", "obsidian-plugin/opencode-tab/tui.mjs",
+  '        try { unlinkSync(file); } catch (error) {\n'
+  '          if (error.code !== "ENOENT") stopHeartbeat();\n        }\n', ""),
+ ("opencode B1c: mirror input accepts an old route heartbeat", "obsidian-plugin/src/term-mirror.js",
+  "const MAX_INPUT_ROUTE_AGE_MS = 2000;", "const MAX_INPUT_ROUTE_AGE_MS = 8000;"),
+ ("opencode B1c: the page accepts whitespace-only replies that Atlas rejects", "web/js/opencode-active.js",
+  '  return /^[\\p{White_Space}\\u001c-\\u001f]*$/u.test(text);', "  return !text.trim();"),
+ ("opencode B1c: a definite reply refusal keeps the saved request", "web/js/opencode-active.js",
+  "item && !retry && error.status >= 400 && error.status < 500 &&\n"
+  "        forgetOpenCodeReply(sid, item) && !drafts.has(sid)",
+  "false"),
+ ("opencode B1c: form drafts are pruned without a read for their session", "web/js/opencode-active.js",
+  'observed.has(form.sid) && dialog?.kind !== "permission"', 'dialog?.kind !== "permission"'),
+ ("opencode B1: Always is offered", "web/js/opencode-active.js",
+  'const openCodePermissionDecisions = ["once", "reject"];',
+  'const openCodePermissionDecisions = ["once", "always", "reject"];'),
+ ("opencode B1: stop state drops before settlement", "web/js/opencode-active.js",
+  "    if (running.includes(sid)) continue;\n", ""),
  ("duplicate tab: an instance acts on another instance's page", "obsidian-plugin/src/main.js",
   "data.source !== `${PAGE_SOURCE}:${this.hostId()}`", "!String(data.source).startsWith(PAGE_SOURCE)"),
  ("duplicate tab: the frame does not name its instance", "obsidian-plugin/src/view.js",
@@ -2416,7 +2511,7 @@ JS_MUT = [
  ("plugin: title without a counter", "obsidian-plugin/src/notify.js",
   'return count ? `AI Session Atlas (${count})` : "AI Session Atlas";', 'return "AI Session Atlas";'),
  ("plugin: Resume opens a second tab next to the session's own", "obsidian-plugin/src/terminal.js",
-  '      if (this.revealSessionTab(launch.sessionId)) return true;\n', ''),
+  '      if (launch.agent !== "opencode" && this.revealSessionTab(launch.sessionId)) return true;\n', ''),
  ("plugin: another session's tab is taken for this one", "obsidian-plugin/src/terminal.js",
   'if (instance && session === sessionId) out.add(instance);', 'if (instance) out.add(instance);'),
  ("plugin: a page-wide copy takes another tab's selection", "obsidian-plugin/src/term-copy.js",
@@ -2955,7 +3050,7 @@ JS_MUT = [
  ("card terminal: a failed verification still writes", "obsidian-plugin/src/mirror-session.js",
   "if (!ok || !this.alive()) return this.fail();", "if (false) return this.fail();"),
  ("card terminal: queued input is written in reverse", "obsidian-plugin/src/mirror-session.js",
-  "held.forEach(item => this.writeInput(item));", "held.reverse().forEach(item => this.writeInput(item));"),
+  "for (const item of held) {", "for (const item of held.reverse()) {"),
  ("card terminal: every key verifies again", "obsidian-plugin/src/mirror-session.js",
   "this.verifiedAt = this.now();\n      const held", "const held"),
  ("card terminal: the re-check accepts any target", "obsidian-plugin/src/term-mirror.js",
@@ -3219,7 +3314,24 @@ def _run(cmd):
 
 def run_python(name=None):
     focused = []
-    if (name or "").startswith("pending card:"):
+    if (name or "").startswith("opencode B1c: fresh credentialed requests"):
+        focused = ["tests/test_opencode_service.py", "-k", "connected_peer_before_sending_credentials"]
+    elif (name or "").startswith("opencode B1c: a peer check"):
+        focused = ["tests/test_opencode_service.py", "-k", "waits_briefly"]
+    elif (name or "").startswith("opencode B1d:"):
+        tests = {
+            "the indexed answer includes unfinished steps": "tests/test_opencode.py::test_indexed_answer_uses_completed_steps",
+            "each poll can spend seconds on peer checks":
+                "tests/test_opencode_service.py::test_active_peer_budget_defaults_to_150ms",
+            "slow HTTP reads exceed the Active deadline":
+                "tests/test_opencode_service.py::test_active_pass_caps_slow_http_reads_including_a_warm_connection",
+        }
+        focused = [tests.get(name.removeprefix("opencode B1d: "), "tests/test_opencode_active.py")]
+    elif (name or "").startswith("opencode B1e:") and name != "opencode B1e: stale card generation can authorize actions":
+        focused = ["tests/test_opencode_b1e_live.py"]
+    elif (name or "").startswith(("opencode B1:", "opencode B1c:", "opencode B1e:")):
+        focused = ["tests/test_opencode_active.py"]
+    elif (name or "").startswith("pending card:"):
         focused = ["tests/test_codex_active.py", "-k", "pending_codex"]
     elif (name or "").startswith("opencode A1"):
         focused = ["tests/test_opencode.py"]
@@ -3318,6 +3430,13 @@ SELECTOR_MUTATIONS = {
 def run_node(path, name=None):
     # A deliberately widened process selector must never run the real cleanup integration test
     # or a bundled server on the host. Its pure selector test catches both mutations directly.
+    if (name or "").startswith(("opencode B1c:", "opencode B1d:")) and path.startswith("obsidian-plugin/"):
+        return _run(["node", "--test", "--test-name-pattern=OpenCode refuses mirror input|TUI .*route",
+                     "tests/js/term-mirror.test.mjs"])
+    if name == "opencode B1e: Move and Resume launch separate OpenCode tabs":
+        return _run(["node", "--test", "--test-name-pattern=OpenCode Move and Resume", "tests/js/plugin.test.mjs"])
+    if (name or "").startswith(("opencode B1:", "opencode B1c:", "opencode B1d:", "opencode B1e:")):
+        return _run(["node", "--test", "tests/js/opencode-active.test.mjs"])
     if (name or "").startswith("opencode A2e:"):
         pattern = "a late Copy reply" if path == "web/js/opencode.js" else "an adopted legacy OpenCode attempt"
         return _run(["node", "--test", f"--test-name-pattern={pattern}", "tests/js/opencode.test.mjs"])

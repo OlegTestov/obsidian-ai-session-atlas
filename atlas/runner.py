@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -18,6 +19,7 @@ EXTRACTOR_VERSION = 1
 LOCAL_BACKENDS = {"ollama", "lmstudio", "llamacpp"}
 EXTERNAL_BACKEND = CLAUDE_BACKEND = "claude-cli"
 CODEX_BACKEND = "codex-cli"
+CLAUDE_LIMIT_FALLBACK_MODEL = codex_exec.SOL_MODEL
 BACKENDS = {agents.CLAUDE: CLAUDE_BACKEND, agents.CODEX: CODEX_BACKEND}
 AGENT_NAMES = {backend: agents.label(kind) for kind, backend in BACKENDS.items()}
 
@@ -353,6 +355,25 @@ def _argv(binary: str, model: str, effort: str) -> list[str]:
     ]
 
 
+class ClaudeUsageLimit(RuntimeError):
+    """Claude Code reported its account usage limit."""
+
+
+def _raise_claude_usage_limit(proc: subprocess.CompletedProcess) -> None:
+    for stream in (proc.stderr, proc.stdout):
+        for line in (stream or "").splitlines():
+            detail = re.sub(r"^Error: ", "", line.strip()).lstrip("⎿ ").strip()
+            if re.match(r"^You['’]ve hit your (?:(?:individual spend|[0-9]+[- ](?:hour|day)|weekly|usage) )?limit\b",
+                        detail, re.IGNORECASE):
+                raise ClaudeUsageLimit(detail[:500])
+
+
+def artifact_fallback(backend_name: str) -> str | None:
+    if backend_name == CLAUDE_BACKEND and codex_app.find_codex():
+        return CLAUDE_LIMIT_FALLBACK_MODEL
+    return None
+
+
 def preflight(model: str = "claude-haiku-4-5-20251001", effort: str = "low") -> None:
     """A tiny run with the same flags: catches a broken invocation before the expensive send."""
     binary = find_claude()
@@ -363,6 +384,7 @@ def preflight(model: str = "claude-haiku-4-5-20251001", effort: str = "low") -> 
                           capture_output=True, text=True, timeout=120,
                           cwd=runner_cwd(), env=env)
     if proc.returncode != 0:
+        _raise_claude_usage_limit(proc)
         raise RuntimeError(msg("runner.preflight_failed",
                                detail=(proc.stderr or "").strip()[:300]))
 
@@ -388,6 +410,7 @@ def run_isolated(prompt: str, model: str = DEFAULT_MODEL, effort: str = DEFAULT_
     proc = subprocess.run(argv, input=prompt, capture_output=True, text=True,
                           timeout=timeout, cwd=runner_cwd(), env=env)
     if proc.returncode != 0:
+        _raise_claude_usage_limit(proc)
         # The reason comes in stdout: with an empty stderr, a bare "returned an error" is useless.
         detail = ((proc.stderr or "").strip() or (proc.stdout or "").strip()
                   or msg("runner.cli_error"))

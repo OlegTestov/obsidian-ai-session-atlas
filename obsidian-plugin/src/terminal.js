@@ -253,22 +253,21 @@ class TerminalMethods {
       new Notice(this.t("terminal.failed", { error: error.message }));
       return;
     }
-    // The session already has a tab, maybe one Obsidian brought back but has not loaded yet: show it.
-    // Reuse an OpenCode leaf only after its current route can be confirmed.
-    if (launch?.agent === "opencode") {
+    const openCatalog = () => {
+      if (launch?.agent !== "opencode") return this.openCatalogCommand(command, cwd, label, launch);
+      // An OpenCode leaf can be reused only after its current route is confirmed.
       const existing = launch.mode === "resume" && this.revealOpenCodeSession(launch.sessionId);
       if (existing) return waitForOpenCodeSession(this.dataDir(), existing.leaf, existing.instance, launch.sessionId);
       return this.openAgent(launch.agent, { cwd: launch.cwd, seed: launch, label });
-    }
+    };
     if (launch?.mode === "resume") {
-      if (this.revealSessionTab(launch.sessionId)) return true;
+      if (launch.agent !== "opencode" && this.revealSessionTab(launch.sessionId)) return true;
       // A second handoff can arrive before the launcher writes the session to the tab registry.
       this.pendingSessionResumes ??= new Map();
       const key = `${launch.agent}:${launch.sessionId}`;
       const pending = this.pendingSessionResumes.get(key);
       if (pending) return pending;
-      const opening = Promise.resolve().then(() =>
-        this.openCatalogCommand(command, cwd, label, launch));
+      const opening = Promise.resolve().then(openCatalog);
       this.pendingSessionResumes.set(key, opening);
       try {
         return await opening;
@@ -278,7 +277,7 @@ class TerminalMethods {
     }
     // A background job already shown in a tab: that tab, not a second view of the same conversation.
     if (launch && launch.mode === "attach" && (await this.revealJobTab(launch.sessionId))) return true;
-    return this.openCatalogCommand(command, cwd, label, launch);
+    return openCatalog();
   }
 
   async openCatalogCommand(command, cwd, label, launch) {

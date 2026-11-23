@@ -71,6 +71,7 @@ function terminalCardPanel(session, pid) {
           else if (data.type === "size") renderer?.resize(data.cols, data.rows);
           else if (data.type === "theme") renderer?.setTheme(data.theme);
           else if (data.type === "exit") {
+            if (data.unavailable) return unavailable();
             port.close();
             port = null;
             ended = true;
@@ -78,7 +79,7 @@ function terminalCardPanel(session, pid) {
         };
       });
       if (!tellTabHost("open-card-terminal", { request, ptyPid: pid, claudePid: panel.session.pid,
-                                             sessionId: session.session_id })) return unavailable();
+                                             sessionId: session.session_id, agent: session.agent })) return unavailable();
       timer = window.setTimeout(unavailable, 8000);
     },
     focus() { if (renderer) renderer.focus(); else wantFocus = true; },

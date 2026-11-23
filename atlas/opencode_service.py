@@ -8,11 +8,12 @@ import json
 import os
 import re
 import shutil
+import socket
 import stat
 import subprocess
 import threading
 import time
-from contextlib import suppress
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
@@ -30,11 +31,53 @@ _starting = threading.Event()
 
 
 class ServiceError(ValueError):
-    def __init__(self, state, status=None, **details):
+    def __init__(self, state, status=None, *, dispatched=False, error_body=None, **details):
         self.state = state
         self.status = status
+        self.dispatched = dispatched
+        self.error_body = error_body
         key = "profile_unknown" if state == "profile" and not details else state
         super().__init__(msg("opencode." + key, **details))
+
+
+class PollBudgetExpired(Exception):
+    pass
+
+
+class PollBudget:
+    def __init__(self, seconds=0.275, peer_seconds=0.150):
+        self.deadline = time.monotonic() + seconds
+        self.peer_left = peer_seconds
+
+    def remaining(self):
+        left = self.deadline - time.monotonic()
+        if left <= 0:
+            raise PollBudgetExpired
+        return left
+
+    @contextmanager
+    def peer_time(self):
+        start = time.monotonic()
+        limit = min(self.peer_left, self.remaining())
+        if limit <= 0:
+            raise PollBudgetExpired
+        try:
+            yield limit
+        finally:
+            self.peer_left -= time.monotonic() - start
+            if self.peer_left <= 0:
+                raise PollBudgetExpired
+            self.remaining()
+
+    def lookup(self, *args):
+        with self.peer_time() as limit:
+            # Leave time for subprocess termination and reaping after a timeout.
+            return _lsof(*args, timeout=max(0.001, limit - 0.008))
+
+
+def _abort_poll(sock):
+    with suppress(OSError):
+        sock.shutdown(socket.SHUT_RDWR)
 
 
 @dataclass(frozen=True)
@@ -54,6 +97,7 @@ class Discovery:
     registration: Registration | None = field(default=None, repr=False)
     info: dict = field(default_factory=dict, repr=False)
     file: Path | None = field(default=None, repr=False)
+    poll_connection: http.client.HTTPConnection | None = field(default=None, repr=False)
 
     @property
     def version(self):
@@ -123,16 +167,20 @@ def _registration(file):
         raise ServiceError("unauthorized") from None
 
 
-def _lsof(*args):
+def _lsof(*args, timeout=None):
     executable = shutil.which("lsof")
     if not executable:
         raise ServiceError("lsof_missing")
     try:
         result = subprocess.run([executable, "-nP", *args], capture_output=True, env=child_env(),
-                                stdin=subprocess.DEVNULL, timeout=2)
+                                stdin=subprocess.DEVNULL, timeout=2 if timeout is None else timeout)
     except FileNotFoundError:
         raise ServiceError("lsof_missing") from None
-    except (OSError, subprocess.TimeoutExpired):
+    except subprocess.TimeoutExpired:
+        if timeout is not None:
+            raise PollBudgetExpired from None
+        raise ServiceError("unauthorized") from None
+    except OSError:
         raise ServiceError("unauthorized") from None
     return result.stdout if result.returncode == 0 else b""
 
@@ -147,6 +195,33 @@ def _listener_pid(host, port):
 def _endpoint(host, port):
     address = ipaddress.ip_address(host)
     return f"[{address}]:{port}" if address.version == 6 else f"{address}:{port}"
+
+
+def _check_peer(registration, sock, budget=None, profile_files=None):
+    host, port = sock.getsockname()[:2]
+    local = _endpoint(host, port)
+    peer = _endpoint(registration.host, registration.port)
+    server_socket = f"n{peer}->{local}".encode("ascii")
+    lookup = budget.lookup if budget else _lsof
+    # On an Active identity refresh, one sample proves the peer and supplies the profile's open files.
+    args = ("-a", "-p", str(registration.pid), "-iTCP", "-sTCP:ESTABLISHED", "-F0pfnT")
+    if profile_files is not None:
+        args = ("-p", str(registration.pid), "-F0pftDinT")
+    # A completed connect can precede accept. Check the same socket again without sending any bytes.
+    for attempt in range(3):
+        if attempt:
+            if budget:
+                with budget.peer_time() as limit:
+                    time.sleep(min(0.01, limit))
+            else:
+                time.sleep(0.01)
+        files = list(_file_sets(lookup(*args)))
+        if any(pid == registration.pid and server_socket in fields and b"TST=ESTABLISHED" in fields
+               for pid, fields in files):
+            if profile_files is not None:
+                profile_files.extend(files)
+            return
+    raise ServiceError("unauthorized")
 
 
 def _listens_at(fields, endpoint):
@@ -216,41 +291,96 @@ def _check_registration(registration, file):
     raise ServiceError("service_changed")
 
 
-def _call(registration, method, path, body=None, *, timeout=3, file=None, before_send=None, check_target=None):
+def _call(registration, method, path, body=None, *, timeout=3, file=None, before_send=None, connection=None,
+          budget=None, profile_files=None, allow_connect=True):
     file = file or registration_path()
     # Direct sockets ignore proxies, and an already connected socket cannot reach a replacement listener.
-    connection = http.client.HTTPConnection(registration.host, registration.port, timeout=timeout)
+    owned = connection is None
+    if owned:
+        connection = http.client.HTTPConnection(registration.host, registration.port, timeout=timeout)
+    # HTTPConnection must not silently reconnect after the socket was checked.
+    connection.auto_open = False
     auth = base64.b64encode(("opencode:" + registration.password).encode()).decode("ascii")
     headers = {"Authorization": "Basic " + auth, "Content-Type": "application/json"}
+    dispatched = False
+    timer = None
     try:
         _check_registration(registration, file)
-        connection.connect()
-        if check_target is not None:
-            check_target()
-        elif _listener_pid(registration.host, registration.port) != registration.pid:
-            raise ServiceError("unauthorized")
+        if budget:
+            connection.timeout = budget.remaining()
+        if connection.sock is None:
+            if not allow_connect:
+                raise ServiceError("stopped")
+            connection.connect()
+            _check_peer(registration, connection.sock, budget, profile_files)
         if before_send is not None:
             before_send()
         _check_registration(registration, file)
-        connection.request(method, path, json.dumps(body) if body is not None else None, headers=headers)
+        payload = json.dumps(body) if body is not None else None
+        if budget:
+            remaining = budget.remaining()
+            connection.sock.settimeout(remaining)
+            # Socket timeouts are per read. Stop a slow response at the pass deadline.
+            timer = threading.Timer(remaining, _abort_poll, (connection.sock,))
+            timer.daemon = True
+            timer.start()
+        dispatched = True
+        connection.request(method, path, payload, headers=headers)
         with connection.getresponse() as response:
             code = response.status
             if not 200 <= code < 300:
                 status = "unauthorized" if code in (401, 403) or 300 <= code < 400 else (
                     "session_missing" if code == 404 else "request_failed")
-                raise ServiceError(status, code)
+                error_body = None
+                if method == "POST" and path.endswith("/prompt") and code in (400, 404):
+                    with suppress(ValueError, OSError, http.client.HTTPException, RecursionError):
+                        raw = response.read(REGISTRATION_LIMIT + 1)
+                        if len(raw) <= REGISTRATION_LIMIT:
+                            error_body = json.loads(raw)
+                if not allow_connect and status != "unauthorized":
+                    # A failed read can leave a valid keep-alive intact if its body is drained.
+                    if len(response.read(RESPONSE_LIMIT + 1)) > RESPONSE_LIMIT:
+                        connection.close()
+                    if budget:
+                        budget.remaining()
+                else:
+                    connection.close()
+                raise ServiceError(status, code, error_body=error_body)
             raw = response.read(RESPONSE_LIMIT + 1)
         if len(raw) > RESPONSE_LIMIT:
+            connection.close()
             raise ServiceError("request_failed")
-        return json.loads(raw) if raw else None
-    except (OSError, http.client.HTTPException):
-        raise ServiceError("stopped") from None
-    except (ValueError, UnicodeError) as exc:
-        if isinstance(exc, ServiceError):
-            raise
-        raise ServiceError("request_failed") from None
-    finally:
+        decoded = json.loads(raw) if raw else None
+        if budget:
+            budget.remaining()
+        return decoded
+    except PollBudgetExpired:
         connection.close()
+        raise
+    except (OSError, http.client.HTTPException):
+        connection.close()
+        if budget:
+            budget.remaining()
+        raise ServiceError("stopped", dispatched=dispatched) from None
+    except ServiceError as exc:
+        if exc.status is None:
+            connection.close()
+        exc.dispatched = dispatched
+        raise
+    except (ValueError, OverflowError, RecursionError):
+        raise ServiceError("request_failed", dispatched=dispatched) from None
+    finally:
+        if timer:
+            timer.cancel()
+        if owned:
+            connection.close()
+        if dispatched:
+            try:
+                _check_registration(registration, file)
+            except ServiceError as exc:
+                connection.close()
+                exc.dispatched = True
+                raise
 
 
 def _registered(starting=False):
@@ -266,42 +396,61 @@ def _registered(starting=False):
     return Discovery("registered", registration, file=file)
 
 
-def discover(*, starting=False):
+def discover(*, starting=False, budget=None, profile_files=None):
     found = _registered(starting)
     if found.registration is None:
         return found
     registration, file = found.registration, found.file
+    connection = None
+    if budget:
+        connection = http.client.HTTPConnection(registration.host, registration.port, timeout=budget.remaining())
     try:
-        identity = _call(registration, "GET", "/api/info", timeout=0.8, file=file)
+        identity = _call(registration, "GET", "/api/info", timeout=0.8, file=file, budget=budget,
+                         connection=connection, profile_files=profile_files)
     except ServiceError as exc:
         if exc.state == "stopped":
             return Discovery("starting" if starting or _starting.is_set() else "stopped")
         return Discovery(exc.state if exc.state in {"lsof_missing", "service_changed"} else "unauthorized")
     if (not isinstance(identity, dict) or type(identity.get("pid")) is not int
             or identity["pid"] != registration.pid or identity.get("version") != registration.version):
+        if connection:
+            connection.close()
         return Discovery("unauthorized")
     state = "ready" if registration.version == TESTED_VERSION else "version_warning"
-    return Discovery(state, registration, identity, file)
+    return Discovery(state, registration, identity, file, connection)
+
+
+def _profile_check(client, expected, files=None):
+    registration = client._registration
+    endpoint = _endpoint(registration.host, registration.port)
+    # OR selects the service's open files and any process listening on the endpoint.
+    if files is None:
+        output = _lsof("-p", str(registration.pid), "-iTCP@" + endpoint, "-sTCP:LISTEN", "-F0pftDinT")
+        files = list(_file_sets(output))
+    listeners = _listener_pids(files, endpoint)
+    if listeners != {registration.pid}:
+        raise ServiceError("unauthorized")
+    client.require_database(expected, files=(fields for pid, fields in files if pid == registration.pid))
+
+
+def verified_client(expected, *, budget=None):
+    profile_files = [] if budget else None
+    client = Client(discover(budget=budget, profile_files=profile_files))
+    try:
+        _profile_check(client, expected, profile_files)
+        if budget:
+            budget.remaining()
+            if not client.poll_connected:
+                raise ServiceError("stopped")
+            client._verified_poll_only = True
+        return client
+    except Exception:
+        client.close_poll()
+        raise
 
 
 def active_sessions(expected):
-    found = discover()
-    client = Client(found)
-    registration = found.registration
-    endpoint = _endpoint(registration.host, registration.port)
-
-    def check_target():
-        # OR selects the service's open files and any process listening on the endpoint.
-        output = _lsof("-p", str(registration.pid), "-iTCP@" + endpoint, "-sTCP:LISTEN", "-F0pftDinT")
-        files = list(_file_sets(output))
-        listeners = _listener_pids(files, endpoint)
-        if listeners != {registration.pid}:
-            raise ServiceError("unauthorized")
-        client.require_database(expected, files=(fields for pid, fields in files if pid == registration.pid))
-
-    result = _call(registration, "GET", "/api/session/active", file=found.file, check_target=check_target)
-    client.check_current()
-    return _response_data(result, dict)
+    return verified_client(expected).data("session/active")
 
 
 def _start():
@@ -362,6 +511,8 @@ class Client:
         self._registration = discovery.registration
         self._file = discovery.file or registration_path()
         self.info = discovery.info
+        self._poll_connection = discovery.poll_connection
+        self._verified_poll_only = False
 
     @property
     def generation(self):
@@ -406,13 +557,42 @@ class Client:
         return None
 
     def call(self, method, route, body=None, *, before_send=None):
-        try:
-            return _call(self._registration, method, "/api/" + route, body, file=self._file, before_send=before_send)
-        finally:
-            self.check_current()
+        return _call(self._registration, method, "/api/" + route, body, file=self._file, before_send=before_send)
 
     def data(self, route, method="GET", body=None, expect=dict):
         return _response_data(self.call(method, route, body), expect)
+
+    @property
+    def poll_connected(self):
+        return self._poll_connection is not None and self._poll_connection.sock is not None
+
+    def poll(self, route, expect=dict, *, budget=None):
+        if self._verified_poll_only:
+            if not self.poll_connected:
+                raise ServiceError("stopped")
+            result = _call(self._registration, "GET", "/api/" + route, file=self._file,
+                           connection=self._poll_connection, budget=budget, allow_connect=False)
+            return _response_data(result, expect)
+        # The server may close an idle keep-alive socket between Active polls.
+        reuse = self._poll_connection is not None and self._poll_connection.sock is not None
+        for attempt in range(2 if reuse else 1):
+            if self._poll_connection is None:
+                self._poll_connection = http.client.HTTPConnection(
+                    self._registration.host, self._registration.port, timeout=0.5)
+            try:
+                result = _call(self._registration, "GET", "/api/" + route, file=self._file,
+                               connection=self._poll_connection, budget=budget)
+                return _response_data(result, expect)
+            except ServiceError as exc:
+                if exc.state in {"stopped", "service_changed", "unauthorized"}:
+                    self.close_poll()
+                if exc.state != "stopped" or not reuse or attempt:
+                    raise
+
+    def close_poll(self):
+        if self._poll_connection is not None:
+            self._poll_connection.close()
+            self._poll_connection = None
 
     def sessions(self, **filters):
         cursor = None

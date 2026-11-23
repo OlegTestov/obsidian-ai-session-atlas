@@ -4,7 +4,7 @@ import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { expect, test } from "./fixtures.mjs";
+import { expect, run, test } from "./fixtures.mjs";
 
 test("OpenCode catalog exposes native controls and plain compact badges", async ({ page, context, lang, t }) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "atlas-open-code-e2e-"));
@@ -210,3 +210,51 @@ test("OpenCode catalog exposes native controls and plain compact badges", async 
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("reloading before the copy acknowledgment keeps the old request until the missing session is reported",
+  async ({ page, lang }) => {
+    const src = "ses_" + "a".repeat(26);
+    const fork = "ses_" + "b".repeat(26);
+    const host = run.base + "/opencode-copy-host";
+    const requests = [];
+    await page.route(host, route => route.fulfill({ contentType: "text/html", body: `
+      <iframe style="width:100%;height:95vh;border:0" src="/?lang=${lang}"></iframe>
+      <script>
+        window.launch = null;
+        addEventListener("message", ({ data }) => {
+          if (data?.type === "resume") window.launch = data.launchRequest;
+        });
+      </script>` }));
+    page.expectHttpError(/\/api\/opencode\/fork$/);
+    await page.route("**/api/opencode/fork", route => {
+      const request = route.request().postDataJSON().request_id;
+      requests.push(request);
+      if (requests.length === 2) {
+        return route.fulfill({ status: 409, json: { state: "session_missing", error: "Saved copy is missing" } });
+      }
+      return route.fulfill({ json: { agent: "opencode", session_id: fork, cwd: "/tmp",
+        command: `cd /tmp && opencode /tmp --session ${fork}` } });
+    });
+
+    await page.goto(host);
+    const frame = page.frameLocator("iframe");
+    const openCopy = () => frame.locator("body").evaluate(session_id =>
+      window.openCodeLaunch({ session_id, title: "Source" }, true), src);
+    const start = frame.locator("#m-ok");
+    await openCopy();
+    await start.click();
+    await expect.poll(() => page.evaluate(() => window.launch)).toBeTruthy();
+    const firstRequest = requests[0];
+    await expect(frame.locator("#modal")).toBeVisible();
+
+    // The host already opened a tab, but language navigation can discard its pending acknowledgment.
+    await frame.locator("body").evaluate(() => location.reload());
+    await frame.locator("#view-search").waitFor({ state: "visible" });
+    await openCopy();
+    await start.click();
+    await expect(frame.locator("#m-note")).toHaveText("Saved copy is missing");
+    expect(requests).toEqual([firstRequest, firstRequest]);
+    await start.click();
+    await expect.poll(() => requests.length).toBe(3);
+    expect(requests[2]).not.toBe(firstRequest);
+  });

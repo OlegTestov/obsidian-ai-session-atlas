@@ -4,21 +4,32 @@
 /** The strip on top of a card whose session waits for a decision: what is asked, when known. */
 function decisionStrip(s) {
   const got = dialogs.get(s.session_id);
-  const title = got && got.dialog && got.dialog.title;
-  const strip = el("div", "decide", "❓ " + i18n("active.decisionStrip") + (title ? " · " + title : ""));
+  const item = s.opencode_dialog;
+  const title = item?.kind === "permission" ? item.action : item?.title || got?.dialog?.title;
+  const stopping = s.agent === "opencode" && stopNotes.get(s.session_id);
+  const strip = el("div", "decide", stopping || ("❓ " + i18n("active.decisionStrip") + (title ? " · " + title : "")));
   strip.setAttribute("role", "status");
-  strip.title = s.waiting_for ? `${i18n("active.status.waitingHint")} (${s.waiting_for})` : i18n("active.status.waitingHint");
+  strip.title = waitingHint(s, i18n("active.status.waitingHint"));
   return strip;
 }
 
+function waitingHint(s, hint) {
+  const reason = s.agent === "opencode"
+    ? { "permission prompt": i18n("opencode.permission"), question: i18n("opencode.question") }[s.waiting_for]
+    : s.waiting_for;
+  return reason ? `${hint} (${reason})` : hint;
+}
+
 function activeCard(s) {
-  if (s.agent === "opencode") return openCodeActiveCard(s);
+  if (s.opencode_placeholder) return openCodeActiveCard(s);
   if (s.pending) return pendingActiveCard(s);
   const full = activeMode === "full";
   const act = s.activity || s.status;
   const card = el("article", "acard" + (act === "busy" ? " busy" : act === "background" ? " busy bg"
     : act === "waiting" ? " waiting" : ""));
   card.dataset.id = s.session_id;
+  const pid = tabFor(s);
+  if (s.agent === "opencode" && pid) card.classList.add("opencode-attached");
   if (!AtlasLogic.findAgent(AtlasLogic.agentOf(s))) {
     card.append(el("div", "t", s.title || s.session_id), agentBadge(s));
     return card;
@@ -29,7 +40,7 @@ function activeCard(s) {
   const unread = unreadMark(s, card);
   if (unread) head.appendChild(unread);
   // The tab shows a Claude Code background job: the tab's own server icon, and "· background" by the status.
-  const bgJob = hostBackground.get(tabFor(s)) || null;
+  const bgJob = hostBackground.get(pid) || null;
   if (bgJob) {
     const icon = el("span", "bgico");
     icon.appendChild(svgIcon(SERVER_SVG));
@@ -45,10 +56,10 @@ function activeCard(s) {
   const state = el("span", "state");
   const reasons = backgroundReasons(s.background);
   // After Stop and until the next poll, the status is the stop result, not the old "working".
-  state.append(el("span", "dot"), document.createTextNode(stopNotes.get(s.session_id)
+  const stopNote = s.opencode_running === null ? null : stopNotes.get(s.session_id);
+  state.append(el("span", "dot"), document.createTextNode(stopNote
     || (act === "background" && !full ? i18n("active.status.backgroundShort") : status.label)));
-  state.title = s.waiting_for ? `${status.hint} (${s.waiting_for})`
-    : act === "background" ? `${status.hint}: ${reasons.join(", ")}` : status.hint;
+  state.title = act === "background" ? `${status.hint}: ${reasons.join(", ")}` : waitingHint(s, status.hint);
   if (bgJob) {
     state.appendChild(el("span", "bgword", " · " + i18n("active.bgShort")));
     state.title += "\n" + i18n("active.bgSessionHint", { job: bgJob });
@@ -65,11 +76,10 @@ function activeCard(s) {
   if (tasks && full) card.appendChild(tasksLine(tasks));
 
   const tags = el("div", "tags");
-  const pid = tabFor(s);
+  tags.appendChild(agentBadge(s));
   const group = groupPill(s, pid);
   if (group) tags.appendChild(group);
   if (s.tab_group) card.classList.add("grouped", `g-${s.tab_group.color}`);
-  tags.appendChild(agentBadge(s));
   if (tasks && !full) {                  // compact view has no room for a separate line: the label goes into the tags
     const pill = el("span", "pill task" + (tasks.finished ? " done" : ""),
                     (tasks.current ? "▶ " : "") + i18n("active.tasksPill", { count: tasks.count }));
@@ -107,6 +117,8 @@ function activeCard(s) {
   // Codex records no total: only the estimate from the thread's token count, if the price is known.
   const costs = {
     claude: claudeCost,
+    opencode: () => s.cost_now != null ? i18n("opencode.cost", { cost: s.cost_now.toFixed(2) })
+      : i18n("active.costNotRecorded"),
     codex: () => s.cost_now != null ? i18n("active.costCodex", { cost: s.cost_now.toFixed(2) })
       : i18n("active.costCodexNone"),
   };
@@ -134,11 +146,13 @@ function activeCard(s) {
     const cmdOut = commandOutputBlock(s, pid);
     if (cmdOut) card.appendChild(cmdOut);
     card.appendChild(el("div", "card-view-slot"));
+    const openCodeNote = s.agent === "opencode" && dialogNotes.get(s.session_id);
+    if (!dialog && openCodeNote?.cls === "bad") card.append(el("div", "note bad", openCodeNote.note));
     if (dialog) {
       card.classList.add("has-dialog");
       card.appendChild(dialog);
     }
-    card.appendChild(freeAnswerForm(s, pid) || answerForm(s, pid));
+    if (s.agent !== "opencode" || pid) card.appendChild(freeAnswerForm(s, pid) || answerForm(s, pid));
     return card;
   }
   const parts = AtlasLogic.infoParts(s, ago, shortStart);
@@ -159,6 +173,8 @@ function activeCard(s) {
     card.classList.add("has-dialog");      // compact: the description and tags give their room to the dialog
     card.appendChild(dialog);
   }
+  const openCodeNote = s.agent === "opencode" && dialogNotes.get(s.session_id);
+  if (!dialog && openCodeNote?.cls === "bad") card.append(el("div", "note bad", openCodeNote.note));
   card.appendChild(foot);
   return card;
 }
@@ -414,13 +430,14 @@ function thumbsInto(box, sid) {
 
 function answerForm(s, pid) {
   const sid = s.session_id;
+  const openCode = s.agent === "opencode";
   const form = el("div", "answer");
   const thumbs = el("div", "thumbs");
   thumbs.dataset.id = sid;
   const area = el("textarea");
   area.rows = 1;
   area.dataset.id = sid;
-  area.value = drafts.get(sid) || "";
+  area.value = openCode ? openCodeComposerText(sid) : drafts.get(sid) || "";
   area.setAttribute("aria-label", i18n("active.replyAria"));
   const send = el("button", "icon send");
   send.appendChild(svgIcon(PLANE_SVG));
@@ -436,7 +453,10 @@ function answerForm(s, pid) {
   picker.multiple = true;
   picker.className = "hidden";
   const note = el("div", "note");
-  const blocked = !hostReady ? i18n("active.blockedNoHost")
+  const blocked = openCode && s.opencode_running === null
+    ? i18n(s.opencode_verifying ? "opencode.serviceVerifying" : "opencode.serviceStopped")
+    : openCode && openCodeStopping.has(sid) ? i18n("opencode.stopping")
+    : !hostReady ? i18n("active.blockedNoHost")
     : !pid ? i18n("active.blockedNoTab")
     : s.status === "waiting" ? i18n("active.blockedDialog")
     : null;
@@ -452,25 +472,28 @@ function answerForm(s, pid) {
     drafts.set(sid, area.value);
     autosize(area);
   });
-  area.addEventListener("paste", e => {
-    const files = [...(e.clipboardData ? e.clipboardData.files : [])]
-      .filter(f => f.type.startsWith("image/"));
-    if (files.length) { e.preventDefault(); attachImages(sid, files); }
-  });
-  area.addEventListener("dragover", e => { e.preventDefault(); form.classList.add("drop"); });
-  area.addEventListener("dragleave", () => form.classList.remove("drop"));
-  area.addEventListener("drop", e => {
-    e.preventDefault();
-    form.classList.remove("drop");
-    attachImages(sid, [...(e.dataTransfer ? e.dataTransfer.files : [])]);
-  });
-  clip.addEventListener("click", () => picker.click());
-  picker.addEventListener("change", () => { attachImages(sid, [...picker.files]); picker.value = ""; });
+  if (!openCode) {
+    area.addEventListener("paste", e => {
+      const files = [...(e.clipboardData ? e.clipboardData.files : [])]
+        .filter(f => f.type.startsWith("image/"));
+      if (files.length) { e.preventDefault(); attachImages(sid, files); }
+    });
+    area.addEventListener("dragover", e => { e.preventDefault(); form.classList.add("drop"); });
+    area.addEventListener("dragleave", () => form.classList.remove("drop"));
+    area.addEventListener("drop", e => {
+      e.preventDefault();
+      form.classList.remove("drop");
+      attachImages(sid, [...(e.dataTransfer ? e.dataTransfer.files : [])]);
+    });
+    clip.addEventListener("click", () => picker.click());
+    picker.addEventListener("change", () => { attachImages(sid, [...picker.files]); picker.value = ""; });
+  }
 
   const controls = agentControls(s);
   if (controls.commands && controls.agent === "codex") ensureCommands("codex"); // its /model picker needs the models
   const submit = () => {
     const text = area.value;
+    if (openCode) { if (!send.disabled) void sendOpenCodeReply(s, text); return; }
     // "/effort" and "/model" without an argument would open a picker in the tab, so buttons pick here.
     const pick = controls.commands && argChoices(text, controls.agent);
     if (pick && !pick.optional) { chooser.show(text); return; }
@@ -497,9 +520,17 @@ function answerForm(s, pid) {
     chooser.show(area.value);
   }
   const row = el("div", "row2");
-  row.append(clip, area, send, picker);
-  form.append(suggest, chooser.row, thumbs, row, note);
-  window.setTimeout(() => { renderThumbs(sid); if (area.value) autosize(area); }, 0);
+  if (openCode) {
+    row.append(area, send);
+    const discard = el("button", "discard-reply", i18n("opencode.discardReply"));
+    discard.hidden = !pendingOpenCodeReply(sid);
+    discard.addEventListener("click", () => discardOpenCodeReply(sid));
+    form.append(suggest, row, note, discard);
+  } else {
+    row.append(clip, area, send, picker);
+    form.append(suggest, chooser.row, thumbs, row, note);
+  }
+  window.setTimeout(() => { if (!openCode) renderThumbs(sid); if (area.value) autosize(area); }, 0);
   return form;
 }
 
@@ -509,9 +540,12 @@ function setSendNote(sid, note, cls, clear) {
   const area = document.querySelector(`.answer textarea[data-id="${CSS.escape(sid)}"]`);
   if (!area) return;
   if (clear) { area.value = ""; autosize(area); }
-  const box = area.closest(".answer").querySelector(".note");
+  const form = area.closest(".answer");
+  const box = form.querySelector(".note");
   box.className = "note" + (cls ? " " + cls : "");
   box.textContent = note;
+  const discard = form.querySelector(".discard-reply");
+  if (discard) discard.hidden = !pendingOpenCodeReply(sid);
 }
 
 // What wakes the session without you, in words, for the label and the tooltip.

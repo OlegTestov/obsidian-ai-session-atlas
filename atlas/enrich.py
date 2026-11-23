@@ -75,11 +75,14 @@ def preview(conn: sqlite3.Connection, session_id: str, artifact_kind: str,
     default_model, effort = runner.model_for(artifact_kind, backend)
     model = model or default_model
     payload = runner.preview_payload(conn, session_id, artifact_kind)
+    fallback_model = runner.artifact_fallback(backend)
     return {
         "session_id": session_id,
         "artifact_kind": artifact_kind,
         "backend": backend,
         "agent_name": runner.agent_name(backend),
+        "fallback_model": fallback_model,
+        "fallback_effort": codex_exec.fallback_effort(effort) if fallback_model else None,
         "model": f"{runner.model_label(model, backend)} / {effort}",
         "sections": payload["sections"],
         "totals": payload["totals"],
@@ -101,7 +104,7 @@ def fill(template: str, text: str) -> str:
 
 
 def produce(conn: sqlite3.Connection, session_id: str, artifact_kind: str, job_id: str,
-            backend: str | None = None, model: str | None = None) -> dict:
+            backend: str | None = None, model: str | None = None, *, allow_fallback: bool = False) -> dict:
     """Second stage: the model call. The send permission is checked right here."""
     backend = backend or runner.backend()
     default_model, effort = runner.model_for(artifact_kind, backend)
@@ -113,15 +116,29 @@ def produce(conn: sqlite3.Connection, session_id: str, artifact_kind: str, job_i
 
     template = prompts.summary() if artifact_kind == "catalog_summary" else prompts.handoff()
     schema = codex_exec.SUMMARY_SCHEMA if artifact_kind == "catalog_summary" else None
-    # A large handoff takes long: a million-token window is not read within a minute.
+    original = payload
+
+    def generate(backend_name, model_name, effort_level):
+        excerpt = original
+        try:
+            result = runner.run_isolated(fill(template, excerpt["text"]), model=model_name, effort=effort_level,
+                                         timeout=2400, backend_name=backend_name, schema=schema)
+        except runner.PromptTooLong:
+            excerpt = runner.build_payload(conn, session_id, artifact_kind, scale=0.6)
+            if excerpt["content_hash"] != original["content_hash"]:
+                raise runner.EgressDenied(msg("server.artifact_changed")) from None
+            result = runner.run_isolated(fill(template, excerpt["text"]), model=model_name, effort=effort_level,
+                                         timeout=2400, backend_name=backend_name, schema=schema)
+        return result, excerpt
+
     try:
-        raw = runner.run_isolated(fill(template, payload["text"]), model=model, effort=effort,
-                                  timeout=2400, backend_name=backend, schema=schema)
-    except runner.PromptTooLong:
-        # Characters per token depend on language and content, so there is one retry with a trimmed input.
-        payload = runner.build_payload(conn, session_id, artifact_kind, scale=0.6)
-        raw = runner.run_isolated(fill(template, payload["text"]), model=model, effort=effort,
-                                  timeout=2400, backend_name=backend, schema=schema)
+        raw, payload = generate(backend, model, effort)
+    except runner.ClaudeUsageLimit:
+        if not allow_fallback or backend != runner.CLAUDE_BACKEND or actions.is_cancelled(conn, job_id):
+            raise
+        backend, model = runner.CODEX_BACKEND, runner.CLAUDE_LIMIT_FALLBACK_MODEL
+        runner.check_egress(conn, session_id, original["content_hash"], artifact_kind, backend, model)
+        raw, payload = generate(backend, model, codex_exec.fallback_effort(effort))
 
     if artifact_kind == "catalog_summary":
         result = json.dumps(_parse_summary(raw), ensure_ascii=False)

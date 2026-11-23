@@ -1,0 +1,10 @@
+{
+  "version": "2.3.2",
+  "counts": ["inbox entries for message ID", "matching user rows in SQLite"],
+  "cases": [
+    {"mode": "stop", "case": "queued", "before": [1, 0], "after_restart": [1, 0], "retry": "2xx", "after_retry": [0, 1]},
+    {"mode": "stop", "case": "delivered", "before": [0, 1], "after_restart": [0, 1], "retry": "2xx", "after_retry": [0, 1]},
+    {"mode": "kill", "case": "queued", "before": [1, 0], "after_restart": [1, 0], "retry": "2xx", "after_retry": [0, 1]},
+    {"mode": "kill", "case": "delivered", "before": [0, 1], "after_restart": [0, 1], "retry": "2xx", "after_retry": [0, 1]}
+  ]
+}

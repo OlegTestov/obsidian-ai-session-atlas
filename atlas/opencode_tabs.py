@@ -13,7 +13,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-from . import agent_opencode, agents, db, forks, opencode_service as service
+from . import agent_opencode, agents, db, opencode_service as service
 from .messages import use_lang
 
 INSTANCE = re.compile(r"[A-Za-z0-9_.-]{1,96}")
@@ -170,18 +170,40 @@ def open_tabs():
     return opened, unknown
 
 
-def catalog_meta(conn):
-    ids, _ = open_tabs()
-    nums = forks.numbers(conn) if ids else {}
-    found = {}
-    for sid in ids:
-        row = conn.execute("SELECT s.session_id, COALESCE(NULLIF(u.title,''),s.title) title, s.last_activity_at, "
-                           "COALESCE(u.title,'') <> '' AS renamed "
-                           "FROM sessions s LEFT JOIN user_overrides u USING(session_id) "
-                           "WHERE session_id=? AND agent='opencode'", (sid,)).fetchone()
-        if row:
-            found[sid] = {"title": forks.shown(row, nums), "last_activity_at": row["last_activity_at"]}
-    return found
+def active_tabs(table=None):
+    """Map current, verified OpenCode routes to the PTY of their open Atlas tab."""
+    from .active import _alive as process_alive, ancestors, process_table
+
+    if table is None:
+        table = process_table()
+
+    def alive(record):
+        pid = record.get("pid")
+        start = record.get("start")
+        return type(pid) is int and (start is None or isinstance(start, str)) and process_alive(
+            pid, start or None, table)
+
+    directory = tab_dir()
+    opened = {}
+    for file in directory.glob("layout-*.json"):
+        layout = _record(file, LIMIT)
+        if not alive(layout) or not isinstance(layout.get("tabs"), list):
+            continue
+        for entry in layout["tabs"]:
+            instance = entry.get("instance") if isinstance(entry, dict) else None
+            if not isinstance(instance, str) or not INSTANCE.fullmatch(instance):
+                continue
+            pty, attempt = entry.get("ptyPid"), entry.get("attempt")
+            if (type(pty) is not int or pty not in table or entry.get("exited")
+                    or not isinstance(attempt, str) or not re.fullmatch(r"[a-f0-9]{32}", attempt)):
+                continue
+            route = tab_record(directory / (instance + ".json"))
+            if (route.get("verified") and route.get("current") and alive(route)
+                    and route.get("attempt") == attempt
+                    and pty in ancestors(route["pid"], table)
+                    and not _launch_ended(directory, instance, route)):
+                opened.setdefault(route["current"], pty)
+    return opened
 
 
 def verify_profile(client):

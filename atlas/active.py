@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import glob
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -24,6 +25,14 @@ from .resolve import HEADLESS_ENTRYPOINTS
 SESSIONS_DIR = os.environ.get("ATLAS_CLAUDE_SESSIONS", os.path.join(paths.claude_dir(), "sessions"))
 TAIL_BYTES = 256 * 1024     # the last message is searched in the tail, not the whole file
 MAX_ANCESTORS = 32
+_opencode_errors = set()
+
+
+def log_opencode_error(exc):
+    kind = type(exc)
+    if kind not in _opencode_errors:
+        _opencode_errors.add(kind)
+        logging.getLogger(__name__).warning("OpenCode Active failed (%s)", kind.__name__)
 
 
 def process_table() -> dict[int, tuple]:
@@ -456,9 +465,9 @@ def is_interactive(data: dict) -> bool:
 def list_active(conn: sqlite3.Connection, sessions_dir: str | None = None,
                 projects_root: str | None = None, table: dict | None = None,
                 run=None, codex_home: str | None = None) -> list[dict]:
-    """Live interactive sessions of both agents, the one with the most recent message first."""
+    """Live interactive sessions, the one with the most recent message first."""
     # Both build on this module's helpers.
-    from . import codex_live, jobs as bg_jobs
+    from . import codex_live, jobs as bg_jobs, opencode_live
     from .index import PROJECTS_ROOT
     sessions_dir = sessions_dir or SESSIONS_DIR
     projects_root = projects_root or PROJECTS_ROOT
@@ -478,6 +487,11 @@ def list_active(conn: sqlite3.Connection, sessions_dir: str | None = None,
         if job_id in clients and job_id not in parked:
             out.append(_claude_card(conn, data, jobs, table, projects_root, tab_pid=clients[job_id]))
     out += codex_live.list_live(conn, table, run=run, home=codex_home)
+    try:
+        out += opencode_live.list_live(conn, table)
+    except Exception as exc:
+        opencode_live._live.invalidate()
+        log_opencode_error(exc)
     out.sort(key=lambda s: _as_datetime(s["last_message_at"]), reverse=True)
     return out
 

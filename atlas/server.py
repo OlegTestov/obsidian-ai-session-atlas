@@ -39,8 +39,10 @@ from . import (
     limits,
     messages,
     opencode_actions,
+    opencode_feed,
+    opencode_live,
+    opencode_live_actions,
     opencode_service,
-    opencode_tabs,
     plans,
     relocate,
     runner,
@@ -251,7 +253,7 @@ def active_sessions(conn) -> list[dict]:
                 time.monotonic() - _active_cached["at"] < ACTIVE_REUSE_SECONDS:
             return _active_cached["sessions"]
         sessions = active.list_active(conn)
-        _active_cached.update(at=time.monotonic(), sessions=sessions)
+        _active_cached.update(at=time.monotonic(), sessions=sessions, opencode_poll_ok=opencode_live._live.available)
         return sessions
 
 
@@ -270,13 +272,13 @@ def background_sessions(conn) -> list[dict]:
 
 
 def _run_job(job_id: str, session_id: str, artifact_kind: str, backend: str, model: str,
-             lang: str = messages.DEFAULT) -> None:
+             lang: str = messages.DEFAULT, allow_fallback: bool = False) -> None:
     conn = db.connect()
     try:
         messages.set_lang(lang, remember=False)     # a background thread has no request
         actions.set_job_state(conn, job_id, "running")
         result = enrich.produce(conn, session_id, artifact_kind, job_id,
-                                backend=backend, model=model)
+                                backend=backend, model=model, allow_fallback=allow_fallback)
         actions.set_job_state(conn, job_id, "done", result=json.dumps(result, ensure_ascii=False))
     except Exception as exc:
         actions.set_job_state(conn, job_id, "failed", error=f"{type(exc).__name__}: {exc}")
@@ -428,7 +430,7 @@ class Handler(BaseHTTPRequestHandler):
                     background = (background_sessions(conn)
                                   if not picked or agents.CLAUDE in picked else [])
                     return self._json(200, {"count": len(sessions), "sessions": sessions,
-                                            "opencode_tabs": opencode_tabs.catalog_meta(conn),
+                                            "opencode_poll_ok": _active_cached.get("opencode_poll_ok", False),
                                             "background_jobs": background,
                                             "recent_closed": active.recently_closed(
                                                 conn, {s["session_id"] for s in sessions}
@@ -440,18 +442,13 @@ class Handler(BaseHTTPRequestHandler):
                 if url.path.startswith("/api/active/feed/"):
                     sid = url.path.rsplit("/", 1)[-1]
                     kind = agents.session_agent(conn, sid)
+                    if kind is None and agents.valid_id(agents.OPENCODE, sid):
+                        kind = agents.OPENCODE
                     if not agents.valid_id(kind if kind is not None else agents.CLAUDE, sid):
                         return self._json(400, {"error": msg("server.bad_session_id")})
-                    if kind is not None:
-                        agents.require(kind, (agents.CLAUDE, agents.CODEX), "active feed")
-                    path = active.live_transcript(conn, sid, index.PROJECTS_ROOT)
-                    kind = kind if kind is not None else agents.transcript_agent(path)
-                    if not path:
-                        return self._json(404, {"error": msg("server.no_session")})
-                    if (query.get("view") or [""])[0] == "files":
-                        return self._json(200, dict(touched.session_files(path, agent=kind), session_id=sid,
-                                                    home=os.path.expanduser("~")))
-                    turns = (query.get("turns") or [str(feed.DEFAULT_TURNS)])[0]
+                    view = (query.get("view") or [""])[0]
+                    turns = (query.get("turns") or [""])[0]
+                    turns = int(turns) if turns.isdigit() and len(turns) <= 4 else feed.DEFAULT_TURNS
 
                     def stamp(name: str) -> str | None:
                         return next((v for v in query.get(name) or [] if TIMESTAMP.fullmatch(v)), None)
@@ -459,10 +456,22 @@ class Handler(BaseHTTPRequestHandler):
                     def turn_id(name: str) -> str | None:
                         return next((v for v in query.get(name) or [] if TURN_ID.fullmatch(v)), None)
 
-                    page = feed.feed_page(path, int(turns) if turns.isdigit() else feed.DEFAULT_TURNS,
-                                          with_events=(query.get("view") or [""])[0] == "steps",
-                                          before=stamp("before"), since=stamp("since"),
-                                          before_id=turn_id("before_id"), since_id=turn_id("since_id"), agent=kind)
+                    cursors = {"before": stamp("before"), "since": stamp("since"),
+                               "before_id": turn_id("before_id"), "since_id": turn_id("since_id")}
+                    if kind == agents.OPENCODE:
+                        page = opencode_feed.read(sid, view, turns, **cursors)
+                        return (self._json(200, dict(page, session_id=sid)) if page is not None
+                                else self._json(404, {"error": msg("server.no_session")}))
+                    if kind is not None:
+                        agents.require(kind, (agents.CLAUDE, agents.CODEX), "active feed")
+                    path = active.live_transcript(conn, sid, index.PROJECTS_ROOT)
+                    kind = kind if kind is not None else agents.transcript_agent(path)
+                    if not path:
+                        return self._json(404, {"error": msg("server.no_session")})
+                    if view == "files":
+                        return self._json(200, dict(touched.session_files(path, agent=kind), session_id=sid,
+                                                    home=os.path.expanduser("~")))
+                    page = feed.feed_page(path, turns, with_events=view == "steps", agent=kind, **cursors)
                     return self._json(200, dict(page, session_id=sid))
                 if url.path.startswith("/api/active/plan/"):
                     sid = url.path.rsplit("/", 1)[-1]
@@ -506,12 +515,32 @@ class Handler(BaseHTTPRequestHandler):
         url = urlparse(self.path)
         # A base64 image is larger than a normal request: the limit is raised only for uploads.
         body = self._body(UPLOAD_BODY_LIMIT if url.path == "/api/upload" else 1_000_000)
+        if not isinstance(body, dict):
+            return self._json(400, {"error": msg("server.no_path")})
+        if url.path.startswith("/api/opencode/active/"):
+            try:
+                operation = url.path.rsplit("/", 1)[-1]
+                result = opencode_live_actions.run(operation, body)
+                if operation != "reply-check":
+                    with _active_lock:
+                        _active_cached["at"] = 0.0
+                return self._json(200, result)
+            except opencode_service.ServiceError as exc:
+                if exc.state == "live_stale":
+                    with _active_lock:
+                        _active_cached["at"] = 0.0
+                result = {"error": str(exc), "state": exc.state}
+                if isinstance(exc, opencode_live_actions.StaleGeneration):
+                    result["reason"] = "generation_changed"
+                return self._json(400 if exc.status == 400 else 409, result)
         session_id = body.get("session_id", "")
         conn = db.connect()
         try:
             if url.path != "/api/override" and session_id:
                 # On conversion POSTs body.agent is the target. The catalog owns the source kind.
                 kind = agents.session_agent(conn, session_id)
+                if kind is None and url.path == "/api/opencode/resume" and agents.valid_id(agents.OPENCODE, session_id):
+                    kind = agents.OPENCODE
                 if not agents.valid_id(kind if kind is not None else agents.CLAUDE, session_id):
                     return self._json(400, {"error": msg("session_id.invalid")})
                 if kind == agents.OPENCODE:
@@ -704,12 +733,18 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(400, {"error": msg("server.need_confirm")})
         if body.get("backend") != backend:          # the user confirmed another agent in the preview
             return self._agent_refused(body, backend)
+        fallback = body.get("fallback_model")
+        if fallback and (fallback != runner.artifact_fallback(backend)
+                         or body.get("content_hash") != payload["content_hash"]):
+            return self._json(409, {"error": msg("server.artifact_changed")})
         runner.grant_egress(conn, session_id, payload["content_hash"], kind, backend, model)
+        if fallback:
+            runner.grant_egress(conn, session_id, payload["content_hash"], kind, runner.CODEX_BACKEND, fallback)
         job_id, created = actions.claim_job(conn, session_id, kind, payload["content_hash"])
         if created:
             threading.Thread(target=_run_job, daemon=True,
                              args=(job_id, session_id, kind, backend, model,
-                                   messages.request_lang())).start()
+                                   messages.request_lang(), bool(fallback))).start()
         self._json(200, {"job_id": job_id, "created": created})
 
     def _agent_refused(self, body, backend: str) -> None:

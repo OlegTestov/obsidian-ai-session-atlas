@@ -5,10 +5,8 @@
 AI Session Atlas is an Obsidian plugin for macOS that brings Claude Code, Codex and OpenCode 2
 sessions into one searchable catalog. Search and Statistics (tokens and cost) cover all three agents,
 and each runs in an Obsidian terminal tab that reopens the same session after a restart. Active shows
-live cards you can answer from for Claude Code and Codex. For OpenCode, it shows a card for each
-running Atlas tab with its title, folder, **Go** and **Close**. Everything runs locally: the plugin
-starts a small Python server on `127.0.0.1`, and nothing is sent anywhere unless you turn on the
-optional AI features.
+live cards for all three agents, with replies from sessions that are open in Atlas tabs. The plugin
+runs a small Python server on `127.0.0.1`. Atlas's optional AI features send data only when enabled.
 
 ![AI Session Atlas: live agent cards, search, statistics, rhythm and limits (demo data)](https://github.com/OlegTestov/obsidian-ai-session-atlas/raw/main/docs/images/collage-en.png)
 
@@ -46,9 +44,9 @@ optional AI features.
   **Steps** shows tools, commands and errors in order. **Files** shows which files the agent read or changed.
   Each card also shows the agent's task list or plan checklist. You can move a session from another
   terminal app into an Obsidian tab. The header shows Claude Code and Codex subscription limits when
-  known. An OpenCode tab card shows the title, folder, **Go** and **Close**. OpenCode support does
-  not yet include live card content or replies, Agent Mail in Atlas OpenCode tabs, AI summaries,
-  AI classification, **Resume with…**, or subscription limits.
+  known. OpenCode cards show the latest settled response, waiting decisions, queued replies and
+  context usage when the model limit is available. Use **Move** to open a running OpenCode session
+  in Atlas while its other clients stay open.
 - **Statistics.** Tokens, active time, cost at API prices and cache hit rate over a period, broken
   down by agent (Claude Code, Codex, OpenCode), model, category, topic, session, tool, skill and
   subagent, plus a weekly rhythm heatmap. Claude Code replies are priced at Anthropic API prices,
@@ -161,7 +159,7 @@ Checked with codex-cli 0.167.0. Differences from Claude Code:
 
 ### OpenCode support
 
-Search, Statistics and terminal tabs support OpenCode 2. Atlas was checked with **OpenCode 2.3.2**.
+Search, Active, Statistics and terminal tabs support OpenCode 2. Atlas was checked with **OpenCode 2.3.2**.
 
 - **Sessions.** Atlas opens `opencode.db` read-only and never writes to it directly. The default
   location is `~/.local/share/opencode/opencode.db` or `$XDG_DATA_HOME/opencode/opencode.db` when set.
@@ -182,12 +180,20 @@ Search, Statistics and terminal tabs support OpenCode 2. Atlas was checked with 
   reopens a session in its own folder.
   With OpenCode 2.3.2, Atlas tracks the tab's session as you use `/new`, `/sessions` and `/fork`, so
   the tab can reopen its last session after a restart.
+- **Active.** Cards show running sessions on the managed service and sessions open in Atlas tabs.
+  Idle sessions outside Atlas tabs stay available in Search. From an Atlas tab's card you can allow
+  a permission once or reject it, answer or dismiss a question, interrupt a run, and queue a text
+  reply. A queued reply leaves any unsent text in the terminal composer intact. The detailed card
+  offers Conversation, Steps and Files. Terminal is available when the session is open in Atlas.
+  Agent Mail, AI summaries and classification, **Resume with…**, and subscription limits are still
+  unavailable for OpenCode.
 - **Copy session** creates a native fork through the local OpenCode service and opens it in a new tab.
   **Rename**, **Archive**, **Unarchive** and **Delete** also go through OpenCode, and Atlas reads back
   the result. The Delete confirmation lists the child sessions that OpenCode will also remove.
 - **Local service.** Indexing and Search read the database without starting OpenCode. Status and
-  the Delete availability check may query a running service. Opening an Atlas OpenCode tab or using
-  a native session action can start OpenCode's managed service when it is stopped. Atlas verifies
+  the Delete availability check can query a running service. Active also checks the service without
+  starting it. Opening an Atlas tab or using a native session action can start the managed service
+  when it is stopped. Atlas verifies
   that the service uses the catalog's database. Atlas connects only over loopback and leaves
   `OPENCODE_PASSWORD` and `OPENCODE_SERVER_PASSWORD` out of the terminal client's environment.
 
@@ -564,6 +570,7 @@ service, stop it using OpenCode after closing its clients.
 | A running Codex session is missing from Active | Only interactive terminal clients are shown. Plugin tabs use `--no-daemon` when available. For external clients using a shared server, only an explicit `codex resume <id>` can be matched; switching threads inside that external client cannot be tracked reliably. Restart that client with `codex --no-daemon resume <id>` for full tracking. The shared server is never stopped by Move. |
 | OpenCode sessions are missing from Search or Statistics | Check **Settings → AI Session Atlas → Status → OpenCode**. OpenCode 1 databases are unsupported. Upgrade to OpenCode 2 or point **OpenCode data folder** at the folder containing your OpenCode 2 `opencode.db`, then press **Rescan** and check the **Agent** filter. |
 | OpenCode or its service cannot be found or verified | Put `opencode` (or `opencode2`) and `lsof` on the login shell `PATH`. Check that the OpenCode 2 managed service runs locally with the same data folder as Atlas. If it is stopped, opening a tab or choosing a native session action can start it. |
+| An OpenCode terminal still shows a permission after **Stop** | OpenCode 2.3.2 can leave a stale permission dialog visible after the run has stopped. Reconnect the terminal client to refresh its screen. |
 
 ## Development
 

@@ -132,6 +132,7 @@ async function restoreAll() {
 // ends the session where it runs, and only then it opens here.
 
 function canMove(s, pid) {
+  if (s.agent === "opencode") return EMBEDDED && hostReady && !pid && s.opencode_running === true;
   // Unknown app: it may be Obsidian itself, so ending it blindly is not offered.
   return EMBEDDED && hostReady && !pid && !!s.host_app && s.host_app !== "Obsidian";
 }
@@ -139,12 +140,34 @@ function canMove(s, pid) {
 function moveButton(s, mini) {
   const b = el("button", "primary" + (mini ? " mini" : ""), i18n("active.move"));
   b.type = "button";
-  b.title = i18n("active.moveHint", { app: s.host_app || i18n("active.otherTerminal") });
+  b.title = s.agent === "opencode" ? i18n("opencode.moveHint") : i18n("active.moveHint", { app: s.host_app || i18n("active.otherTerminal") });
   b.addEventListener("click", e => { e.stopPropagation(); confirmMove(s); });
   return b;
 }
 
 function confirmMove(s) {
+  if (s.agent === "opencode") {
+    modal(i18n("active.moveTitle"), i18n("opencode.moveBody", { title: s.title }), "",
+      i18n("active.move"), async () => {
+        const button = $("#m-ok");
+        const dialog = $("#modal");
+        const callback = button.onclick;
+        const isCurrent = () => dialog.open && button.onclick === callback;
+        button.disabled = true;
+        try {
+          const data = await api("/api/opencode/resume", { session_id: s.session_id });
+          if (!await openCodeInTab(data, s.title, crypto.randomUUID())) throw new Error(i18n("opencode.openFailed"));
+          if (isCurrent()) dialog.close();
+          window.setTimeout(loadActive, 2000);
+        } catch (error) {
+          if (!isCurrent()) return;
+          $("#m-note").textContent = error.message;
+          button.disabled = false;
+        }
+      });
+    $("#m-copy").classList.add("hidden");
+    return;
+  }
   const busy = ["busy", "background"].includes(s.activity || s.status);
   modal(i18n("active.moveTitle"),
     i18n(busy ? "active.moveBodyBusy" : "active.moveBody",

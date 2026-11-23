@@ -210,6 +210,7 @@
       "actions.resumeSession": "Resume session",
       "actions.openInObsidian": "Open in an Obsidian tab",
       "actions.openInTerminal": "Open in terminal",
+      "actions.limitFallback": "\n\nIf Claude Code hits its usage limit, the same excerpt will be sent to Codex ({model}).",
       "actions.localModel": "a local model",
       "actions.externalModel": "{agent}, model {model}",
       "actions.previewNote": "{chars} characters (~{mb} MB, about {k}k tokens) will be sent to {where}. "
@@ -499,6 +500,7 @@
       "actions.resumeSession": "Продолжить сессию",
       "actions.openInObsidian": "Открыть во вкладке Obsidian",
       "actions.openInTerminal": "Открыть в терминале",
+      "actions.limitFallback": "\n\nЕсли у Claude Code закончится лимит, тот же фрагмент будет отправлен в Codex ({model}).",
       "actions.localModel": "локальную модель",
       "actions.externalModel": "{agent}, модель {model}",
       "actions.previewNote": "Будет отправлено в {where}: {chars} символов (~{mb} МБ, примерно {k}k токенов). Состав — {parts}. Конфиденциальность: {sensitivity}.",

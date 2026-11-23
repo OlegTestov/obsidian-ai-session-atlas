@@ -105,7 +105,7 @@ body{margin:0;font:14px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",syste
 /* A compact card waiting on a decision gives the cost line's room to the strip. */
 .agrid:not(.full) .acard.waiting>.nums{display:none}
 /* The strip already names what is asked: the dialog's own title line would only repeat it. */
-.acard.waiting>.dialog>.t{display:none}
+.acard.waiting>.dialog>.t:not(.oc-permission-title){display:none}
 .acard.sel{outline:2px solid var(--accent);outline-offset:1px}
 /* Finished while you were away: a dot before the title and the title in bold. */
 .acard .head .unread-dot{flex:0 0 auto;width:8px;height:8px;border-radius:50%;background:var(--accent);cursor:help}
@@ -698,3 +698,9 @@ button.stop{color:var(--warn);border-color:var(--warn)}
 
 .crow.background-commands { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); }
 .crow.background-commands .cm { white-space: normal; overflow-wrap: anywhere; }
+.oc-form fieldset{border:0;padding:0;margin:0 0 8px;min-width:0}
+.oc-form legend{font-weight:600;padding:0}
+.oc-choice{display:flex;align-items:center;gap:5px;width:fit-content;max-width:100%}
+.oc-custom{box-sizing:border-box;max-width:100%;margin-top:4px}
+.oc-custom-row{display:flex;align-items:baseline;gap:5px}
+.oc-custom-row .oc-custom{min-width:0}

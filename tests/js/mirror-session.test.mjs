@@ -91,6 +91,44 @@ describe("input verification", () => {
   });
 });
 
+describe("route-bound mirrors", () => {
+  it("ends before sending new-route output", async () => {
+    let bound = true;
+    const m = await started({ bound: () => bound });
+    m.session.accept({ type: "data", text: "original session" });
+    bound = false;
+    m.session.accept({ type: "data", text: "different session" });
+    assert.deepEqual(m.posted.slice(1), [{ type: "data", text: "original session" }, { type: "exit" }]);
+    assert.equal(m.subscribers.size, 0);
+  });
+
+  it("checks the current route even during the input verification freshness window", async () => {
+    let bound = true;
+    const m = await started({ bound: () => bound });
+    m.session.command({ type: "input", text: "original session" });
+    bound = false;
+    m.session.command({ type: "input", text: "different session" });
+    assert.deepEqual(m.writes, ["original session"]);
+    assert.deepEqual(m.verifies, []);
+    assert.deepEqual(m.posted.at(-1), { type: "exit", unavailable: true });
+  });
+
+  it("drops queued input if the route changes while verification is pending", async () => {
+    let bound = true;
+    let release;
+    const m = await started({ bound: () => bound });
+    m.clock.t += 1500;
+    m.state.gate = new Promise(resolve => { release = resolve; });
+    m.session.command({ type: "input", text: "queued" });
+    await tick();
+    bound = false;
+    release();
+    await tick();
+    assert.deepEqual(m.writes, []);
+    assert.deepEqual(m.posted.at(-1), { type: "exit", unavailable: true });
+  });
+});
+
 describe("input limits", () => {
   it("one input message may carry up to 1 MiB; a larger one is dropped whole", async () => {
     const m = await started();

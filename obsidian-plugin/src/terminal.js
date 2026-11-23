@@ -260,10 +260,33 @@ class TerminalMethods {
       if (existing) return waitForOpenCodeSession(this.dataDir(), existing.leaf, existing.instance, launch.sessionId);
       return this.openAgent(launch.agent, { cwd: launch.cwd, seed: launch, label });
     }
-    if (launch && launch.mode === "resume" && this.revealSessionTab(launch.sessionId)) return true;
+    if (launch?.mode === "resume") {
+      if (this.revealSessionTab(launch.sessionId)) return true;
+      // A second handoff can arrive before the launcher writes the session to the tab registry.
+      this.pendingSessionResumes ??= new Map();
+      const key = `${launch.agent}:${launch.sessionId}`;
+      const pending = this.pendingSessionResumes.get(key);
+      if (pending) return pending;
+      const opening = Promise.resolve().then(() =>
+        this.openCatalogCommand(command, cwd, label, launch));
+      this.pendingSessionResumes.set(key, opening);
+      try {
+        return await opening;
+      } finally {
+        this.pendingSessionResumes.delete(key);
+      }
+    }
     // A background job already shown in a tab: that tab, not a second view of the same conversation.
     if (launch && launch.mode === "attach" && (await this.revealJobTab(launch.sessionId))) return true;
-    if (launch && await this.openAgent(launch.agent, { cwd: launch.cwd, seed: launch, label })) return true;
+    return this.openCatalogCommand(command, cwd, label, launch);
+  }
+
+  async openCatalogCommand(command, cwd, label, launch) {
+    if (launch) {
+      const opened = await this.openAgent(launch.agent, { cwd: launch.cwd, seed: launch, label });
+      // A partial managed launch can already have started a process. Its failure owns the cleanup.
+      if (opened !== false) return opened === true;
+    }
     try {
       const leaf = this.app.workspace.getLeaf("tab");
       await leaf.setViewState({
@@ -273,9 +296,11 @@ class TerminalMethods {
       });
       this.app.workspace.revealLeaf(leaf);
       new Notice(this.t("terminal.opened", { label }));
+      return true;
     } catch (error) {
       console.error(error);
       new Notice(this.t("terminal.failed", { error: error.message }));
+      return false;
     }
   }
 

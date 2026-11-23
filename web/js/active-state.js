@@ -69,7 +69,7 @@ function fmtShort(iso) {
 // Tab buttons only while the plugin is connected: outside Obsidian they have no target.
 function tellTabHost(type, payload) {
   if (!hostReady) return false;
-  window.parent.postMessage(Object.assign({ source: "session-atlas", type }, payload), "*");
+  window.parent.postMessage(Object.assign({ source: PAGE_SOURCE, type }, payload), "*");
   return true;
 }
 

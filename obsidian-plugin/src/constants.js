@@ -17,6 +17,7 @@ const TERMINAL_STATE_KEY = "terminal:terminal";
 
 const TAB_CLOSE_SELECTOR = ".workspace-tab-header-inner-close-button";
 const HOST_SOURCE = "session-atlas-host";
+const PAGE_SOURCE = "session-atlas";
 const PTY_WAIT_MS = 1000;
 const CLAUDE_DIR = process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude");
 const SESSIONS_DIR = path.join(CLAUDE_DIR, "sessions");
@@ -47,6 +48,7 @@ export {
   TERMINAL_STATE_KEY,
   TAB_CLOSE_SELECTOR,
   HOST_SOURCE,
+  PAGE_SOURCE,
   PTY_WAIT_MS,
   SESSIONS_DIR,
   PROJECTS_DIR,

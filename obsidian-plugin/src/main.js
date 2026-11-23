@@ -10,6 +10,7 @@ import {
   DEV_PORT,
   DEV_MARKER,
   HOST_SOURCE,
+  PAGE_SOURCE,
 } from "./constants";
 import { TerminalMethods } from "./terminal";
 import { codexQueued, codexScreenState } from "./dialog-codex";
@@ -231,10 +232,16 @@ class SessionAtlasPlugin extends PluginData {
 
   // --- bridge to the terminal ---
 
+  /** Names this plugin instance to the pages it opens: an instance left behind by a failed reload must not act too. */
+  hostId() {
+    this.pageHostId ??= crypto.randomUUID();
+    return this.pageHostId;
+  }
+
   handleMessage(event) {
     if (event.origin !== this.atlasOrigin()) return;
     const data = event.data;
-    if (!data || data.source !== "session-atlas") return;
+    if (!data || (data.source !== PAGE_SOURCE && data.source !== `${PAGE_SOURCE}:${this.hostId()}`)) return;
     if (data.type === "resume" || data.type === "new-session") {
       if (typeof data.command !== "string" || !data.command) return;
       const opened = this.openCommandInTerminal(data.command, data.cwd, data.title || "Claude");

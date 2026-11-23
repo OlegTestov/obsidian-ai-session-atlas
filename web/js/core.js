@@ -1,6 +1,6 @@
 // Shared code: API, date formatting, the address bar, search filter chips.
 // Classic script: shares one global scope with the other page files.
-/* exported tellHost, LOW_CONFIDENCE, facets, api, fmtDateTime, ago, segmented -- used by other page scripts */
+/* exported tellHost, PAGE_SOURCE, LOW_CONFIDENCE, facets, api, fmtDateTime, ago, segmented -- used by other page scripts */
 /* exported loadStored, store, segButtons, hitSummary, renderPlan, writeHash -- used by other page scripts */
 /* exported readHash, query, renderChips -- used by other page scripts */
 const TOKEN = window.ATLAS_TOKEN;          // from the page's inline script
@@ -11,10 +11,12 @@ const el = (tag, cls, text) => { const n = document.createElement(tag);
 // Inside Obsidian the page lives in a frame: the action goes to the plugin, which opens
 // a terminal tab next to it instead of a person copying the command by hand.
 const EMBEDDED = window.parent !== window;
+// Addressed to the plugin instance that opened this frame; an older instance still loaded ignores it.
+const PAGE_SOURCE = ["session-atlas", new URLSearchParams(location.search).get("host")].filter(Boolean).join(":");
 
 function tellHost(type, payload) {
   if (!EMBEDDED) return false;
-  window.parent.postMessage(Object.assign({ source: "session-atlas", type }, payload), "*");
+  window.parent.postMessage(Object.assign({ source: PAGE_SOURCE, type }, payload), "*");
   return true;
 }
 const LOW_CONFIDENCE = 0.6;

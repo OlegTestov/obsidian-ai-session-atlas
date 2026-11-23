@@ -106,7 +106,8 @@ class AtlasView extends ItemView {
       this.visibilityChanged(container.clientWidth > 0, true);
     });
     // The page language matches the plugin: Obsidian's language or the one chosen in settings.
-    frame.src = this.plugin.atlasOrigin() + "/?lang=" + this.plugin.lang() + "&host_visibility=1" + (this.hash || "");
+    frame.src = this.plugin.atlasOrigin() + "/?lang=" + this.plugin.lang() + "&host_visibility=1"
+      + "&host=" + encodeURIComponent(this.plugin.hostId()) + (this.hash || "");
   }
 }
 

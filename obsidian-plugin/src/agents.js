@@ -265,6 +265,7 @@ class AgentMethods {
    * into that session group.
    */
   async openAgent(kind, opts = {}) {
+    let leaf, started = false;
     try {
       terminalAgent(kind);
       const script = this.agentScriptPath();
@@ -273,7 +274,7 @@ class AgentMethods {
         return false;
       }
       const instance = newInstanceId(kind);
-      const leaf = this.app.workspace.getLeaf("tab");
+      leaf = this.app.workspace.getLeaf("tab");
       if (!opts.group) this.placeOutsideGroup(leaf);
       const openCode = kind === "opencode" ? { firstPrompt: opts.seed?.prompt || "", seedId: opts.seed?.sessionId || "" } : {};
       await leaf.setViewState({
@@ -282,6 +283,7 @@ class AgentMethods {
         state: { kind, instance, cwd: opts.cwd || this.getVaultPath(), title: opts.label || getAgent(kind).label,
                  command: agentArgs(script, kind, instance, opts.seed || null)[3], ...openCode },
       });
+      started = true;
       if (opts.group) this.joinGroup(leaf, opts.group);
       this.app.workspace.revealLeaf(leaf);
       if (kind === "opencode") {
@@ -292,9 +294,11 @@ class AgentMethods {
       if (opts.label) new Notice(this.t("terminal.opened", { label: opts.label }));
       return true;
     } catch (error) {
+      if (!started) leaf?.detach?.();
       console.error(error);
       new Notice(this.t("terminal.failed", { error: error.message }));
-      return false;
+      // A catalog launch may use a shell fallback only if no managed leaf was allocated.
+      return leaf ? null : false;
     }
   }
 }

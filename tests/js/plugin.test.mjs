@@ -159,7 +159,7 @@ const good = {
 
 it("reports the Atlas iframe's initial pane visibility and both resize transitions", async () => {
   const messages = [];
-  const host = { atlasOrigin: () => good.origin, lang: () => "en", ensureServer: async () => true };
+  const host = { atlasOrigin: () => good.origin, hostId: () => "instance 1", lang: () => "en", ensureServer: async () => true };
   const view = new AtlasView({}, host);
   const frame = {
     addEventListener(type, fn) { this[type] = fn; },
@@ -177,6 +177,7 @@ it("reports the Atlas iframe's initial pane visibility and both resize transitio
     await view.renderOnce();
     await view.onOpen();
     assert.equal(new URL(frame.src).searchParams.get("host_visibility"), "1");
+    assert.equal(new URL(frame.src).searchParams.get("host"), "instance 1");
     assert.deepEqual(messages, []);
     frame.load();
     view.contentEl.clientWidth = 300;
@@ -213,6 +214,19 @@ describe("catalog commands run only from the catalog", () => {
       assert.equal(opened.length > before, shouldRun);
     });
   }
+
+  it("acts on messages addressed to this instance and ignores another instance's", () => {
+    const other = new SessionAtlasPlugin();
+    assert.notEqual(other.hostId(), plugin.hostId());
+    assert.equal(plugin.hostId(), plugin.hostId());
+    const addressed = id => ({ ...good, data: { ...good.data, source: `session-atlas:${id}` } });
+    const before = opened.length;
+    plugin.handleMessage(addressed(other.hostId()));
+    plugin.handleMessage(addressed(""));
+    assert.equal(opened.length, before, "a page of another instance");
+    plugin.handleMessage(addressed(plugin.hostId()));
+    assert.equal(opened.length, before + 1, "its own page");
+  });
 
   it("passes the command unchanged", () => {
     assert.equal(opened[0].command, good.data.command);
@@ -2805,6 +2819,46 @@ describe("Codex resume from the catalog and after a restart", () => {
     const w = agents.shellWords(states[0].state.command);
     assert.equal(states[0].state.kind, "codex");
     assert.deepEqual(w.slice(2, 3).concat(w.slice(4)), ["codex", "resume", ID]);
+  });
+
+  it("does not open a shell tab if a managed Codex resume fails after creating its leaf", async () => {
+    const p = new SessionAtlasPlugin();
+    const leaves = new Set();
+    p.agentScriptPath = () => SCRIPT;
+    p.settings = { language: "en" };
+    p.app = { workspace: {
+      getLeaf() {
+        const leaf = {
+          async setViewState(state) {
+            if (state.state.kind === "codex") throw new Error("managed terminal failed after creating its leaf");
+          },
+          detach() { leaves.delete(leaf); },
+        };
+        leaves.add(leaf);
+        return leaf;
+      },
+      revealLeaf() {},
+    }};
+    assert.equal(await p.openCommandInTerminal(`cd /tmp && codex resume ${ID}`, "/tmp", "Converted session"), false);
+    assert.equal(leaves.size, 0);
+  });
+
+  it("opens one Codex tab when a second resume arrives before the first registers", async () => {
+    const p = new SessionAtlasPlugin();
+    let finish;
+    const pending = new Promise(resolve => { finish = resolve; });
+    const opened = [];
+    p.openAgent = async (kind, opts) => {
+      opened.push([kind, opts.seed.sessionId]);
+      await pending;
+      return true;
+    };
+    const command = `cd /tmp && codex resume ${ID}`;
+    const first = p.openCommandInTerminal(command, "/tmp", "Converted session");
+    const second = p.openCommandInTerminal(command, "/tmp", "Converted session");
+    finish();
+    assert.deepEqual(await Promise.all([first, second]), [true, true]);
+    assert.deepEqual(opened, [["codex", ID]]);
   });
 
   // The tab script with a stand-in codex: the start is recorded, so the tab gets it back later.

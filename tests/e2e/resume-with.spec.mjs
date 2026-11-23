@@ -101,6 +101,17 @@ async function expectLinked(frame, lang, copy, source, sourceAgent, copyAgent) {
   expect(await frame.locator("#list").evaluate(() => location.hash)).toContain(source);
 }
 
+test("every message of an embedded page names the plugin instance that opened it", async ({ page, lang }) => {
+  const body = `<!doctype html><html><body><iframe id="atlas" src="/?lang=${lang}&host=instance-1" style="width:900px;height:600px"></iframe>
+<script>window.sources = []; window.addEventListener("message", e => window.sources.push(e.data?.source));</script></body></html>`;
+  await page.route(HOST, route => route.fulfill({ contentType: "text/html; charset=utf-8", body }));
+  await page.goto(HOST);
+  await expect.poll(() => page.evaluate(() => window.sources.length)).toBeGreaterThan(0);
+  await page.frameLocator("#atlas").locator("#view-active").click();
+  await expect.poll(() => page.evaluate(() => window.sources.length)).toBeGreaterThan(1);
+  expect([...new Set(await page.evaluate(() => window.sources))]).toEqual(["session-atlas:instance-1"]);
+});
+
 test("a Claude Code session continues in Codex as a new Codex thread", async ({ page, lang }) => {
   const frame = await openCard(page, lang, ids.claudeMain);
   await frame.locator("#rw-button").click();

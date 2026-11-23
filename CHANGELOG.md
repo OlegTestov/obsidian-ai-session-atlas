@@ -7,6 +7,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.18.2] - 2026-11-23
+
+### Fixed
+
+- A button in the catalog acts once even when a failed plugin reload left an older copy running: "Resume with…" no longer opens two tabs.
+- Repeated session handoffs no longer open duplicate terminal tabs while the first tab is starting.
+
 ## [2.18.1] - 2026-11-23
 
 ### Changed

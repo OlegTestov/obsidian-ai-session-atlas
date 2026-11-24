@@ -84,16 +84,22 @@ def test_answer_after_last_visit_uses_completion_in_live_and_catalog(monkeypatch
         data = {"time": {"completed": 460000}, "content": [{"type": "text", "text": "answer"}]}
         database.execute("INSERT INTO session_message VALUES ('msg_1', ?, 'assistant', 1, 400000, ?)",
                          (SID, json.dumps(data)))
+        database.executemany("INSERT INTO session_message VALUES (?, ?, ?, ?, ?, ?)", [
+            ("prompt", SID, "user", 0, 220000, '{"text":"question"}'),
+            ("overlap", SID, "assistant", 2, 420000, '{"time":{"completed":440000}}'),
+        ])
         messages = live._messages(database, SID)
         session = {"id": SID, "fork_session_id": None, "parent_id": None, "title": "Test", "version": "2.3.2",
                    "directory": "/fixture", "time_created": 1000, "time_updated": 460000}
-        facts = parse.project(session, database.execute("SELECT * FROM session_message"))
+        facts = parse.project(session, database.execute("SELECT * FROM session_message ORDER BY seq"))
     monkeypatch.setattr(live.search, "_load_session", lambda *_: None)
     card = live._card(None, None, messages, {}, SID, 42, None, live.LiveService())
     visit = active._as_datetime(active._iso_ms(430000))
     assert card["reply_at"] == card["last_message_at"] == active._iso_ms(460000)
     assert active._as_datetime(card["last_message_at"]) > visit
     assert active._as_datetime(facts.activity["msg_1"]["ts"]) > visit
+    assert facts.activity["msg_1"]["active_s"] == 240
+    assert facts.activity["overlap"]["active_s"] == 0
 
 
 @pytest.mark.parametrize("change", ["registration", "database"])

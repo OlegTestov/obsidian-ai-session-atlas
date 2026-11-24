@@ -14,7 +14,7 @@ from . import agents, config, db
 DATABASE = "opencode.db"
 STATE = "opencode_state"
 FINGERPRINT = "opencode_fingerprint"
-VERSION = 5
+VERSION = 6
 SESSION = ("id", "title", "directory", "version", "parent_id", "fork_session_id", "fork_boundary",
            "time_created", "time_updated", "time_archived")
 MESSAGE = ("id", "session_id", "type", "seq", "time_created", "time_updated", "data")
@@ -185,6 +185,8 @@ def _index_refs(conn, refs, _home, known, present, stats, full, _paced, _protect
         answer = facts.last_completed_answer
         conn.execute("INSERT OR REPLACE INTO opencode_details VALUES (?,?,?)",
                      (facts.session_id, bool(archived), " ".join(answer.split())[:600]))
+        conn.execute("INSERT OR REPLACE INTO opencode_answer_times VALUES (?,?)",
+                     (facts.session_id, facts.last_completed_answer_at))
     stats["indexed"] += len(changed)
     stats["full"] += len(changed)
     stats["seen"] += len(found)

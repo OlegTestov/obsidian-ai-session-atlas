@@ -1,6 +1,7 @@
 """Local stdlib server. 127.0.0.1 is not a trust boundary, so there are many checks here."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -13,6 +14,7 @@ import tempfile
 import threading
 import time
 import traceback
+from collections import OrderedDict
 from contextlib import closing
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
@@ -25,6 +27,7 @@ from . import (
     autoclassify,
     classify,
     codex_commands,
+    codex_exec,
     codex_live,
     commands,
     config,
@@ -272,15 +275,19 @@ def background_sessions(conn) -> list[dict]:
 
 
 def _run_job(job_id: str, session_id: str, artifact_kind: str, backend: str, model: str,
-             lang: str = messages.DEFAULT, allow_fallback: bool = False) -> None:
+             lang: str = messages.DEFAULT, allow_fallback: bool = False,
+             confirmed_payload: dict | None = None, fallback_effort: str | None = None,
+             primary_effort: str | None = None) -> None:
     conn = db.connect()
     try:
         messages.set_lang(lang, remember=False)     # a background thread has no request
         actions.set_job_state(conn, job_id, "running")
-        result = enrich.produce(conn, session_id, artifact_kind, job_id,
-                                backend=backend, model=model, allow_fallback=allow_fallback)
-        actions.set_job_state(conn, job_id, "done", result=json.dumps(result, ensure_ascii=False))
+        enrich.produce(conn, session_id, artifact_kind, job_id,
+                       backend=backend, model=model, allow_fallback=allow_fallback,
+                       confirmed_payload=confirmed_payload, fallback_effort=fallback_effort,
+                       primary_effort=primary_effort, finish_job=True)
     except Exception as exc:
+        conn.rollback()
         actions.set_job_state(conn, job_id, "failed", error=f"{type(exc).__name__}: {exc}")
     finally:
         conn.close()
@@ -718,8 +725,20 @@ class Handler(BaseHTTPRequestHandler):
         return data
 
     def _preview(self, conn, body) -> None:
-        self._json(200, enrich.preview(conn, body["session_id"],
-                                       body.get("artifact_kind", "handoff")))
+        sid = body["session_id"]
+        kind = body.get("artifact_kind", "handoff")
+        backend = runner.backend()
+        payload = runner.build_payload(conn, sid, kind, prepare_retry=backend == runner.CLAUDE_BACKEND)
+        preview = enrich.preview(conn, sid, kind, backend=backend, payload=payload)
+        key = (sid, kind, preview["excerpt_hash"], preview["content_hash"], backend,
+               preview["model_id"], preview["effort"])
+        with self.server.artifact_preview_lock:
+            entries, now = self.server.prune_artifact_previews()
+            entries[key] = (now, payload, preview["sensitivity"], preview["fallback_model"])
+            entries.move_to_end(key)
+            if len(entries) > 8:
+                entries.popitem(last=False)
+        self._json(200, preview)
 
     def _start_job(self, conn, body) -> None:
         session_id = body["session_id"]
@@ -727,24 +746,41 @@ class Handler(BaseHTTPRequestHandler):
         if kind not in actions.JOB_KINDS:
             return self._json(400, {"error": msg("server.unknown_artifact")})
         backend = runner.backend()                  # the agent comes from settings, never from the page
-        model = runner.model_for(kind, backend)[0]  # model and 1M window come only from MODELS
-        payload = runner.build_payload(conn, session_id, kind)
+        model, effort = runner.model_for(kind, backend)  # from server settings
         if body.get("confirmed") is not True:
             return self._json(400, {"error": msg("server.need_confirm")})
-        if body.get("backend") != backend:          # the user confirmed another agent in the preview
+        excerpt = body.get("excerpt_hash")
+        digest = body.get("content_hash")
+        with self.server.artifact_preview_lock:
+            entries, _ = self.server.prune_artifact_previews()
+            key = (session_id, kind, excerpt, digest, backend, model, effort)
+            saved = entries.get(key) if isinstance(excerpt, str) and isinstance(digest, str) else None
+        if "excerpt_hash" not in body:
+            return self._json(409, {"error": msg("server.page_outdated")})
+        if body.get("backend") != backend:
             return self._agent_refused(body, backend)
+        if body.get("model_id") != model or body.get("effort") != effort:
+            return self._json(409, {"error": msg("server.artifact_changed")})
         fallback = body.get("fallback_model")
-        if fallback and (fallback != runner.artifact_fallback(backend)
-                         or body.get("content_hash") != payload["content_hash"]):
+        fallback_effort = body.get("fallback_effort")
+        sensitivity = runner.sensitivity_of(conn, session_id)
+        if saved is None:
+            return self._json(409, {"error": msg("server.artifact_changed")})
+        payload = saved[1]
+        if (saved[2] != sensitivity
+                or (fallback and (fallback != saved[3]
+                                 or fallback != runner.artifact_fallback(backend, sensitivity)
+                                 or fallback_effort != codex_exec.fallback_effort(effort)))):
             return self._json(409, {"error": msg("server.artifact_changed")})
         runner.grant_egress(conn, session_id, payload["content_hash"], kind, backend, model)
         if fallback:
             runner.grant_egress(conn, session_id, payload["content_hash"], kind, runner.CODEX_BACKEND, fallback)
-        job_id, created = actions.claim_job(conn, session_id, kind, payload["content_hash"])
+        claim = hashlib.sha256(json.dumps((*key[2:], fallback, fallback_effort)).encode()).hexdigest()
+        job_id, created = actions.claim_job(conn, session_id, kind, claim)
         if created:
             threading.Thread(target=_run_job, daemon=True,
                              args=(job_id, session_id, kind, backend, model,
-                                   messages.request_lang(), bool(fallback))).start()
+                                   messages.request_lang(), bool(fallback), payload, fallback_effort, effort)).start()
         self._json(200, {"job_id": job_id, "created": created})
 
     def _agent_refused(self, body, backend: str) -> None:
@@ -976,6 +1012,18 @@ class Server(ThreadingHTTPServer):
     # The page loads ~35 scripts at once, each on its own connection (HTTP/1.0): with the standard
     # backlog of 5, macOS refuses some of them and the page comes up without a script.
     request_queue_size = 128
+
+    def __init__(self, *args, **kwargs):
+        self.artifact_previews = OrderedDict()
+        self.artifact_preview_lock = threading.Lock()
+        super().__init__(*args, **kwargs)
+
+    def prune_artifact_previews(self):
+        now = time.monotonic()
+        entries = self.artifact_previews
+        while entries and now - next(iter(entries.values()))[0] >= 1800:
+            entries.popitem(last=False)
+        return entries, now
 
 
 def serve(port: int = PORT) -> None:

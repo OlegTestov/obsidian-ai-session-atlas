@@ -25,9 +25,10 @@ def test_only_interrupted_jobs_are_failed():
     actions.interrupt_jobs(conn)
     for state, job in jobs.items():
         value = actions.get_job(conn, job)
-        assert value["state"] == (state if state in ("done", "failed") else "failed")
+        expected = {"done": "done", "cancel_requested": "cancelled"}.get(state, "failed")
+        assert value["state"] == expected
         assert value["result"] == "saved"
-        if state == "done":
+        if state in ("done", "cancel_requested"):
             assert value["error"] is None
         elif state == "failed":
             assert value["error"] == "old"

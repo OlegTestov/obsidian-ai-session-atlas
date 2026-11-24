@@ -374,10 +374,12 @@ test("OpenCode restored composers preserve the original ID when either page reco
     await pages[winner].run("sendOpenCodeReply(card, 'Original')");
     const other = pages[1 - winner];
     if (edited) other.area.value = "Edited";
-    other.page.storageEvent({ key, oldValue: JSON.stringify(original), newValue: null,
-      storageArea: other.page.localStorage });
-    assert.equal(other.area.value, edited ? "Edited" : "");
-    assert.equal(other.area.note.textContent, "");
+    if (edited) {
+      other.page.storageEvent({ key, oldValue: JSON.stringify(original), newValue: null,
+        storageArea: other.page.localStorage });
+      assert.equal(other.area.value, "Edited");
+      assert.equal(other.area.note.textContent, "");
+    }
     other.page.submitted = edited ? "Edited" : "Original";
     await other.run("sendOpenCodeReply(card, submitted)");
     assert.equal(calls[1].message_id === original.id, !edited);
@@ -405,4 +407,67 @@ test("OpenCode clears a saved reply when a newer generation already delivered it
   assert.deepEqual(calls, [["reply-check", original.id]]);
   assert.equal(storage.has(key), false);
   assert.equal(run("drafts.has('fixture')"), false);
+});
+
+test("a composer redrawn during a send allocates a new ID for a later identical message", async () => {
+  const storage = new Map();
+  const calls = [];
+  let next = firstUUID;
+  const page = replyPage(storage, [], firstUUID, ctx => {
+    ctx.crypto.randomUUID = () => next;
+    ctx.rememberSent = () => {};
+    ctx.api = async (_path, body) => {
+      calls.push(body);
+      assert.equal(vm.runInContext("openCodeComposerText('fixture')", page), "Original");
+      return { delivery: "delivered" };
+    };
+  });
+  vm.runInContext("const drafts = new Map(); const card = {session_id:'fixture', opencode_generation:'same'}", page);
+  await vm.runInContext("sendOpenCodeReply(card, 'Original')", page);
+  next = nextUUID;
+  await vm.runInContext("sendOpenCodeReply(card, 'Original')", page);
+  assert.notEqual(calls[0].message_id, calls[1].message_id);
+});
+
+test("editing an unresolved OpenCode reply preserves its ID until delivery is known", async () => {
+  const key = "atlas.opencode.reply.fixture";
+  const original = { id: "msg_0123456789abcdefabcdef0123", text: "Original", generation: "same" };
+  const storage = new Map([[key, JSON.stringify(original)]]);
+  const calls = [];
+  const page = replyPage(storage, [], nextUUID, ctx => {
+    ctx.rememberSent = () => {};
+    ctx.api = async (path, body) => {
+      calls.push([path.split("/").at(-1), body]);
+      if (!ctx.delivered) throw new Error("offline");
+      return { delivery: "delivered" };
+    };
+  });
+  const run = code => vm.runInContext(code, page);
+  run("const drafts = new Map(); const card = {session_id:'fixture', opencode_generation:'same'}");
+  run("openCodeComposerText('fixture'); drafts.set('fixture', 'Edited')");
+  await run("sendOpenCodeReply(card, 'Edited')");
+  assert.equal(JSON.parse(storage.get(key)).id, original.id);
+  assert.equal(run("drafts.get('fixture')"), "Edited");
+  assert.equal(run("sendState.get('fixture').note"), "opencode.retryOriginal");
+  assert.deepEqual(calls.map(([op, body]) => [op, body.message_id]), [["reply-check", original.id]]);
+  page.delivered = true;
+  await run("sendOpenCodeReply(card, 'Edited')");
+  assert.equal(calls[1][1].message_id, original.id);
+  assert.notEqual(calls[2][1].message_id, original.id);
+  assert.equal(calls[2][1].text, "Edited");
+});
+
+test("a removal event forgets the old restored ID even if storage already holds a replacement", () => {
+  const key = "atlas.opencode.reply.fixture";
+  const original = { id: "msg_" + "a".repeat(26), text: "Original" };
+  const storage = new Map([[key, JSON.stringify(original)]]);
+  const page = replyPage(storage, [], firstUUID, ctx => {
+    ctx.addEventListener = (event, callback) => { if (event === "storage") ctx.storageEvent = callback; };
+  });
+  const run = code => vm.runInContext(code, page);
+  run("const drafts = new Map(); openCodeComposerText('fixture')");
+  storage.set(key, JSON.stringify({ id: "msg_" + "b".repeat(26), text: "Replacement" }));
+  page.storageEvent({ key, oldValue: JSON.stringify(original), newValue: null, storageArea: page.localStorage });
+  assert.equal(run("openCodeRestoredReplies.has('fixture')"), false);
+  assert.equal(JSON.parse(storage.get(key)).text, "Replacement");
 });

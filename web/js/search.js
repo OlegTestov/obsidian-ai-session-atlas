@@ -229,7 +229,7 @@ async function watchClassify(jobId) {
     let job;
     try { job = await api("/api/job/" + jobId); }
     catch { break; }
-    if (job.state === "done" || job.state === "failed") {
+    if (job.state === "done" || job.state === "failed" || job.state === "cancelled") {
       classifyJobId = null;
       const facets = await api("/api/facets");
       bindFilters(facets);

@@ -76,9 +76,9 @@ test("a paused auto-classification shows why, a running one does not", async ({ 
 test("the summary preview names the fallback before sending", async ({ page, open, lang }) => {
   await aiOn(page);
   await page.route("**/api/preview", route => route.fulfill({ json: {
-    backend: "claude-cli", agent_name: "Claude Code", model: "Opus / low", text: "PREVIEW", chars: 7,
+    backend: "claude-cli", agent_name: "Claude Code", model: "Opus / low", model_id: "opus", effort: "low", text: "PREVIEW", chars: 7,
     sensitivity: "normal", sections: [], fallback_model: "gpt-6.2-sol", fallback_effort: "medium",
-    content_hash: "fixture-digest",
+    content_hash: "fixture-digest", excerpt_hash: "fixture-excerpt",
   } }));
   const sent = [];
   page.expectHttpError(/\/api\/job$/);
@@ -95,6 +95,6 @@ test("the summary preview names the fallback before sending", async ({ page, ope
   await expect(page.locator("#m-note")).toContainText(TX[lang].changed);
   expect(sent).toEqual([{
     session_id: ids.codexRenameEn, artifact_kind: "catalog_summary", confirmed: true, backend: "claude-cli",
-    fallback_model: "gpt-6.2-sol", content_hash: "fixture-digest",
+    model_id: "opus", effort: "low", fallback_model: "gpt-6.2-sol", fallback_effort: "medium", content_hash: "fixture-digest", excerpt_hash: "fixture-excerpt",
   }]);
 });

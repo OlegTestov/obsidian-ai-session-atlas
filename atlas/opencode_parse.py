@@ -73,8 +73,12 @@ def completed(data):
 
 
 def answer_time(message, data):
+    return completion_time(data) or message["time_created"]
+
+
+def completion_time(data):
     completed_at = _object(data.get("time")).get("completed")
-    return completed_at if type(completed_at) is int and 0 < completed_at < 4e12 else message["time_created"]
+    return completed_at if type(completed_at) is int and 0 < completed_at < 4e12 else None
 
 
 def _content(facts, turn, content):
@@ -131,12 +135,12 @@ def project(session, messages, *, fork_source_title=None) -> SessionFacts:
     for message in messages:
         facts.records += 1
         kind = message["type"]
-        timestamp = _when(message["time_created"])
         if kind not in ("user", "assistant", "compaction"):
             continue
         data = _object(json.loads(message["data"]))
+        timestamp = _when(answer_time(message, data) if kind == "assistant" else message["time_created"])
         elapsed = activity.active_part(activity.seconds_between(previous, timestamp))
-        previous = timestamp
+        previous = max(previous or timestamp, timestamp)
         key = message["id"]
         # Native 2.3.2 forks assign new IDs to their copied prefix, suffixed with the source seq.
         inherited = fork and key.endswith(f"_{message['seq']}")
@@ -155,6 +159,7 @@ def project(session, messages, *, fork_source_title=None) -> SessionFacts:
             tool_names = _content(facts, _turn(facts), data.get("content"))
             if completed(data) and len(facts.assistant_text) > text_count:
                 facts.last_completed_answer = facts.assistant_text[-1]
+                facts.last_completed_answer_at = completion_time(data)
             reply = _usage(facts, message, data, tool_names, elapsed)
             if not inherited:
                 facts.activity[key] = reply

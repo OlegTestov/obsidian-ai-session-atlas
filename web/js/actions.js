@@ -74,7 +74,8 @@ async function startArtifact(id, kind, thenLaunch) {
       $("#m-note").textContent = i18n("actions.modelWorking");
       try {
         const job = await api("/api/job", { session_id: id, artifact_kind: kind, confirmed: true,
-          backend: prev.backend, fallback_model: prev.fallback_model, content_hash: prev.content_hash });
+          backend: prev.backend, model_id: prev.model_id, effort: prev.effort, fallback_model: prev.fallback_model, fallback_effort: prev.fallback_effort,
+          content_hash: prev.content_hash, excerpt_hash: prev.excerpt_hash });
         await poll(job.job_id, id, kind, thenLaunch);
       } catch (e) {
         $("#m-note").textContent = i18n("common.error", { msg: e.message });
@@ -97,7 +98,7 @@ async function poll(jobId, id, kind, thenLaunch) {
     if (job.state === "failed") {
       $("#m-note").textContent = i18n("common.error", { msg: job.error }); $("#m-ok").disabled = false; return;
     }
-    if (job.state === "cancel_requested") { $("#m-note").textContent = i18n("actions.cancelled"); return; }
+    if (job.state === "cancel_requested" || job.state === "cancelled") { $("#m-note").textContent = i18n("actions.cancelled"); return; }
     await new Promise(r => window.setTimeout(r, 2500));
   }
   $("#m-note").textContent = i18n("actions.tooLong");

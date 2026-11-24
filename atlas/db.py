@@ -22,6 +22,7 @@ DERIVED = (
     "sources", "sessions", "session_projects", "session_files",
     "session_links", "session_tickets", "session_domains", "fts", "fts_paths", "parse_state",
     "activity", "session_continuations", "session_forks", "fts_rows", "fts_guard", "index_costs", "opencode_details",
+    "opencode_answer_times",
 )
 
 SCHEMA = """
@@ -96,6 +97,10 @@ CREATE INDEX IF NOT EXISTS ix_forks_parent ON session_forks(parent_id);
 
 CREATE TABLE IF NOT EXISTS opencode_details (
   session_id TEXT PRIMARY KEY, archived INTEGER NOT NULL, last_answer TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS opencode_answer_times (
+  session_id TEXT PRIMARY KEY, ts INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS opencode_fork_intents (

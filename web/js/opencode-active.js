@@ -278,15 +278,21 @@ window.addEventListener("storage", event => {
       || !event.key?.startsWith(openCodeReplyPrefix)) return;
   const sid = event.key.slice(openCodeReplyPrefix.length);
   const restored = openCodeRestoredReplies.get(sid);
-  if (!restored || pendingOpenCodeReply(sid)) return;
+  if (!restored) return;
   // A delayed removal event must not clear a composer restored from a different reply.
   let removed;
   try { removed = JSON.parse(event.oldValue); } catch { return; }
   if (removed?.id !== restored.id) return;
+  forgetRestoredReply(sid, restored);
+  if (pendingOpenCodeReply(sid)) return;
   clearOpenCodeReplyDraft(sid, restored);
   setSendNote(sid, "", "");
   sendState.delete(sid);
 });
+
+function forgetRestoredReply(sid, item) {
+  if (openCodeRestoredReplies.get(sid)?.id === item.id) openCodeRestoredReplies.delete(sid);
+}
 
 function forgetOpenCodeReply(sid, item) {
   if (pendingOpenCodeReply(sid)?.id !== item.id) return false;
@@ -307,6 +313,7 @@ function finishOpenCodeReply(sid, item) {
   const saved = pendingOpenCodeReply(sid);
   if (saved ? !forgetOpenCodeReply(sid, item) : openCodeRestoredReplies.get(sid)?.id !== item.id) return;
   clearOpenCodeReplyDraft(sid, item);
+  openCodeRestoredReplies.delete(sid);
   rememberSent(item.text);
   setSendNote(sid, "", "");
   sendState.delete(sid);
@@ -318,6 +325,7 @@ function discardOpenCodeReply(sid) {
   const label = i18n("opencode.discardReply");
   modal(label, i18n("opencode.discardReplyWarning"), "", label, () => {
     if (!openCodeReplying.has(sid) && forgetOpenCodeReply(sid, item)) {
+      forgetRestoredReply(sid, item);
       clearOpenCodeReplyDraft(sid, item);
       setSendNote(sid, "", "");
       sendState.delete(sid);
@@ -342,9 +350,13 @@ async function sendOpenCodeReply(s, text) {
     const restored = openCodeRestoredReplies.get(sid);
     retry = restored?.text === text ? restored : null;
     if (saved?.text === text && (!retry || retry.id === saved.id)) retry = saved;
-    if (saved && saved.id !== retry?.id && saved.id !== restored?.id) {
-      setSendNote(sid, i18n("opencode.retryOriginal"), "bad");
-      return;
+    if (saved && saved.id !== retry?.id) {
+      const checked = await openCodeRequest(s, "reply-check", { message_id: saved.id }).catch(() => null);
+      if (checked?.delivery) finishOpenCodeReply(sid, saved);
+      if (!checked?.delivery || pendingOpenCodeReply(sid)) {
+        setSendNote(sid, i18n("opencode.retryOriginal"), "bad");
+        return;
+      }
     }
     item = retry || { id: "msg_" + crypto.randomUUID().replaceAll("-", "").slice(0, 26), text };
     if (retry && retry.generation !== s.opencode_generation) {
@@ -368,9 +380,12 @@ async function sendOpenCodeReply(s, text) {
     else setSendNote(sid, i18n("opencode.retryReply"), "bad");
   } catch (error) {
     if (item && !retry && error.status >= 400 && error.status < 500 &&
-        forgetOpenCodeReply(sid, item) && !drafts.has(sid)) {
-      drafts.set(sid, item.text);
-      saveDrafts();
+        forgetOpenCodeReply(sid, item)) {
+      forgetRestoredReply(sid, item);
+      if (!drafts.has(sid)) {
+        drafts.set(sid, item.text);
+        saveDrafts();
+      }
     }
     setSendNote(sid, pendingOpenCodeReply(sid) ? i18n("opencode.retryReply")
       : i18n("active.notSent", { reason: error.message }), "bad");

@@ -210,17 +210,21 @@ def claim_job(conn: sqlite3.Connection, session_id: str, action_kind: str,
 def set_job_state(conn: sqlite3.Connection, job_id: str, state: str,
                   result: str | None = None, error: str | None = None) -> None:
     conn.execute(
-        "UPDATE jobs SET state=?, result=COALESCE(?, result), error=COALESCE(?, error), "
-        "updated_at=? WHERE job_id=?",
-        (state, result, error, _now(), job_id),
+        "UPDATE jobs SET state=CASE WHEN state='cancel_requested' AND ? IN ('done','failed') "
+        "THEN 'cancelled' ELSE ? END, "
+        "result=CASE WHEN state='cancel_requested' THEN result ELSE COALESCE(?, result) END, "
+        "error=CASE WHEN state='cancel_requested' THEN error ELSE COALESCE(?, error) END, "
+        "updated_at=? WHERE job_id=? AND (? != 'running' OR state != 'cancel_requested')",
+        (state, state, result, error, _now(), job_id, state),
     )
     conn.commit()
 
 
 def interrupt_jobs(conn: sqlite3.Connection) -> None:
     """The server's worker threads cannot survive its restart; completed results stay intact."""
+    conn.execute("UPDATE jobs SET state='cancelled', updated_at=? WHERE state='cancel_requested'", (_now(),))
     conn.execute("UPDATE jobs SET state='failed', error=?, updated_at=? "
-                 "WHERE state IN ('queued','running','cancel_requested')",
+                 "WHERE state IN ('queued','running')",
                  (msg("job.interrupted"), _now()))
     conn.commit()
 

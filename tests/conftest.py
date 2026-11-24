@@ -145,8 +145,7 @@ def live_server(atlas_env, monkeypatch):
     server.PORT = port
     server.ALLOWED_HOSTS = {f"127.0.0.1:{port}", f"localhost:{port}"}
     server.ALLOWED_ORIGINS = {f"http://127.0.0.1:{port}"}
-    from http.server import ThreadingHTTPServer
-    httpd = ThreadingHTTPServer(("127.0.0.1", port), server.Handler)
+    httpd = server.Server(("127.0.0.1", port), server.Handler)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     yield f"http://127.0.0.1:{port}", server.csrf_token()
     httpd.shutdown()

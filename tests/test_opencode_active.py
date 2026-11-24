@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from atlas import opencode_live, opencode_live_actions as actions, opencode_service as service, opencode_tabs
+from atlas import active, opencode_live, opencode_live_actions as actions, opencode_service as service, opencode_tabs
 
 RECORDED = json.loads((Path(__file__).parent / "fixtures/opencode/service-2.3.2-active.json").read_text())
 PERMISSION = RECORDED["permission"]["body"]["data"]
@@ -497,7 +497,13 @@ def test_long_history_prefers_the_live_prompt_and_uses_the_completed_indexed_ans
     assert any("type='user'" in statement and "FROM session_message" in statement for statement in statements)
     assert card["prompt"] == card["last_prompt"] == "Newest live prompt"
     assert card["reply_tail"] == "Synthetic assistant reply"
-    assert card["prompt_at"] == card["reply_at"] == card["last_message_at"] == "1970-01-01T00:02:03+00:00"
+    assert card["reply_at"] == card["last_message_at"] == active._iso_ms(1795342628707)
+    with db.connect() as catalog:
+        catalog.execute("DELETE FROM opencode_answer_times WHERE session_id=?", (sid,))
+        card = opencode_live._card(catalog, row, messages, {}, sid, 123, False, opencode_live.LiveService())
+    assert card["reply_tail"] == "Synthetic assistant reply"
+    assert card["reply_at"] is None
+    assert card["last_message_at"] == card["prompt_at"]
 
 
 def test_card_uses_indexed_prompt_when_transcript_is_missing(atlas_env, monkeypatch):

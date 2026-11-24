@@ -1,6 +1,7 @@
 """What leaves the machine and through what. Fail-closed: nothing leaves without explicit permission."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -213,7 +214,7 @@ def _tail_within(items: list[str], budget: int) -> list[str]:
 
 
 def build_payload(conn: sqlite3.Connection, session_id: str,
-                  artifact_kind: str = "handoff", scale: float = 1.0) -> dict:
+                  artifact_kind: str = "handoff", scale: float = 1.0, *, prepare_retry: bool = False) -> dict:
     """Exactly the text that will leave the machine.
 
     Priority order: compaction summaries and user prompts go in whole, since they carry
@@ -227,7 +228,6 @@ def build_payload(conn: sqlite3.Connection, session_id: str,
     if row is None:
         raise LookupError(msg("runner.no_session", sid=session_id))
 
-    budget = budget_chars(artifact_kind, scale)
     facts = agents.parse_session(row["source_path"], session_id, row["agent"])
     files = [r["resolved_path"] for r in conn.execute(
         "SELECT resolved_path FROM session_files WHERE session_id=?", (session_id,))]
@@ -248,6 +248,17 @@ def build_payload(conn: sqlite3.Connection, session_id: str,
         msg("fact.links", value=", ".join(links) or "—"),
     ])
 
+    payload = _render_payload(session_id, row["content_hash"], facts, header, budget_chars(artifact_kind, scale))
+    if prepare_retry:
+        budget = budget_chars(artifact_kind, 0.6)
+        payload["trimmed"] = (
+            _render_payload(session_id, row["content_hash"], facts, header, budget)
+            if payload["chars"] > budget else None
+        )
+    return payload
+
+
+def _render_payload(session_id, content_hash, facts, header, budget):
     sections, used = [((msg("payload.header"), 1, len(header)))], len(header)
     blocks = [header]
 
@@ -286,7 +297,7 @@ def build_payload(conn: sqlite3.Connection, session_id: str,
                  or kept.get(t_commands, 0) < dropped["commands"])
     return {
         "session_id": session_id,
-        "content_hash": row["content_hash"],
+        "content_hash": content_hash,
         "text": text,
         "chars": len(text),
         "budget": budget,
@@ -360,16 +371,23 @@ class ClaudeUsageLimit(RuntimeError):
 
 
 def _raise_claude_usage_limit(proc: subprocess.CompletedProcess) -> None:
-    for stream in (proc.stderr, proc.stdout):
-        for line in (stream or "").splitlines():
-            detail = re.sub(r"^Error: ", "", line.strip()).lstrip("⎿ ").strip()
-            if re.match(r"^You['’]ve hit your (?:(?:individual spend|[0-9]+[- ](?:hour|day)|weekly|usage) )?limit\b",
-                        detail, re.IGNORECASE):
-                raise ClaudeUsageLimit(detail[:500])
+    if proc.returncode == 0:
+        return
+    stderr = [line.strip() for line in (proc.stderr or "").splitlines() if line.strip()]
+    stdout = [line.strip() for line in (proc.stdout or "").splitlines() if line.strip()]
+    for line in stderr or (stdout if len(stdout) == 1 else []):
+        detail = re.sub(r"^Error: ", "", line).lstrip("⎿ ").strip()
+        if re.match(r"^You['’]ve hit your (?:(?:individual spend|[0-9]+[- ](?:hour|day)|weekly|usage) )?limit\b",
+                    detail, re.IGNORECASE):
+            raise ClaudeUsageLimit(detail[:500])
 
 
-def artifact_fallback(backend_name: str) -> str | None:
-    if backend_name == CLAUDE_BACKEND and codex_app.find_codex():
+def excerpt_hash(payload: dict) -> str:
+    return hashlib.sha256(payload["text"].encode("utf-8")).hexdigest()
+
+
+def artifact_fallback(backend_name: str, sensitivity: str) -> str | None:
+    if sensitivity != "sensitive" and backend_name == CLAUDE_BACKEND and codex_app.find_codex():
         return CLAUDE_LIMIT_FALLBACK_MODEL
     return None
 
@@ -390,13 +408,16 @@ def preflight(model: str = "claude-haiku-4-5-20251001", effort: str = "low") -> 
 
 
 def run_isolated(prompt: str, model: str = DEFAULT_MODEL, effort: str = DEFAULT_EFFORT,
-                 timeout: int = 900, backend_name: str | None = None, schema: dict | None = None) -> str:
+                 timeout: int = 900, backend_name: str | None = None, schema: dict | None = None, *,
+                 before_send=None) -> str:
     """`claude -p` without settings, hooks, plugins, MCP and tools: otherwise the compressor loads
     your environment and creates transcripts of its own. The Codex backend: `codex_exec.run`, where
     `schema` (JSON Schema of the answer) is enforced; `claude -p` follows the prompt alone."""
     require_llm()                  # last line of defense: every model call passes through here
     if _backend_name(backend_name) == CODEX_BACKEND:
         try:
+            if before_send is not None:
+                before_send()
             return codex_exec.run(prompt, runner_cwd(), model, effort, timeout, schema)
         except codex_exec.TooLong as exc:
             raise PromptTooLong(str(exc)) from exc
@@ -407,6 +428,8 @@ def run_isolated(prompt: str, model: str = DEFAULT_MODEL, effort: str = DEFAULT_
     env = dict(os.environ)
     env.pop("CLAUDE_EFFORT", None)      # the level is set by a flag; the environment variable would interfere
     env.pop("ANTHROPIC_API_KEY", None)
+    if before_send is not None:
+        before_send()
     proc = subprocess.run(argv, input=prompt, capture_output=True, text=True,
                           timeout=timeout, cwd=runner_cwd(), env=env)
     if proc.returncode != 0:
@@ -420,9 +443,10 @@ def run_isolated(prompt: str, model: str = DEFAULT_MODEL, effort: str = DEFAULT_
     return proc.stdout.strip()
 
 
-def preview_payload(conn: sqlite3.Connection, session_id: str, artifact_kind: str) -> dict:
+def preview_payload(conn: sqlite3.Connection, session_id: str, artifact_kind: str, *,
+                    payload: dict | None = None) -> dict:
     """3 MB cannot be shown: return the head and tail, write the full text to a file for checking."""
-    payload = build_payload(conn, session_id, artifact_kind)
+    payload = payload if payload is not None else build_payload(conn, session_id, artifact_kind)
     text = payload["text"]
     if len(text) > PREVIEW_HEAD + PREVIEW_TAIL:
         shown = (text[:PREVIEW_HEAD]
@@ -436,4 +460,4 @@ def preview_payload(conn: sqlite3.Connection, session_id: str, artifact_kind: st
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(text)
     os.chmod(path, 0o600)
-    return {**payload, "text": shown, "full_path": path}
+    return {**payload, "text": shown, "full_path": path, "excerpt_hash": excerpt_hash(payload)}

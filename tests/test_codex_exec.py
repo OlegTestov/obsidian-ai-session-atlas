@@ -165,7 +165,7 @@ def test_the_job_starts_only_with_the_agent_the_preview_showed(atlas_env, write_
     # The preview named Claude Code, the settings now resolve to Codex: nothing is sent, re-preview.
     for path, body in (("/api/job", job), ("/api/classify", {"confirmed": True})):
         with pytest.raises(urllib.error.HTTPError) as refused:
-            _post(base + path, dict(body, backend=runner.CLAUDE_BACKEND), headers)
+            _post(base + path, dict(body, backend=runner.CLAUDE_BACKEND, excerpt_hash="fixture"), headers)
         assert refused.value.code == 409 and "Open the preview again" in json.loads(refused.value.read())["error"]
         # A page from before the update names no agent: reloading it, not a new preview, helps.
         with pytest.raises(urllib.error.HTTPError) as old_page:
@@ -175,15 +175,38 @@ def test_the_job_starts_only_with_the_agent_the_preview_showed(atlas_env, write_
         _post(base + "/api/job", job, dict(headers, **{"X-Atlas-Lang": "ru"}))
     assert "Обнови страницу" in json.loads(old_page.value.read())["error"]
     assert started == [] and conn.execute("SELECT count(*) FROM egress_grants").fetchone()[0] == 0
-    r = _post(base + "/api/job", dict(job, backend=runner.CODEX_BACKEND), headers)
-    assert r.status == 200
-    _, _, kind, backend, model, _, fallback = started[0]
+    excerpt = runner.build_payload(conn, sid, "catalog_summary")
+    preview = json.load(_post(base + "/api/preview", job, headers))
+    job.update(backend=preview["backend"], model_id=preview["model_id"], effort=preview["effort"],
+               content_hash=preview["content_hash"])
+    with pytest.raises(urllib.error.HTTPError) as stale_page:
+        _post(base + "/api/job", job, headers)
+    assert "Reload the page" in json.loads(stale_page.value.read())["error"]
+    conn.execute("UPDATE sessions SET content_hash=?, human_turns=human_turns+1 WHERE session_id=?",
+                 ("new-content", sid))
+    conn.commit()
+    job["excerpt_hash"] = preview["excerpt_hash"]
+    first = json.load(_post(base + "/api/job", job, headers))
+    duplicate = json.load(_post(base + "/api/job", job, headers))
+    assert duplicate == {"job_id": first["job_id"], "created": False}
+    _, _, kind, backend, model, _, fallback, payload, _, effort = started[0]
+    assert effort == preview["effort"]
+    assert payload == excerpt
     assert fallback is False
     assert (kind, backend, model) == ("catalog_summary", runner.CODEX_BACKEND, "default")
     grant = conn.execute("SELECT backend, model FROM egress_grants WHERE session_id=?", (sid,)).fetchone()
     assert tuple(grant) == (runner.CODEX_BACKEND, "default")
+    conn.execute("UPDATE sessions SET content_hash=? WHERE session_id=?", (preview["content_hash"], sid))
+    conn.commit()
+    refreshed = json.load(_post(base + "/api/preview", job, headers))
+    assert refreshed["excerpt_hash"] != preview["excerpt_hash"]
+    second = json.load(_post(base + "/api/job", dict(job, excerpt_hash=refreshed["excerpt_hash"]), headers))
+    assert second["created"] and second["job_id"] != first["job_id"]
+    with pytest.raises(urllib.error.HTTPError) as outdated_settings:
+        _post(base + "/api/job", dict(job, effort="high"), headers)
+    assert outdated_settings.value.code == 409
     r = _post(base + "/api/classify", {"confirmed": True, "backend": runner.CODEX_BACKEND}, headers)
-    assert r.status == 200 and started[1][3] == runner.CODEX_BACKEND   # the batch runs with that agent
+    assert r.status == 200 and started[2][3] == runner.CODEX_BACKEND   # the batch runs with that agent
 
 
 def test_a_timeout_stops_codex_and_what_it_started(atlas_env, codex_cli, no_claude, tmp_path, monkeypatch):
@@ -263,11 +286,19 @@ def test_summary_limit_fallback_from_the_confirmed_preview(
     body = {"session_id": sid, "artifact_kind": "catalog_summary"}
     preview = json.load(_post(base + "/api/preview", body, headers))
     assert preview["fallback_model"] == "gpt-6.2-sol"
-    job = dict(body, confirmed=True, backend=preview["backend"], fallback_model=preview["fallback_model"])
+    job = dict(body, confirmed=True, backend=preview["backend"], model_id=preview["model_id"],
+               effort=preview["effort"], fallback_model=preview["fallback_model"],
+               fallback_effort=preview["fallback_effort"], excerpt_hash=preview["excerpt_hash"])
     for wrong in ("", "old"):
         with pytest.raises(urllib.error.HTTPError) as refused:
             _post(base + "/api/job", dict(job, content_hash=wrong), headers)
         assert refused.value.code == 409
+    with pytest.raises(urllib.error.HTTPError) as wrong_excerpt:
+        _post(base + "/api/job", dict(job, content_hash=preview["content_hash"], excerpt_hash="old"), headers)
+    assert wrong_excerpt.value.code == 409
+    with pytest.raises(urllib.error.HTTPError) as wrong_effort:
+        _post(base + "/api/job", dict(job, content_hash=preview["content_hash"], fallback_effort="ultra"), headers)
+    assert wrong_effort.value.code == 409
     assert conn.execute("SELECT count(*) FROM egress_grants").fetchone()[0] == 0
     job_id = json.load(_post(base + "/api/job", dict(job, content_hash=preview["content_hash"]), headers))["job_id"]
     for _ in range(100):
@@ -289,3 +320,133 @@ def test_summary_limit_fallback_from_the_confirmed_preview(
 def test_sol_fallback_effort_is_one_step_higher(atlas_env, claude, sol):
     args = codex_exec.argv("codex", "/tmp", "/tmp/out", "gpt-6.2-sol", codex_exec.fallback_effort(claude), None)
     assert f"model_reasoning_effort={sol}" in args
+
+
+@pytest.mark.parametrize(("stdout", "stderr", "exit_code", "limited"), [
+    ("You've hit your 5-hour limit", "", 1, True),
+    ("Model output\nYou've hit your 5-hour limit", "", 1, False),
+    ("You've hit your 5-hour limit", "Connection failed", 1, False),
+    ("", "Error: You've hit your weekly limit", 1, True),
+    ("You've hit your 5-hour limit", "", 0, False),
+])
+def test_usage_limit_only_reads_the_cli_error(stdout, stderr, exit_code, limited):
+    proc = subprocess.CompletedProcess([], exit_code, stdout, stderr)
+    if limited:
+        with pytest.raises(runner.ClaudeUsageLimit):
+            runner._raise_claude_usage_limit(proc)
+    else:
+        runner._raise_claude_usage_limit(proc)
+
+
+@pytest.mark.parametrize("refusal", ["cancelled", "sensitive"])
+def test_no_fallback_if_cancelled_or_sensitive_after_claude(
+    atlas_env, write_session, codex_cli, monkeypatch, refusal,
+):
+    conn, sid = _indexed(atlas_env, write_session)
+    kind = "catalog_summary"
+    payload = runner.build_payload(conn, sid, kind)
+    digest = payload["content_hash"]
+    job_id, _ = actions.claim_job(conn, sid, kind, digest)
+    model, _ = runner.model_for(kind, runner.CLAUDE_BACKEND)
+    runner.grant_egress(conn, sid, digest, kind, runner.CLAUDE_BACKEND, model)
+    runner.grant_egress(conn, sid, digest, kind, runner.CODEX_BACKEND, "gpt-6.2-sol")
+    calls = []
+
+    def run(_prompt, *, backend_name, **_):
+        calls.append(backend_name)
+        if refusal == "cancelled":
+            assert actions.cancel_job(conn, job_id)
+            actions.set_job_state(conn, job_id, "running")
+            assert actions.is_cancelled(conn, job_id)
+        else:
+            conn.execute("INSERT INTO user_overrides (session_id, sensitivity, updated_at) "
+                         "VALUES (?, 'sensitive', 'now')", (sid,))
+            conn.commit()
+        raise runner.ClaudeUsageLimit("quota")
+
+    monkeypatch.setattr(runner, "run_isolated", run)
+    with pytest.raises((runner.ClaudeUsageLimit, runner.EgressDenied)):
+        enrich.produce(conn, sid, kind, job_id, backend=runner.CLAUDE_BACKEND, allow_fallback=True,
+                       confirmed_payload=payload, fallback_effort="medium")
+    assert calls == [runner.CLAUDE_BACKEND]
+    if refusal == "sensitive":
+        assert enrich.preview(conn, sid, kind, runner.CLAUDE_BACKEND)["fallback_model"] is None
+
+
+@pytest.mark.parametrize("backend", [runner.CLAUDE_BACKEND, runner.CODEX_BACKEND])
+def test_oversized_confirmed_prompt_retries_only_claude(atlas_env, write_session, monkeypatch, backend):
+    conn, sid = _indexed(atlas_env, write_session)
+    kind = "catalog_summary"
+    original = runner.budget_chars
+    monkeypatch.setattr(runner, "budget_chars", lambda kind, scale: 1 if scale < 1 else original(kind, scale))
+    payload = runner.build_payload(conn, sid, kind, prepare_retry=True)
+    assert payload["trimmed"] is not None
+    model, _ = runner.model_for(kind, backend)
+    runner.grant_egress(conn, sid, payload["content_hash"], kind, backend, model)
+    job_id, _ = actions.claim_job(conn, sid, kind, payload["content_hash"])
+    calls = []
+
+    def run(prompt, *, backend_name, **_):
+        calls.append((prompt, backend_name))
+        if len(calls) == 1:
+            conn.execute("UPDATE sessions SET content_hash='grew', title='APPENDED' WHERE session_id=?", (sid,))
+            conn.commit()
+            raise runner.PromptTooLong("too long")
+        raise runner.ClaudeUsageLimit("quota")
+
+    monkeypatch.setattr(runner, "run_isolated", run)
+    with pytest.raises(runner.ClaudeUsageLimit if backend == runner.CLAUDE_BACKEND else runner.PromptTooLong):
+        enrich.produce(conn, sid, kind, job_id, backend=backend, allow_fallback=True, confirmed_payload=payload)
+    assert [agent for _, agent in calls] == [backend] * (2 if backend == runner.CLAUDE_BACKEND else 1)
+    if backend == runner.CLAUDE_BACKEND:
+        assert payload["trimmed"]["text"] in calls[1][0]
+        assert "APPENDED" not in calls[1][0]
+
+
+def test_cancel_during_claude_preflight_does_not_send_the_excerpt(monkeypatch):
+    monkeypatch.setattr(runner, "require_llm", lambda: None)
+    monkeypatch.setattr(runner, "find_claude", lambda: "fixture-claude")
+    monkeypatch.setattr(runner, "PREFLIGHT_ABOVE", 0)
+    cancelled = False
+
+    def preflight(**_):
+        nonlocal cancelled
+        cancelled = True
+
+    def check():
+        if cancelled:
+            raise RuntimeError("cancelled during preflight")
+
+    monkeypatch.setattr(runner, "preflight", preflight)
+    monkeypatch.setattr(runner, "runner_cwd", lambda: "/tmp")
+
+    def unexpected_send(*_, **__):
+        pytest.fail("Excerpt reached Claude after cancellation")
+
+    monkeypatch.setattr(runner.subprocess, "run", unexpected_send)
+    with pytest.raises(RuntimeError, match="cancelled during preflight"):
+        runner.run_isolated("excerpt", backend_name=runner.CLAUDE_BACKEND, before_send=check)
+
+
+@pytest.mark.parametrize("fails", [False, True])
+def test_cancelled_artifact_worker_keeps_no_result(atlas_env, write_session, monkeypatch, fails):
+    conn, sid = _indexed(atlas_env, write_session)
+    kind = "catalog_summary"
+    backend = runner.CLAUDE_BACKEND
+    payload = runner.build_payload(conn, sid, kind)
+    model, _ = runner.model_for(kind, backend)
+    runner.grant_egress(conn, sid, payload["content_hash"], kind, backend, model)
+    job_id, _ = actions.claim_job(conn, sid, kind, payload["content_hash"])
+
+    def run(*_, **__):
+        assert actions.cancel_job(conn, job_id)
+        if fails:
+            raise RuntimeError("late failure")
+        return json.dumps(SUMMARY)
+
+    monkeypatch.setattr(runner, "run_isolated", run)
+    server._run_job(job_id, sid, kind, backend, model, confirmed_payload=payload)
+    job = actions.get_job(conn, job_id)
+    assert job["state"] == "cancelled"
+    assert job["result"] is None and job["error"] is None
+    assert enrich.cached(conn, sid, kind) is None

@@ -270,20 +270,24 @@ def _card(conn, row, messages, table, sid, pid, running, live):
     usage = next(((line, data) for line, data in tail if _settled(line, data)), None)
     prompt = user[1] if user else info.get("last_prompt")
     reply = answer[1] if answer else ""
+    indexed_reply_at = None
     if not answer and info:
-        # Older index rows could contain unfinished text until the next indexing pass.
+        # Older snapshots have no trustworthy timestamp for the indexed answer.
         indexed = conn.execute("""
-            SELECT d.last_answer FROM opencode_details d JOIN sessions s USING(session_id)
-            JOIN sources f ON s.source_path=f.path WHERE d.session_id=? AND (f.sig LIKE ? OR f.sig LIKE ?)
-        """, (sid, "[4,%", f"[{source.VERSION},%")).fetchone()
+            SELECT d.last_answer, t.ts FROM opencode_details d JOIN sessions s USING(session_id)
+            JOIN sources f ON s.source_path=f.path
+            LEFT JOIN opencode_answer_times t ON t.session_id=d.session_id AND f.sig LIKE ?
+            WHERE d.session_id=? AND (f.sig LIKE '[4,%' OR f.sig LIKE '[5,%' OR f.sig LIKE ?)
+        """, (f"[{source.VERSION},%", sid, f"[{source.VERSION},%")).fetchone()
         if indexed:
             reply = indexed["last_answer"]
+            indexed_reply_at = active._iso_ms(indexed["ts"])
     updated = (active._iso_ms(row["time_updated"]) if row else None) or info.get("last_activity_at")
     updated = updated or (active._iso_ms(row["time_created"]) if row else None) or info.get("started_at")
     updated = updated or "1970-01-01T00:00:00+00:00"
     prompt_at = (_timestamp(user) or updated) if prompt else None
     completed_at = active._iso_ms(answer[0].get("time_completed")) if answer else None
-    reply_at = (completed_at or _timestamp(answer) or updated) if reply else None
+    reply_at = (completed_at or _timestamp(answer) or indexed_reply_at) if reply else None
     cwd = row["directory"] if row else info.get("cwd_last")
     waiting, dialog, inbox, pending_known = _pending(sid, pid, running, live)
     status = "waiting" if waiting else "busy" if running else "idle"

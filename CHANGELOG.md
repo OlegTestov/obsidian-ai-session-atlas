@@ -7,6 +7,15 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.19.1] - 2026-11-24
+
+### Fixed
+
+- OpenCode keeps track of replies whose delivery is uncertain and assigns a fresh ID when you send the same text again after delivery.
+- Session notes and handoffs use the confirmed excerpt even when the session grows. A cancelled job does not save a result.
+- Codex fallback requires a confirmed preview and is disabled for sensitive sessions.
+- OpenCode uses the answer's completion time for active time and for answers shown from the catalog.
+
 ## [2.19.0] - 2026-11-23
 
 ### Added

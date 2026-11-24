@@ -69,13 +69,15 @@ def _validate_handoff(text: str) -> str:
 
 
 def preview(conn: sqlite3.Connection, session_id: str, artifact_kind: str,
-            backend: str | None = None, model: str | None = None) -> dict:
+            backend: str | None = None, model: str | None = None, *,
+            payload: dict | None = None) -> dict:
     """First confirmation stage: show exactly what will be sent and where, before any call."""
     backend = backend or runner.backend()
     default_model, effort = runner.model_for(artifact_kind, backend)
     model = model or default_model
-    payload = runner.preview_payload(conn, session_id, artifact_kind)
-    fallback_model = runner.artifact_fallback(backend)
+    payload = runner.preview_payload(conn, session_id, artifact_kind, payload=payload)
+    sensitivity = runner.sensitivity_of(conn, session_id)
+    fallback_model = runner.artifact_fallback(backend, sensitivity)
     return {
         "session_id": session_id,
         "artifact_kind": artifact_kind,
@@ -83,13 +85,16 @@ def preview(conn: sqlite3.Connection, session_id: str, artifact_kind: str,
         "agent_name": runner.agent_name(backend),
         "fallback_model": fallback_model,
         "fallback_effort": codex_exec.fallback_effort(effort) if fallback_model else None,
+        "model_id": model,
+        "effort": effort,
         "model": f"{runner.model_label(model, backend)} / {effort}",
         "sections": payload["sections"],
         "totals": payload["totals"],
         "budget": payload["budget"],
         "full_path": payload["full_path"],
         "is_local_backend": backend in runner.LOCAL_BACKENDS,
-        "sensitivity": runner.sensitivity_of(conn, session_id),
+        "sensitivity": sensitivity,
+        "excerpt_hash": payload["excerpt_hash"],
         "content_hash": payload["content_hash"],
         "chars": payload["chars"],
         "truncated": payload["truncated"],
@@ -104,12 +109,15 @@ def fill(template: str, text: str) -> str:
 
 
 def produce(conn: sqlite3.Connection, session_id: str, artifact_kind: str, job_id: str,
-            backend: str | None = None, model: str | None = None, *, allow_fallback: bool = False) -> dict:
+            backend: str | None = None, model: str | None = None, *, allow_fallback: bool = False,
+            confirmed_payload: dict | None = None, fallback_effort: str | None = None,
+            primary_effort: str | None = None, finish_job: bool = False) -> dict:
     """Second stage: the model call. The send permission is checked right here."""
     backend = backend or runner.backend()
     default_model, effort = runner.model_for(artifact_kind, backend)
     model = model or default_model
-    payload = runner.build_payload(conn, session_id, artifact_kind)
+    effort = primary_effort or effort
+    payload = confirmed_payload or runner.build_payload(conn, session_id, artifact_kind)
     runner.check_egress(conn, session_id, payload["content_hash"], artifact_kind, backend, model)
     if actions.is_cancelled(conn, job_id):
         raise RuntimeError(msg("enrich.cancelled"))
@@ -118,53 +126,71 @@ def produce(conn: sqlite3.Connection, session_id: str, artifact_kind: str, job_i
     schema = codex_exec.SUMMARY_SCHEMA if artifact_kind == "catalog_summary" else None
     original = payload
 
-    def generate(backend_name, model_name, effort_level):
-        excerpt = original
-        try:
-            result = runner.run_isolated(fill(template, excerpt["text"]), model=model_name, effort=effort_level,
-                                         timeout=2400, backend_name=backend_name, schema=schema)
-        except runner.PromptTooLong:
-            excerpt = runner.build_payload(conn, session_id, artifact_kind, scale=0.6)
-            if excerpt["content_hash"] != original["content_hash"]:
-                raise runner.EgressDenied(msg("server.artifact_changed")) from None
-            result = runner.run_isolated(fill(template, excerpt["text"]), model=model_name, effort=effort_level,
-                                         timeout=2400, backend_name=backend_name, schema=schema)
-        return result, excerpt
+    def check_cancelled():
+        if actions.is_cancelled(conn, job_id):
+            raise RuntimeError(msg("enrich.cancelled"))
+
+    def dispatch(excerpt, backend_name, model_name, effort_level, *, fallback=False):
+        check_cancelled()
+        if fallback and runner.sensitivity_of(conn, session_id) == "sensitive":
+            raise runner.EgressDenied(msg("server.artifact_changed"))
+        return runner.run_isolated(fill(template, excerpt["text"]), model=model_name, effort=effort_level,
+                                   timeout=2400, backend_name=backend_name, schema=schema,
+                                   before_send=check_cancelled)
 
     try:
-        raw, payload = generate(backend, model, effort)
+        raw = dispatch(original, backend, model, effort)
+    except runner.PromptTooLong:
+        if backend != runner.CLAUDE_BACKEND and (confirmed_payload is not None or backend == runner.CODEX_BACKEND):
+            raise
+        if confirmed_payload is not None:
+            payload = original.get("trimmed")
+            if payload is None:
+                raise
+        else:
+            payload = runner.build_payload(conn, session_id, artifact_kind, scale=0.6)
+        if confirmed_payload is None and payload["content_hash"] != original["content_hash"]:
+            raise runner.EgressDenied(msg("server.artifact_changed")) from None
+        raw = dispatch(payload, backend, model, effort)
     except runner.ClaudeUsageLimit:
         if not allow_fallback or backend != runner.CLAUDE_BACKEND or actions.is_cancelled(conn, job_id):
             raise
         backend, model = runner.CODEX_BACKEND, runner.CLAUDE_LIMIT_FALLBACK_MODEL
         runner.check_egress(conn, session_id, original["content_hash"], artifact_kind, backend, model)
-        raw, payload = generate(backend, model, codex_exec.fallback_effort(effort))
+        raw = dispatch(original, backend, model, fallback_effort or codex_exec.fallback_effort(effort), fallback=True)
 
-    if artifact_kind == "catalog_summary":
-        result = json.dumps(_parse_summary(raw), ensure_ascii=False)
-        stored_path = None
-    else:
-        result = _validate_handoff(raw)
-        stored_path = os.path.join(
-            handoff_dir(), f"{datetime.now(timezone.utc):%Y-%m-%d}-{session_id[:8]}.md"
+    conn.execute("BEGIN IMMEDIATE")
+    with conn:
+        check_cancelled()
+        if artifact_kind == "catalog_summary":
+            result = json.dumps(_parse_summary(raw), ensure_ascii=False)
+            stored_path = None
+        else:
+            result = _validate_handoff(raw)
+            stored_path = os.path.join(
+                handoff_dir(), f"{datetime.now(timezone.utc):%Y-%m-%d}-{session_id[:8]}.md"
+            )
+            with open(stored_path, "w", encoding="utf-8") as fh:
+                fh.write(result)
+            os.chmod(stored_path, 0o600)
+
+        conn.execute(
+            "INSERT OR REPLACE INTO enrichment (session_id, artifact_kind, content_hash, "
+            "extractor_version, prompt_version, model, backend, payload, created_at) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            (session_id, artifact_kind, payload["content_hash"], runner.EXTRACTOR_VERSION,
+             PROMPT_VERSION, model, backend, result, _now()),
         )
-        with open(stored_path, "w", encoding="utf-8") as fh:
-            fh.write(result)
-        os.chmod(stored_path, 0o600)
-
-    conn.execute(
-        "INSERT OR REPLACE INTO enrichment (session_id, artifact_kind, content_hash, "
-        "extractor_version, prompt_version, model, backend, payload, created_at) "
-        "VALUES (?,?,?,?,?,?,?,?,?)",
-        (session_id, artifact_kind, payload["content_hash"], runner.EXTRACTOR_VERSION,
-         PROMPT_VERSION, model, backend, result, _now()),
-    )
-    conn.execute(
-        "UPDATE egress_grants SET used_at=? WHERE session_id=? AND content_hash=? "
-        "AND artifact_kind=?", (_now(), session_id, payload["content_hash"], artifact_kind),
-    )
-    conn.commit()
-    return {"artifact_kind": artifact_kind, "payload": result, "path": stored_path}
+        conn.execute(
+            "UPDATE egress_grants SET used_at=? WHERE session_id=? AND content_hash=? "
+            "AND artifact_kind=?", (_now(), session_id, payload["content_hash"], artifact_kind),
+        )
+        response = {"artifact_kind": artifact_kind, "payload": result, "path": stored_path}
+        if finish_job:
+            actions.set_job_state(conn, job_id, "done", result=json.dumps(response, ensure_ascii=False))
+        else:
+            conn.commit()
+    return response
 
 
 def export_handoff(conn: sqlite3.Connection, session_id: str, destination_dir: str) -> str:

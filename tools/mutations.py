@@ -20,8 +20,35 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 MUT = [
+ ("2191: F1 Claude sends after preflight cancellation", "atlas/runner.py",
+  "    if before_send is not None:\n        before_send()\n    proc = subprocess.run(argv, input=prompt,",
+  "    proc = subprocess.run(argv, input=prompt,"),
+ ("2191: F2 artifact jobs share by content hash", "atlas/server.py",
+  'actions.claim_job(conn, session_id, kind, claim)', 'actions.claim_job(conn, session_id, kind, digest)'),
+ ("2191: F3 worker drops the confirmed primary effort", "atlas/server.py",
+  'bool(fallback), payload, fallback_effort, effort)).start()', 'bool(fallback), payload, fallback_effort, None)).start()'),
+ ("2191: F4 cancelled artifact is still stored", "atlas/enrich.py",
+  '    with conn:\n        check_cancelled()\n        if artifact_kind', '    with conn:\n        if artifact_kind'),
+ ("2191: F5 Claude rereads the session for its trimmed retry", "atlas/enrich.py",
+  'payload = original.get("trimmed")', 'payload = runner.build_payload(conn, session_id, artifact_kind, scale=0.6)'),
+ ("2191: F8 missing excerpt gives a generic error", "atlas/server.py",
+  'if "excerpt_hash" not in body:\n            return self._json(409, {"error": msg("server.page_outdated")})',
+  'if False:\n            return self._json(409, {"error": msg("server.page_outdated")})'),
+ ("2191: confirmation ignores the exact excerpt", "atlas/server.py",
+  'payload = saved[1]', 'payload = runner.build_payload(conn, session_id, kind)'),
+ ("2191: fallback dispatch ignores sensitive sessions", "atlas/enrich.py",
+  'if fallback and runner.sensitivity_of(conn, session_id) == "sensitive":', 'if False:'),
+ ("2191: starting a job overwrites a cancellation", "atlas/actions.py",
+  "AND (? != 'running' OR state != 'cancel_requested')", "AND (? IS NOT NULL)"),
+ ("2191: model output can trigger the usage limit fallback", "atlas/runner.py",
+  "for line in stderr or (stdout if len(stdout) == 1 else []):", "for line in stderr or stdout:"),
+ ("2191 C7: active time ends at the start of the answer", "atlas/opencode_parse.py",
+  'timestamp = _when(answer_time(message, data) if kind == "assistant" else message["time_created"])',
+  'timestamp = _when(message["time_created"])'),
+ ("2191 C8: indexed answers inherit the session update time", "atlas/opencode_live.py",
+  'or indexed_reply_at) if reply else None', 'or updated) if reply else None'),
  ("opencode B1e: answers use the start time", "atlas/opencode_parse.py",
-  '    return completed_at if type(completed_at) is int and 0 < completed_at < 4e12 else message["time_created"]',
+  '    return completion_time(data) or message["time_created"]',
   '    return message["time_created"]'),
  ("opencode B1e: an unexpected OpenCode failure drops the whole Active list", "atlas/active.py",
   "        log_opencode_error(exc)", "        raise"),
@@ -43,7 +70,7 @@ MUT = [
   "WHERE session_id=? AND type='user' ORDER BY seq DESC",
   "WHERE session_id=? ORDER BY seq DESC"),
  ("opencode B1d: displayed replies can have no timestamp", "atlas/opencode_live.py",
-  'reply_at = (completed_at or _timestamp(answer) or updated) if reply else None',
+  'reply_at = (completed_at or _timestamp(answer) or indexed_reply_at) if reply else None',
   "reply_at = _timestamp(answer)"),
  ("opencode B1d: the indexed answer includes unfinished steps", "atlas/opencode_parse.py",
   "if completed(data) and len(facts.assistant_text) > text_count:",
@@ -600,7 +627,7 @@ MUT = [
   '        raise SystemExit(0)                # run cleanup also when the plugin sends SIGTERM',
   '        os._exit(0)'),
  ("jobs: interrupted tasks stay running after restart", "atlas/actions.py",
-  "WHERE state IN ('queued','running','cancel_requested')", "WHERE 0"),
+  "WHERE state IN ('queued','running')", "WHERE 0"),
  ("index: read incrementally after a rewritten file", "atlas/store.py",
   'or row["sub_sig"] != sub_sig or tail_sig(path, row["offset"]) != row["tail_sig"]:',
   'or row["sub_sig"] != sub_sig:'),
@@ -1076,7 +1103,8 @@ MUT = [
  ("codex ai: a timeout leaves codex's children running", "atlas/codex_app.py",
   "        _stop(proc)\n        raise", "        proc.kill()\n        raise"),
  ("ai agent: a job starts with another agent than the preview's", "atlas/server.py",
-  'if body.get("backend") != backend:          # the user confirmed', 'if False:          # the user confirmed'),
+  'if body.get("backend") != backend:\n            return self._agent_refused(body, backend)\n        if body.get("model_id")',
+  'if False:\n            return self._agent_refused(body, backend)\n        if body.get("model_id")'),
  ("ai agent: classifying starts with another agent than the preview's", "atlas/server.py",
   '        backend = runner.backend()\n        if body.get("backend") != backend:\n',
   '        backend = runner.backend()\n        if False:\n'),
@@ -1772,6 +1800,15 @@ source "$SCRIPT_DIR/$module" """.rstrip()),
   'if codex --help 2>/dev/null | /usr/bin/grep -q -- \'--no-daemon\'; then', 'if false; then'),
 ]
 JS_MUT = [
+ ("2191: F6 a saved replacement keeps the restored reply ID", "web/js/opencode-active.js",
+  "if (!restored) return;", "if (!restored || pendingOpenCodeReply(sid)) return;"),
+ ("2191: F7 failed reply-check shows a generic error", "web/js/opencode-active.js",
+  'openCodeRequest(s, "reply-check", { message_id: saved.id }).catch(() => null)',
+  'openCodeRequest(s, "reply-check", { message_id: saved.id })'),
+ ("2191: delivered reply keeps its restored ID", "web/js/opencode-active.js",
+  '  openCodeRestoredReplies.delete(sid);\n  rememberSent', '  rememberSent'),
+ ("2191: edits bypass reconciliation of a pending reply", "web/js/opencode-active.js",
+  "if (saved && saved.id !== retry?.id) {", "if (false) {"),
  ("opencode B1e: a second page forgets the restored request ID", "web/js/opencode-active.js",
   "retry = restored?.text === text ? restored : null;", "retry = null;"),
  ("opencode B1e: Move and Resume launch separate OpenCode tabs", "obsidian-plugin/src/terminal.js",
@@ -1792,7 +1829,7 @@ JS_MUT = [
   '  return /^[\\p{White_Space}\\u001c-\\u001f]*$/u.test(text);', "  return !text.trim();"),
  ("opencode B1c: a definite reply refusal keeps the saved request", "web/js/opencode-active.js",
   "item && !retry && error.status >= 400 && error.status < 500 &&\n"
-  "        forgetOpenCodeReply(sid, item) && !drafts.has(sid)",
+  "        forgetOpenCodeReply(sid, item)",
   "false"),
  ("opencode B1c: form drafts are pruned without a read for their session", "web/js/opencode-active.js",
   'observed.has(form.sid) && dialog?.kind !== "permission"', 'dialog?.kind !== "permission"'),
@@ -3314,7 +3351,14 @@ def _run(cmd):
 
 def run_python(name=None):
     focused = []
-    if (name or "").startswith("opencode B1c: fresh credentialed requests"):
+    if (name or "").startswith("2191 C"):
+        focused = ["tests/test_opencode_active.py", "tests/test_opencode_b1e_live.py", "-k",
+                   "long_history_prefers or answer_after_last_visit"]
+    elif (name or "").startswith("2191:"):
+        focused = ["tests/test_codex_exec.py", "-k",
+                   "confirmed_preview or job_starts_only or cancelled_or_sensitive or usage_limit_only "
+                   "or oversized_confirmed or cancel_during_claude_preflight or cancelled_artifact_worker"]
+    elif (name or "").startswith("opencode B1c: fresh credentialed requests"):
         focused = ["tests/test_opencode_service.py", "-k", "connected_peer_before_sending_credentials"]
     elif (name or "").startswith("opencode B1c: a peer check"):
         focused = ["tests/test_opencode_service.py", "-k", "waits_briefly"]
@@ -3430,6 +3474,8 @@ SELECTOR_MUTATIONS = {
 def run_node(path, name=None):
     # A deliberately widened process selector must never run the real cleanup integration test
     # or a bundled server on the host. Its pure selector test catches both mutations directly.
+    if (name or "").startswith("2191:"):
+        return _run(["node", "--test", "tests/js/opencode-active.test.mjs"])
     if (name or "").startswith(("opencode B1c:", "opencode B1d:")) and path.startswith("obsidian-plugin/"):
         return _run(["node", "--test", "--test-name-pattern=OpenCode refuses mirror input|TUI .*route",
                      "tests/js/term-mirror.test.mjs"])

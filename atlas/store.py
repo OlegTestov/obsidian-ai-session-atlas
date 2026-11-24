@@ -42,6 +42,7 @@ def purge(conn: sqlite3.Connection, session_id: str, keep_text: bool = False, go
         if gone:
             conn.execute("DELETE FROM session_forks WHERE session_id=?", (session_id,))
             conn.execute("DELETE FROM opencode_details WHERE session_id=?", (session_id,))
+            conn.execute("DELETE FROM opencode_answer_times WHERE session_id=?", (session_id,))
         if not keep_text:
             search_rows.delete(conn, session_id)
             conn.execute("DELETE FROM parse_state WHERE session_id=?", (session_id,))

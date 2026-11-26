@@ -148,7 +148,12 @@ class SessionAtlasPlugin extends PluginData {
   async openAtlas(hash) {
     const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE);
     const leaf = existing.length ? existing[0] : this.app.workspace.getLeaf("tab");
-    await leaf.setViewState({ type: VIEW_TYPE, active: true, state: { hash: hash || "" } });
+    if (hash === undefined && existing.length && leaf.view?.frame) {
+      this.app.workspace.revealLeaf(leaf);
+      return;
+    }
+    const saved = leaf.getViewState?.()?.state?.hash;
+    await leaf.setViewState({ type: VIEW_TYPE, active: true, state: { hash: hash ?? saved ?? "" } });
     this.app.workspace.revealLeaf(leaf);
   }
 
@@ -242,12 +247,22 @@ class SessionAtlasPlugin extends PluginData {
     if (event.origin !== this.atlasOrigin()) return;
     const data = event.data;
     if (!data || (data.source !== PAGE_SOURCE && data.source !== `${PAGE_SOURCE}:${this.hostId()}`)) return;
+    if (data.type === "view-state") {
+      if (!event.source) return;
+      const leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE)
+        .find(item => item.view?.frame?.contentWindow === event.source);
+      leaf?.view.rememberHash?.(data.hash);
+      return;
+    }
     if (data.type === "resume" || data.type === "new-session") {
       if (typeof data.command !== "string" || !data.command) return;
-      const opened = this.openCommandInTerminal(data.command, data.cwd, data.title || "Claude");
+      let instance;
+      const onOpened = data.type === "new-session" ? id => { instance = id; } : undefined;
+      const opened = this.openCommandInTerminal(data.command, data.cwd, data.title || "Claude", onOpened);
       if (typeof data.launchRequest === "string" && data.launchRequest.length <= 80) {
         const report = ok => event.source?.postMessage({
           source: HOST_SOURCE, type: "launch-result", request: data.launchRequest, ok: ok === true,
+          ...(instance && {instance}),
         }, this.atlasOrigin());
         opened.then(report, () => report(false));
       }
@@ -345,6 +360,7 @@ class SessionAtlasPlugin extends PluginData {
       source: HOST_SOURCE,
       type: "tabs",
       tabs: tabs.map((tab) => this.tabInfo(tab)),
+      workspaceReservations: this.workspaceReservations(),
       // Processes whose tabs closed with the plugin: still running, offered back on the page.
       held: this.heldTabs().map(({ ptyPid, title, agent }) => ({ ptyPid, title, agent })),
       health,
@@ -356,12 +372,28 @@ class SessionAtlasPlugin extends PluginData {
     }, this.atlasOrigin());
   }
 
+  workspaceReservations() {
+    const ids = new Set((this.restorable || []).map(session => session.session_id));
+    for (const leaf of this.app.workspace.getLeavesOfType(AGENT_VIEW_TYPE)) {
+      const state = leaf.getViewState?.()?.state;
+      if (!state?.instance || leaf.view?.pty?.exited) continue;
+      ids.add(`atlas-tab:${state.instance}`);
+      if (state.kind !== "opencode") continue;
+      const route = readOpenCodeTab(this.dataDir(), state.instance);
+      const session = route?.verified ? route.current : route?.last || state.seedId;
+      if (session) ids.add(session);
+    }
+    return [...ids];
+  }
+
   /**
    * A tab for the page. A Codex tab also carries its screen state (waiting | busy | idle | null):
    * Codex writes no approval into its rollout, so only the screen shows that it waits for you.
    */
   tabInfo({ leaf, pid, title }) {
     const info = { ptyPid: pid, title };
+    const instance = leaf.view?.state?.instance;
+    if (typeof instance === "string") info.instance = instance;
     if (leaf.view instanceof AgentTerminalView && leaf.view.pty && !leaf.view.pty.exited) info.inline = true;
     const group = this.tabGroupInfo(leaf);
     if (group) info.group = group;

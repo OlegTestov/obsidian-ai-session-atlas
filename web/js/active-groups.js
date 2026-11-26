@@ -11,6 +11,7 @@ function readTabGroups(d) {
   hostGroupsOn = d.groups === true;
   hostGroups = new Map(d.tabs.filter(t => hostGroupsOn && t && Number.isInteger(t.ptyPid) && t.group && typeof t.group === "object")
     .map(t => [t.ptyPid, { id: String(t.group.id || ""), name: String(t.group.name || "").slice(0, 40),
+                           order: Number.isInteger(t.group.order) ? t.group.order : Number.MAX_SAFE_INTEGER,
                            color: GROUP_COLORS.includes(t.group.color) ? t.group.color : "grey" }]));
   const ids = new Set();
   for (const g of hostGroups.values()) { groupFilterGroups.set(g.id, g); ids.add(g.id); }

@@ -62,6 +62,7 @@ function page({ embedded = true, storage = new Map(), responses = [], acknowledg
       return response;
     },
   });
+  compileScript("launch-host.js").runInContext(ctx);
   compileScript("opencode.js").runInContext(ctx);
   return { ctx, $, document, requests, sent, timers, storage };
 }
@@ -198,6 +199,7 @@ test("passive Delete checks run only for a visible card and are at least 15 seco
   const eligible = { disabled_reason: null };
   const p = page({ responses: [eligible, eligible] });
   p.document.hidden = true;
+  p.ctx.facets = {};
   const bar = element();
   p.ctx.openCodeActionBar(bar, source);
   async function tick() {
@@ -382,4 +384,14 @@ test("an adopted legacy OpenCode attempt expires only after its TUI dies", async
   assert.equal(blockedAt(fresh), "True", "a fresh attempt still blocks Delete after the child dies");
   assert.equal(blockedAt(expired), "False", "an old attempt with a dead child releases Delete");
   assert.ok(entry.startedAt >= adoptedAt && entry.startedAt <= fresh);
+});
+
+test("a closed OpenCode leaf releases the launch wait on the next tick", async () => {
+  const { waitForOpenCodeSession } = loadSrc("opencode-tab");
+  const leaf = {};
+  let attached = true;
+  const workspace = { iterateAllLeaves(visit) { if (attached) visit(leaf); } };
+  const launched = waitForOpenCodeSession("/fixture", leaf, "opencode-test", source.session_id, workspace);
+  attached = false;
+  assert.equal(await Promise.race([launched, delay(1500, "still waiting", { ref: false })]), false);
 });

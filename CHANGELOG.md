@@ -7,6 +7,50 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.21.0] - 2026-11-26
+
+### Added
+
+- Create named workspaces on the Active tab and give each live session a fixed position. All sessions stays available as the default overview.
+- Move sessions by dragging or using the keyboard, swap occupied positions, and undo layout changes. Start a workspace from an existing tab group.
+- Launch a session into the first free workspace position. When the workspace is full, the session appears in All sessions.
+
+### Changed
+
+- The Active grid picker offers layouts from 1 × 1 through 5 × 5 in both compact and detailed views. Narrow detailed cards move their controls below the title.
+- Workspace tabs scroll without a visible scrollbar and offer a Delete workspace action with confirmation.
+- Workspace settings show Undo and Redo controls for layout edits.
+
+### Fixed
+
+- Active cards keep command suggestions when the conversation refreshes while suggestions are loading.
+- A new session can reuse slots from closed sessions and keeps slots reserved for tabs that are starting or being restored.
+- Repeating the launch shortcut while a session is starting no longer opens another tab.
+- Long titles and project labels stay within their rows in the Unassigned list.
+
+## [2.20.0] - 2026-11-25
+
+### Added
+
+- OpenCode tabs exchange Agent Mail with Claude Code and Codex. Atlas queues a notice when the receiving OpenCode session is idle and preserves its terminal draft.
+- OpenCode replies from Active can include images. Slash suggestions offer commands, skills and models from the session's folder.
+- OpenCode cards show provider quota and rate limits, with a retry time when the provider supplies one. Statistics groups OpenCode skill and subagent calls by name.
+- Set an explicit OpenCode provider and model for session summaries and handoffs. Atlas asks for confirmation of the excerpt and destination before sending.
+
+### Fixed
+
+- OpenCode replies keep their pending ID when the same session is open in two card windows.
+- Move and Resume share one OpenCode launch across a plugin reload. Closing the tab frees the next attempt promptly.
+- OpenCode cards use real message times when the transcript is unavailable and skip very large tool records in their summaries.
+- Each AI confirmation links to its own full excerpt file.
+- Claude Code and Codex replies sent from an Active card appear in its conversation immediately and stay visible while the transcript catches up.
+
+## [2.19.2] - 2026-11-24
+
+### Changed
+
+- Detailed Active cards show the full text of prompts and replies in Conversation.
+
 ## [2.19.1] - 2026-11-24
 
 ### Fixed

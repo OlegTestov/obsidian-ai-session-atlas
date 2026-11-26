@@ -5,7 +5,7 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { expect, test } from "./fixtures.mjs";
+import { expect, run, test } from "./fixtures.mjs";
 
 const recorded = JSON.parse(fs.readFileSync("tests/fixtures/opencode/service-2.3.2-active.json"));
 const value = key => recorded[key].body.data;
@@ -29,7 +29,7 @@ print(json.dumps([id for id, in c.execute("select id from session_v2 where title
     ("OpenCode fixture plain", "OpenCode fixture tools"))]))
 `, database, root], { encoding: "utf8" }));
 
-  const pty = spawn("/bin/sh", ["-c", "/bin/sleep 120 & echo $!; wait"], {
+  const pty = spawn("/bin/sh", ["-c", "/bin/sleep 240 & echo $!; wait"], {
     stdio: ["ignore", "pipe", "inherit"],
   });
   const [chunk] = await once(pty.stdout, "data");
@@ -68,6 +68,8 @@ print(json.dumps([id for id, in c.execute("select id from session_v2 where title
     calls.push({ method: req.method, parts, body });
     if (parts[0] === "info") return send(200, { pid: process.pid, version: "2.3.2", paths: { database } });
     if (parts[0] === "model") return send(200, recorded.models);
+    if (parts[0] === "command") return data([{ name: "fixture", description: "Project command" }]);
+    if (parts[0] === "skill") return data([{ id: "fixture-skill", name: "Fixture skill", description: "" }]);
     if (parts[1] === "active") return serviceState.unavailable ? send(503, {}) : data(active);
     const [, session, route, id] = parts;
     if (route === "permission") {
@@ -98,6 +100,7 @@ print(json.dumps([id for id, in c.execute("select id from session_v2 where title
       if (serviceState.dropPromptResponse) return req.socket.destroy();
       return data(serviceState.hideInbox ? {} : entry);
     }
+    if ((route === "command" || route === "model") && req.method === "POST") return send(204);
     if (route === "interrupt" && req.method === "POST") {
       delete active[session];
       return send(200, recorded.stop);
@@ -132,10 +135,48 @@ print(json.dumps([id for id, in c.execute("select id from session_v2 where title
   } };
 }
 
+test("OpenCode serializes simultaneous replies across real browser pages", async ({ page, context, lang }) => {
+  const second = await context.newPage();
+  const sid = "ses_" + "r".repeat(26);
+  const lockName = "atlas.opencode.reply." + sid;
+  const calls = [];
+  let release;
+  const hold = new Promise(resolve => { release = resolve; });
+  try {
+    for (const tab of [page, second]) {
+      await tab.route("**/api/opencode/active/reply*", async route => {
+        const operation = new URL(route.request().url()).pathname.split("/").at(-1);
+        calls.push({ operation, ...route.request().postDataJSON() });
+        if (tab === page && operation === "reply") await hold;
+        await route.fulfill({ json: { delivery: null } });
+      });
+      await tab.goto(`${run.base}/?lang=${lang}`);
+    }
+    const send = (tab, text) => tab.evaluate(({ sid, text }) =>
+      sendOpenCodeReply({ session_id: sid, opencode_generation: "fixture" }, text), { sid, text });
+    const first = send(page, "First");
+    await expect.poll(() => calls.length).toBe(1);
+    const next = send(second, "Second");
+    await expect.poll(() => second.evaluate(async key =>
+      (await navigator.locks.query()).pending.some(entry => entry.name === key), lockName)).toBe(true);
+    expect(calls).toHaveLength(1);
+    release();
+    await Promise.all([first, next]);
+    expect(calls.map(call => [call.operation, call.message_id])).toEqual([
+      ["reply", calls[0].message_id], ["reply-check", calls[0].message_id],
+    ]);
+    expect(await second.evaluate(key => JSON.parse(localStorage.getItem(key)).text, lockName)).toBe("First");
+  } finally {
+    release();
+    await second.close();
+  }
+});
+
 test("OpenCode Active uses the managed service for tab-gated decisions, replies, stop and Move", async ({
   page, lang, t,
 }) => {
-  test.setTimeout(100_000);
+  // This case waits for several five-second Active polls, including on busy runners.
+  test.setTimeout(180_000);
   const world = await startWorld();
   const { base, sid, external, pty, serviceState: native } = world;
   try {
@@ -286,7 +327,7 @@ test("OpenCode Active uses the managed service for tab-gated decisions, replies,
     await frame.getByRole("button", { name: t.detailed, exact: true }).click();
     const reply = card.locator(".answer textarea");
     await expect(reply).toBeEnabled({ timeout: 12_000 });
-    await expect(card.locator(".clip")).toHaveCount(0);
+    await expect(card.locator(".clip")).toBeEnabled();
     await expect(card.locator(".tags .grp.add")).toHaveCount(1);
     await expect(card.locator(".tags > :first-child")).toHaveClass(/agent-badge/);
     native.hideInbox = true;
@@ -312,9 +353,12 @@ test("OpenCode Active uses the managed service for tab-gated decisions, replies,
     await frame.locator("#modal").press("Escape");
     const retry = async () => {
       const body = frame.locator("body");
-      await expect.poll(() => body.evaluate((_, id) => !openCodeReplying.has(id) && !openCodeReplyChecks.has(id), sid))
-        .toBe(true);
-      return body.evaluate((_, [session_id, text]) => sendOpenCodeReply({ session_id, opencode_generation: "fixture" }, text), [sid, original]);
+      await expect.poll(() => body.evaluate(async (_, [session_id,text]) => {
+        // A scheduled reconciliation can start between separate calls into the page.
+        if (openCodeReplying.has(session_id) || openCodeReplyChecks.has(session_id)) return false;
+        await sendOpenCodeReply({ session_id, opencode_generation:"fixture" },text);
+        return true;
+      }, [sid,original])).toBe(true);
     };
     world.setRoute(external);
     const refused = page.waitForResponse(response => response.url().endsWith("/api/opencode/active/reply")
@@ -340,6 +384,46 @@ test("OpenCode Active uses the managed service for tab-gated decisions, replies,
     delete native.active[external];
     await refresh();
     await expect(outside).toHaveCount(0, { timeout: 12_000 });
+
+    const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC", "base64");
+    await card.locator('.answer input[type="file"]').setInputFiles({ name: "fixture.png", mimeType: "image/png", buffer: png });
+    await expect(card.locator(".answer .thumbs img")).toHaveCount(1);
+    await card.locator(".answer .send").click();
+    await expect.poll(() => native.calls.filter(c => c.method === "POST" && c.parts[2] === "prompt")
+      .at(-1)?.body.files).toEqual([{ uri: expect.stringMatching(/^file:\/\/.+\/uploads\/[a-f0-9]{32}\.png$/), name: "fixture.png" }]);
+    await expect(card.locator(".answer .thumbs img")).toHaveCount(0);
+
+    let releasePicker;
+    const pickerGate = new Promise(resolve => { releasePicker = resolve; });
+    const getPicker = /\/api\/opencode\/active\/pickers$/;
+    await page.route(getPicker, async route => { await pickerGate; await route.continue(); }, {times:1});
+    const pickerRequested = page.waitForRequest(getPicker);
+    await reply.fill("/fixture");
+    try {
+      await pickerRequested;
+      await frame.locator("body").evaluate(() => window.renderActive(null, true));
+    } finally { releasePicker(); }
+    const suggestion = card.getByRole("option", { name: /\/fixture/ });
+    await suggestion.click({timeout:12000});
+    await expect(reply).toHaveValue("/fixture ");
+    await reply.fill("/fixture from the card");
+    await card.locator(".answer .send").click();
+    await expect.poll(() => native.calls.find(c => c.method === "POST" && c.parts[2] === "command")?.body)
+      .toEqual({ name: "fixture", text: "from the card" });
+    await expect(reply).toHaveValue("");
+
+    await reply.fill("/model ");
+    const model = card.getByRole("option").filter({ hasText: "fake" }).first();
+    await model.click();
+    await expect(reply).toHaveValue("/model atlas/fake");
+    await card.locator(".answer .send").click();
+    await expect.poll(() => native.calls.find(c => c.method === "POST" && c.parts[2] === "model")?.body)
+      .toEqual({ model: { id: "fake", providerID: "atlas" } });
+    await expect(reply).toHaveValue("");
+
+    await reply.fill("/skill ");
+    await card.getByRole("option", { name: "Fixture skill" }).click();
+    await expect(reply).toHaveValue(/OpenCode.*fixture-skill/);
   } finally {
     await world.close();
   }

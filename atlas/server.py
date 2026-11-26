@@ -45,6 +45,7 @@ from . import (
     opencode_feed,
     opencode_live,
     opencode_live_actions,
+    opencode_mail,
     opencode_service,
     plans,
     relocate,
@@ -53,6 +54,7 @@ from . import (
     stats_cache,
     touched,
     uploads,
+    workspaces,
 )
 from .messages import msg
 
@@ -399,6 +401,8 @@ class Handler(BaseHTTPRequestHandler):
                                         "version": runtime_version()})
             if url.path == "/api/limits":
                 return self._json(200, _subscription_limits(live=True))
+            if url.path == "/api/workspaces":
+                return self._json(200, workspaces.read())
             if url.path == "/api/stats":
                 # A count over a large index takes seconds: the last snapshot comes at once. Before
                 # any database access here: the reindex check below may wait for the indexer's
@@ -478,7 +482,8 @@ class Handler(BaseHTTPRequestHandler):
                     if view == "files":
                         return self._json(200, dict(touched.session_files(path, agent=kind), session_id=sid,
                                                     home=os.path.expanduser("~")))
-                    page = feed.feed_page(path, turns, with_events=view == "steps", agent=kind, **cursors)
+                    page = feed.feed_page(path, turns, with_events=view == "steps",
+                                          agent=kind, full_text=view == "turns", **cursors)
                     return self._json(200, dict(page, session_id=sid))
                 if url.path.startswith("/api/active/plan/"):
                     sid = url.path.rsplit("/", 1)[-1]
@@ -524,6 +529,14 @@ class Handler(BaseHTTPRequestHandler):
         body = self._body(UPLOAD_BODY_LIMIT if url.path == "/api/upload" else 1_000_000)
         if not isinstance(body, dict):
             return self._json(400, {"error": msg("server.no_path")})
+        if url.path == "/api/workspaces":
+            try:
+                value = workspaces.save(body.get("revision"), body.get("boards"))
+            except workspaces.Conflict:
+                return self._json(409, {"error": msg("workspace.conflict"), "state": "conflict"})
+            except (OSError, ValueError):
+                return self._json(400, {"error": msg("workspace.save_failed")})
+            return self._json(200, value)
         if url.path.startswith("/api/opencode/active/"):
             try:
                 operation = url.path.rsplit("/", 1)[-1]
@@ -546,7 +559,8 @@ class Handler(BaseHTTPRequestHandler):
             if url.path != "/api/override" and session_id:
                 # On conversion POSTs body.agent is the target. The catalog owns the source kind.
                 kind = agents.session_agent(conn, session_id)
-                if kind is None and url.path == "/api/opencode/resume" and agents.valid_id(agents.OPENCODE, session_id):
+                if (kind is None and url.path in {"/api/opencode/resume", "/api/opencode/mail/nudge"}
+                        and agents.valid_id(agents.OPENCODE, session_id)):
                     kind = agents.OPENCODE
                 if not agents.valid_id(kind if kind is not None else agents.CLAUDE, session_id):
                     return self._json(400, {"error": msg("session_id.invalid")})
@@ -554,7 +568,10 @@ class Handler(BaseHTTPRequestHandler):
                     if url.path in {"/api/terminal", "/api/launch"}:
                         agents.require(kind, (agents.CLAUDE, agents.CODEX), "session launch")
                     if url.path in LLM_PATHS | AI_PREVIEWS | {"/api/export"}:
-                        agents.require(kind, (agents.CLAUDE, agents.CODEX), "AI features")
+                        manual = (url.path in {"/api/preview", "/api/job", "/api/export"}
+                                  and runner.opencode_artifacts_enabled())
+                        if not manual:
+                            agents.require(kind, (agents.CLAUDE, agents.CODEX), "AI features")
             if not (url.path == "/api/auto-classify" and body.get("enabled") is False):
                 if url.path in LLM_PATHS:
                     runner.require_llm()        # "AI off" first, as before the registry
@@ -569,6 +586,8 @@ class Handler(BaseHTTPRequestHandler):
                 "/api/opencode/resume": self._opencode_resume,
                 "/api/opencode/fork": self._opencode_fork,
                 "/api/opencode/archive": self._opencode_archive,
+                "/api/opencode/mail/registration": self._opencode_mail_registration,
+                "/api/opencode/mail/nudge": self._opencode_mail_nudge,
                 "/api/classify/preview": self._classify_preview,
                 "/api/classify": self._classify,
                 "/api/upload": self._upload,
@@ -709,6 +728,7 @@ class Handler(BaseHTTPRequestHandler):
             "destinations": sorted(export_destinations()),
             "auto_classify": autoclassify.status(conn),
             "llm_enabled": runner.llm_enabled(),
+            "opencode_artifacts_enabled": runner.opencode_artifacts_enabled(),
         }
 
     def _prompts(self, conn, session_id: str) -> dict:
@@ -727,7 +747,7 @@ class Handler(BaseHTTPRequestHandler):
     def _preview(self, conn, body) -> None:
         sid = body["session_id"]
         kind = body.get("artifact_kind", "handoff")
-        backend = runner.backend()
+        backend = runner.artifact_backend()
         payload = runner.build_payload(conn, sid, kind, prepare_retry=backend == runner.CLAUDE_BACKEND)
         preview = enrich.preview(conn, sid, kind, backend=backend, payload=payload)
         key = (sid, kind, preview["excerpt_hash"], preview["content_hash"], backend,
@@ -745,7 +765,7 @@ class Handler(BaseHTTPRequestHandler):
         kind = body.get("artifact_kind", "handoff")
         if kind not in actions.JOB_KINDS:
             return self._json(400, {"error": msg("server.unknown_artifact")})
-        backend = runner.backend()                  # the agent comes from settings, never from the page
+        backend = runner.artifact_backend()         # the agent comes from settings, never from the page
         model, effort = runner.model_for(kind, backend)  # from server settings
         if body.get("confirmed") is not True:
             return self._json(400, {"error": msg("server.need_confirm")})
@@ -845,6 +865,21 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, result)
         result = actions.rename_session(conn, body["session_id"], body.get("title", ""),
                                         write_to_transcript=body.get("to_claude", True))
+        self._json(200, result)
+
+    def _opencode_mail_registration(self, _conn, body):
+        owner, root = body.get("owner"), body.get("root")
+        if (not isinstance(owner, str) or not opencode_mail.agent_mail.UUID_RE.fullmatch(owner)
+                or (root is not None and (not isinstance(root, str) or len(root) > 4096
+                    or "\0" in root or not os.path.isabs(root)))):
+            return self._json(400, {"error": msg("server.no_path")})
+        self._json(200, {"ready": self.server.opencode_mail.sync(owner, root)})
+
+    def _opencode_mail_nudge(self, _conn, body):
+        try:
+            result = self.server.opencode_mail.nudge(body.get("owner"), body.get("session_id"), body.get("letter"))
+        except ValueError as exc:
+            return self._json(400, {"error": str(exc)})
         self._json(200, result)
 
     def _opencode_resume(self, _conn, body):
@@ -1016,12 +1051,13 @@ class Server(ThreadingHTTPServer):
     def __init__(self, *args, **kwargs):
         self.artifact_previews = OrderedDict()
         self.artifact_preview_lock = threading.Lock()
+        self.opencode_mail = opencode_mail.Runtime()
         super().__init__(*args, **kwargs)
 
     def prune_artifact_previews(self):
         now = time.monotonic()
         entries = self.artifact_previews
-        while entries and now - next(iter(entries.values()))[0] >= 1800:
+        while entries and now - next(iter(entries.values()))[0] >= runner.PREVIEW_TTL_SECONDS:
             entries.popitem(last=False)
         return entries, now
 
@@ -1045,6 +1081,8 @@ def serve(port: int = PORT) -> None:
             actions.interrupt_jobs(conn)
         finally:
             conn.close()
+        with _active_lock:
+            opencode_live._live.start()
         autoclassify.start_scheduler(stop)  # does nothing while auto-classification is off
         print(f"session-atlas listening on http://{HOST}:{port}", flush=True)
         httpd.serve_forever()
@@ -1054,5 +1092,8 @@ def serve(port: int = PORT) -> None:
             if _catchup_proc is not None:
                 _catchup_proc.stop()
         httpd.server_close()         # after /api/shutdown the port is free at once
+        httpd.opencode_mail.shutdown()
+        with _active_lock:
+            opencode_live._live.shutdown()
         if main_thread:
             signal.signal(signal.SIGTERM, previous_term)

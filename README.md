@@ -47,6 +47,12 @@ runs a small Python server on `127.0.0.1`. Atlas's optional AI features send dat
   known. OpenCode cards show the latest settled response, waiting decisions, queued replies and
   context usage when the model limit is available. Use **Move** to open a running OpenCode session
   in Atlas while its other clients stay open.
+
+  **All sessions** keeps the default overview. Create named workspaces to give live session cards
+  fixed positions in layouts from 1 × 1 to 5 × 5. In **Manage workspaces**, drag a session to a slot
+  or select the session and then the slot. You can swap occupied slots, return a session to
+  **Unassigned**, and create a workspace from a tab group. **+ Session** fills the first free slot
+  in the current workspace or opens the session in **All sessions** if the workspace is full.
 - **Statistics.** Tokens, active time, cost at API prices and cache hit rate over a period, broken
   down by agent (Claude Code, Codex, OpenCode), model, category, topic, session, tool, skill and
   subagent, plus a weekly rhythm heatmap. Claude Code replies are priced at Anthropic API prices,
@@ -182,11 +188,14 @@ Search, Active, Statistics and terminal tabs support OpenCode 2. Atlas was check
   the tab can reopen its last session after a restart.
 - **Active.** Cards show running sessions on the managed service and sessions open in Atlas tabs.
   Idle sessions outside Atlas tabs stay available in Search. From an Atlas tab's card you can allow
-  a permission once or reject it, answer or dismiss a question, interrupt a run, and queue a text
-  reply. A queued reply leaves any unsent text in the terminal composer intact. The detailed card
-  offers Conversation, Steps and Files. Terminal is available when the session is open in Atlas.
-  Agent Mail, AI summaries and classification, **Resume with…**, and subscription limits are still
-  unavailable for OpenCode.
+  a permission once or reject it, answer or dismiss a question, interrupt a run, and queue a reply
+  with text or images. The terminal draft stays intact. Type `/` to see commands, skills and models
+  available in the session's folder. The detailed card offers Conversation, Steps and Files.
+  Terminal is available when the session is open in Atlas. Provider quota and rate limits appear on
+  the affected card, with the next retry time when available.
+- **AI summaries and handoffs.** In **Settings → AI Session Atlas → AI features**, enter an
+  OpenCode `provider/model`. The preview shows the excerpt and the selected OpenCode model before
+  each send.
 - **Copy session** creates a native fork through the local OpenCode service and opens it in a new tab.
   **Rename**, **Archive**, **Unarchive** and **Delete** also go through OpenCode, and Atlas reads back
   the result. The Delete confirmation lists the child sessions that OpenCode will also remove.
@@ -322,12 +331,13 @@ many sessions the first index can take a few minutes.
 
 ### Agent Mail
 
-Claude Code and Codex can write to each other by the title of an open Atlas terminal tab.
-Another app that uses Agent Mail can list its opencode tabs too, and mail reaches them the same way.
+Claude Code, Codex and OpenCode can write to each other by the title of an open Atlas terminal tab.
+Atlas registers OpenCode's mail tools for the folders of its open tabs. OpenCode gets one queued
+notification for pending letters when the session is idle.
 
 Nothing to set up. Every Claude Code or Codex session you start in an Atlas agent tab gets the Agent Mail MCP server bundled with Atlas, and its mail tools run without approval prompts. Atlas passes the server in the launch command, so your own `~/.claude.json` and Codex `config.toml` stay untouched. Sessions started outside Atlas, for example in a regular terminal, do not get Agent Mail.
 
-To use it, ask one agent: “Write to the session titled ‘Review the report’ and ask it to check the draft.” Sessions already open pick the server up after you resume them in a tab. **Wake agents on new mail** in **Settings → AI Session Atlas → Agents** is on by default; switching it off removes the server from newly started tabs.
+To use it, ask one agent: “Write to the session titled ‘Review the report’ and ask it to check the draft.” Sessions already open pick the server up after you resume them in a tab. **Wake agents on new mail** in **Settings → AI Session Atlas → Agents** is on by default; switching it off removes the server from newly started Claude Code and Codex tabs and unregisters it from open OpenCode tabs.
 
 Only one matching title is required to send. If several open sessions have that title, choose the recipient before sending. An open recipient tab is prompted once it is ready for input.
 

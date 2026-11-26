@@ -10,6 +10,7 @@ from urllib.parse import urlencode
 
 from . import (
     active,
+    activity,
     agent_opencode as source,
     agents,
     opencode_parse as parse,
@@ -24,6 +25,7 @@ VERIFY_SECONDS = 2
 MODEL_TTL = 600
 TAIL_ROWS = 64
 MESSAGE_SCAN_ROWS = 96
+MAX_CARD_RECORD_BYTES = 1024 * 1024
 
 
 class LiveService:
@@ -39,6 +41,17 @@ class LiveService:
         self._card_database = None
         self._verification = None
         self._verification_key = None
+        self._closed = False
+
+    def start(self):
+        self._closed = False
+
+    def shutdown(self):
+        self._closed = True
+        self.invalidate()
+        verification, self._verification = self._verification, None
+        if verification is not None:
+            verification.add_done_callback(_close_verification)
 
     @property
     def verifying(self):
@@ -73,7 +86,7 @@ class LiveService:
             self._start_verification(key)
 
     def _start_verification(self, key):
-        if key is not None and self._verification is None:
+        if not self._closed and key is not None and self._verification is None:
             database = key[1][0]
             self._verification_key = key
             self._verification = Future()
@@ -158,6 +171,15 @@ def _database_key(database):
     return database, st.st_dev, st.st_ino
 
 
+def _close_verification(verification):
+    try:
+        _, client = verification.result()
+    except Exception:
+        return
+    if client is not None:
+        client.close_poll()
+
+
 def _verify(database, result):
     budget = service.PollBudget(VERIFY_SECONDS, VERIFY_SECONDS)
     client = None
@@ -190,16 +212,17 @@ def _data(row):
 
 
 def _messages(db, sid):
+    # Card polling only needs a summary. Do not copy giant tools or media into Python;
+    # the independently paged conversation can still read the source record in full.
     prompts = db.execute("""
-        SELECT time_created, data FROM session_message
-        WHERE session_id=? AND type='user' ORDER BY seq DESC
-    """, (sid,))
+        SELECT time_created, CASE WHEN length(CAST(data AS BLOB))<=? THEN data END AS data
+        FROM session_message WHERE session_id=? AND type='user' ORDER BY seq DESC LIMIT ?
+    """, (MAX_CARD_RECORD_BYTES, sid, MESSAGE_SCAN_ROWS))
     user = next(((row, text) for row in prompts if (text := parse.text_value(_data(row).get("text")))), None)
     rows = db.execute("""
-        SELECT id, type, seq, time_created, data FROM session_message
-        WHERE session_id=?
-        ORDER BY seq DESC LIMIT ?
-    """, (sid, MESSAGE_SCAN_ROWS))
+        SELECT id, type, seq, time_created, CASE WHEN length(CAST(data AS BLOB))<=? THEN data END AS data
+        FROM session_message WHERE session_id=? ORDER BY seq DESC LIMIT ?
+    """, (MAX_CARD_RECORD_BYTES, sid, MESSAGE_SCAN_ROWS))
     tail, answer = [], None
     for row in rows:
         kind = row["type"]
@@ -264,6 +287,29 @@ def _pending(sid, pid, running, live):
     return waiting, dialog, inbox, known
 
 
+
+def _provider_limit(tail, running):
+    if running is None:
+        return None
+    for row, data in tail:
+        kind = row["type"]
+        if kind == "user":
+            break
+        retry = parse._object(data.get("retry")) if running and kind == "assistant" else {}
+        error = parse._object(retry.get("error") if retry else data.get("error"))
+        if kind not in {"assistant", "idle"} or (kind == "idle" and running):
+            continue
+        error_type = error.get("type")
+        marker = {"provider.rate-limit": "rate", "provider.quota": "quota"}.get(
+            error_type if isinstance(error_type, str) else None)
+        if marker:
+            return {"kind": marker, "retry_at": active._iso_ms(retry.get("at"))}
+        if kind == "assistant" or (kind == "idle" and data.get("outcome") != "failed"):
+            # A newer result or in-progress assistant supersedes previous provider errors.
+            break
+    return None
+
+
 def _card(conn, row, messages, table, sid, pid, running, live):
     info = search._load_session(conn, sid) or {}
     tail, user, answer = messages
@@ -277,15 +323,17 @@ def _card(conn, row, messages, table, sid, pid, running, live):
             SELECT d.last_answer, t.ts FROM opencode_details d JOIN sessions s USING(session_id)
             JOIN sources f ON s.source_path=f.path
             LEFT JOIN opencode_answer_times t ON t.session_id=d.session_id AND f.sig LIKE ?
-            WHERE d.session_id=? AND (f.sig LIKE '[4,%' OR f.sig LIKE '[5,%' OR f.sig LIKE ?)
+            WHERE d.session_id=? AND (f.sig LIKE '[4,%' OR f.sig LIKE '[5,%' OR f.sig LIKE '[6,%' OR f.sig LIKE ?)
         """, (f"[{source.VERSION},%", sid, f"[{source.VERSION},%")).fetchone()
         if indexed:
             reply = indexed["last_answer"]
             indexed_reply_at = active._iso_ms(indexed["ts"])
-    updated = (active._iso_ms(row["time_updated"]) if row else None) or info.get("last_activity_at")
-    updated = updated or (active._iso_ms(row["time_created"]) if row else None) or info.get("started_at")
-    updated = updated or "1970-01-01T00:00:00+00:00"
-    prompt_at = (_timestamp(user) or updated) if prompt else None
+    prompt_at = _timestamp(user)
+    if prompt and not user:
+        indexed_prompt = conn.execute(
+            "SELECT MAX(ts) FROM activity WHERE session_id=? AND kind=? AND sub=0", (sid, activity.PROMPT)
+        ).fetchone()
+        prompt_at = indexed_prompt[0]
     completed_at = active._iso_ms(answer[0].get("time_completed")) if answer else None
     reply_at = (completed_at or _timestamp(answer) or indexed_reply_at) if reply else None
     cwd = row["directory"] if row else info.get("cwd_last")
@@ -324,11 +372,12 @@ def _card(conn, row, messages, table, sid, pid, running, live):
         "context_window": live.window(cwd, model) if context is not None and running is not None else None,
         "started_at": info.get("started_at") or (active._iso_ms(row["time_created"]) if row else None),
         "status_at": None,
-        "last_message_at": max(filter(None, (prompt_at, reply_at)), default=None),
+        "last_message_at": max(filter(None, (prompt_at, reply_at)), key=active._as_datetime, default=None),
         "reply_tail": active.markdown_tail(reply), "reply_len": len(reply), "reply_at": reply_at,
         "progress": None, "prompt": active.markdown_tail(prompt) if prompt else None, "prompt_at": prompt_at,
         "prompt_images": 0, "interrupted_at": interrupted, "queued": queued_entries(inbox),
         "tasks": None, "progress_at": None, "opencode_dialog": dialog,
+        "opencode_provider_limit": _provider_limit(tail, running),
         "opencode_pending_known": pending_known, "opencode_running": running,
         "opencode_verifying": live.verifying,
         "opencode_generation": live.client.generation if live.client is not None else None,
@@ -403,7 +452,7 @@ def _fallback(live, table, tabs):
              **_process_fields(table, pid), "status": "idle", "activity": "idle",
              "opencode_running": None, "opencode_generation": None, "opencode_verifying": verifying,
              "waiting_for": None,
-             "opencode_dialog": None, "opencode_pending_known": False, "queued": []}
+             "opencode_dialog": None, "opencode_provider_limit": None, "opencode_pending_known": False, "queued": []}
             for sid, pid in sorted(tabs.items())]
 
 

@@ -419,6 +419,29 @@ def test_recursive_json_is_a_request_failure(service):
     assert exc.value.state == "request_failed"
 
 
+@pytest.mark.parametrize("service", ["HTTP/1.1"], indirect=True)
+def test_discovery_closes_the_connection_after_invalid_json(service, monkeypatch):
+    _, register, _, reply, _ = service
+    register()
+    reply.return_value = (200, b"{")
+    original = oc.http.client.HTTPConnection
+    connections = []
+
+    def connect(*args, **kwargs):
+        conn = original(*args, **kwargs)
+        connections.append(conn)
+        return conn
+
+    monkeypatch.setattr(oc.http.client, "HTTPConnection", connect)
+    try:
+        assert oc.discover(budget=oc.PollBudget(2, 2)).state == "unauthorized"
+        assert len(connections) == 1
+        assert connections[0].sock is None
+    finally:
+        for conn in connections:
+            conn.close()
+
+
 def test_active_peer_budget_defaults_to_150ms(monkeypatch):
     monkeypatch.setattr(oc.time, "monotonic", lambda: 1.0)
     budget = oc.PollBudget()

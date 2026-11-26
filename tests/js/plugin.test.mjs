@@ -194,6 +194,52 @@ it("reports the Atlas iframe's initial pane visibility and both resize transitio
   }
 });
 
+it("remembers the selected workspace from its own cross-origin catalog frame", () => {
+  const host = new SessionAtlasPlugin();
+  host.atlasOrigin = () => good.origin;
+  const view = new AtlasView({},host);
+  const source = { get location() { throw new Error("cross-origin"); } };
+  view.frame = {contentWindow:source};
+  let saves = 0;
+  view.app = host.app = {workspace:{getLeavesOfType:() => [{view}], requestSaveLayout:() => { saves++; }}};
+  const hash = "#view=active&aw=week&ws=team";
+  const event = {origin:good.origin,source,data:{source:"session-atlas",type:"view-state",hash}};
+  host.handleMessage({...event,source:{}});
+  host.handleMessage({...event,origin:EVIL});
+  host.handleMessage({...event,data:{...event.data,hash:"https://example.com/"}});
+  assert.equal(saves,0);
+  host.handleMessage(event);
+  host.handleMessage(event);
+  assert.deepEqual(view.getState(),{hash});
+  assert.equal(saves,1);
+});
+
+it("opening an existing catalog keeps its workspace and accepts an explicit destination", async () => {
+  const host = new SessionAtlasPlugin();
+  const hash = "#view=active&aw=week&ws=team";
+  const applied = [];
+  const leaf = {view:{}, getViewState:() => ({state:{hash}}), setViewState:state => applied.push(state.state.hash)};
+  let revealed = 0;
+  host.app = {workspace:{getLeavesOfType:() => [leaf], revealLeaf:() => { revealed++; }}};
+  await host.openAtlas();
+  leaf.view.frame = {};
+  await host.openAtlas();
+  await host.openAtlas("#view=search");
+  assert.deepEqual(applied,[hash,"#view=search"]);
+  assert.equal(revealed,3);
+});
+
+it("opening a group in a deferred catalog keeps the existing workspace and layout", async () => {
+  const host = new SessionAtlasPlugin();
+  const hash = "#am=full&lc=3x3&ws=team&aw=week";
+  const applied = [];
+  const leaf = {view:{}, getViewState:() => ({state:{hash}}), setViewState:state => applied.push(state.state.hash)};
+  host.app = {workspace:{getLeavesOfType:() => [leaf], revealLeaf() {}}};
+  host.groups = {groups:{group:{}}};
+  await host.workspaceFromGroup("group");
+  assert.deepEqual(applied,[hash + "&view=active&wg=group"]);
+});
+
 describe("catalog commands run only from the catalog", () => {
   const cases = [
     ["foreign origin", { ...good, origin: EVIL }, false],
@@ -3000,6 +3046,11 @@ describe("Codex new sessions from the catalog", () => {
   it("the tabs reply tells the page which agents are on", async () => {
     const p = new SessionAtlasPlugin();
     p.terminalReport = async () => ({ tabs: [], health: { ok: true } });
+    p.restorable = [{session_id:"restore-me"}];
+    p.app = {workspace:{getLeavesOfType:() => [
+      {isDeferred:true, getViewState:() => ({state:{instance:"loading",kind:"codex"}})},
+      {view:{pty:{exited:true}}, getViewState:() => ({state:{instance:"closed",kind:"codex"}})},
+    ]}};
     const sent = [];
     const target = { postMessage: (msg, origin) => sent.push([msg, origin]) };
     p.settings = { agents: { codex: true } };
@@ -3009,6 +3060,7 @@ describe("Codex new sessions from the catalog", () => {
     assert.deepEqual(sent.map(([m]) => m.agents), [
       { claude: true, codex: true, opencode: false }, { claude: true, codex: false, opencode: false },
     ]);
+    assert.deepEqual(sent[0][0].workspaceReservations,["restore-me","atlas-tab:loading"]);
     assert.ok(sent.every(([m, origin]) => m.type === "tabs" && m.source === "session-atlas-host" && origin === p.atlasOrigin()));
   });
 });
@@ -3512,17 +3564,22 @@ it("OpenCode resume only acknowledges a fresh route for the requested session", 
   assert.equal(await launched, true);
 });
 
-it("OpenCode Move and Resume share a launch result and can retry a failed launch", async () => {
+it("OpenCode Move and Resume share a launch across plugin reload and can retry a failure", async () => {
   const plugin = new SessionAtlasPlugin();
   const sid = "ses_" + "b".repeat(26);
   const command = `cd /tmp && opencode /tmp --session ${sid}`;
   const launches = [];
-  plugin.revealOpenCodeSession = () => null;
-  plugin.openAgent = (_agent, options) => new Promise(resolve => launches.push([options.label, resolve]));
+  const workspace = {};
+  const reloaded = new SessionAtlasPlugin();
+  for (const instance of [plugin, reloaded]) {
+    instance.app = { workspace };
+    instance.revealOpenCodeSession = () => null;
+    instance.openAgent = (_agent, options) => new Promise(resolve => launches.push([options.label, resolve]));
+  }
   for (const succeeded of [false, true]) {
     const move = plugin.openCommandInTerminal(command, "/tmp", "Move");
     await Promise.resolve();
-    const resume = plugin.openCommandInTerminal(command, "/tmp", "Resume");
+    const resume = reloaded.openCommandInTerminal(command, "/tmp", "Resume");
     await Promise.resolve();
     assert.deepEqual(launches.map(([label]) => label), ["Move"]);
     launches.pop()[1](succeeded);

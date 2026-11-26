@@ -173,6 +173,12 @@ export function defineRuntimeTests(bundle) {
       assert.equal(status.data.sessions, 0);
     });
 
+    it("sends the full JSON body from the host to the server", async () => {
+      const result = await plugin.atlasRequest("POST", "/api/opencode/mail/registration",
+        { owner: "00000000-0000-4000-8000-000000000001", root: null });
+      assert.deepEqual(result, { status: 200, data: { ready: [] } });
+    });
+
     it("reads the macOS version", async () => {
       const macos = await plugin.macosVersion();
       assert.match(macos || "", /^\d+\.\d+/);

@@ -441,12 +441,11 @@ def test_layout_picker_has_a_css_class_for_every_cell():
     """Layout sizes use classes only: the CSP blocks style. No class means the choice silently fails."""
     here = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     html = page_source(here)
-    for n in range(1, 6):                       # compact view — up to 5 × 5
+    for n in range(1, 6):
         assert f".agrid.c{n}{{grid-template-columns:repeat({n}," in html
         assert f".agrid.r{n}{{grid-auto-rows:" in html
-    for n in range(1, 5):                       # detailed view — up to 4 × 4
         assert f".agrid.full.r{n}{{grid-auto-rows:" in html
-    assert "const LAYOUT_MAX = { compact: 5, full: 4 };" in html
+    assert "const LAYOUT_CELLS = 5;" in html
 
 
 def test_keys_hint_is_a_button_that_opens_help():

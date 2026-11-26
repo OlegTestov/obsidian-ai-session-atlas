@@ -256,11 +256,12 @@
       "help.find7": "Above the list you see which filters are on. The cross removes one, “clear all” removes all at once.",
       "help.find8": "Automated runs (hooks, the nightly agent) are hidden: there are usually many, and they are not your conversations. Tick “show automated runs” to see them.",
       "help.activeH": "The “Active” tab",
+      "help.workspaces": "“All sessions” is the default overview. In “Manage workspaces”, drag a session into a fixed position or select the session and then the slot.",
       "help.active1": "All Claude Code and Codex sessions running right now, except automated runs. Updates every 5 seconds; while you look at the tab, cards stay in place, pinned ones on top of their section.",
       "help.active2": "Sections: “Needs your decision”, “Waiting for you”, “Working”. “● working” — the agent is doing something; “working in background” (dashed border) — the turn is over, but a background command, subagent or /loop will wake the session; “needs your decision” — a question or a permission request is open; “○ waiting” — done and waiting for you. The goal label means a /goal is active.",
       "help.active3": "“detailed” — each card shows the latest messages (how many is set in the plugin settings; “show all” expands a long reply) and a reply box. Enter — send, Shift+Enter — new line. The text is typed into the terminal tab as if you typed it; while the agent is working it gets queued.",
       "help.active4": "The grid button next to the filters sets how many cards fit on screen: move the mouse "
-        + "over the cells and click: up to 5 × 5 in compact view, up to 4 × 4 in detailed view. Each view "
+        + "over the cells and click. Both compact and detailed views support 1 × 1 through 5 × 5. Each view "
         + "has its own layout; “auto” is the default.",
       "help.active5": "The agent's reply is shown with Markdown formatting: headings, lists, tables, code, links.",
       "help.active6": "After sending, the card shows your message until the agent answers it.",
@@ -545,11 +546,12 @@
       "help.find7": "Над списком видно, какие фильтры стоят сейчас. Крестик снимает один, «сбросить всё» — сразу все.",
       "help.find8": "Автоматические запуски (хуки, ночной агент) скрыты: обычно их много, и это не твои разговоры. Показать их — галочка «показывать автоматические запуски».",
       "help.activeH": "Вкладка «Активные»",
+      "help.workspaces": "«Все сессии» открываются по умолчанию. В окне «Настроить воркспейсы» перетащи сессию на нужное место или выбери сессию, а затем место.",
       "help.active1": "Все запущенные сейчас сессии Claude Code и Codex, кроме автоматических запусков. Обновляется каждые 5 секунд; пока ты смотришь на вкладку, карточки не прыгают, закреплённые — сверху своего раздела.",
       "help.active2": "Разделы: «Нужно решение», «Ждут тебя», «Работают». «● работает» — агент что-то делает; «работает в фоне» (пунктирная рамка) — ход закончен, но сессию разбудит фоновая команда, субагент или /loop; «нужно твоё решение» — открыт вопрос или запрос разрешения; «○ ждёт ответа» — закончил и ждёт тебя. Метка goal — активна цель /goal.",
       "help.active3": "«Подробно» — в каждой карточке последние сообщения (сколько — задаётся в настройках плагина; длинный ответ раскрывает «показать целиком») и поле ответа. Enter — отправить, Shift+Enter — перенос строки. Текст печатается во вкладку терминала, как будто набран тобой; пока агент работает — встанет в очередь.",
       "help.active4": "Кнопка с сеткой рядом с фильтрами — сколько карточек на экран: веди мышью по клеткам "
-        + "и кликни: в компактном виде до 5 × 5, в подробном до 4 × 4. У каждого вида своя "
+        + "и кликни. В компактном и подробном видах доступны сетки от 1 × 1 до 5 × 5. У каждого вида своя "
         + "раскладка; «авто» — как по умолчанию.",
       "help.active5": "Ответ агента показан с разметкой Markdown: заголовки, списки, таблицы, код, ссылки.",
       "help.active6": "После отправки в карточке видно твоё сообщение — пока агент на него не ответит.",

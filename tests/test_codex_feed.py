@@ -85,6 +85,17 @@ def test_paging_by_time(write_rollout):
     assert [t["prompt"] for t in live["turns"]] == ["прогони тесты"]
 
 
+def test_full_live_codex_feed_keeps_long_text_when_paging(write_rollout):
+    prompt = "Начало вопроса " + "данные " * 400 + "конец вопроса"
+    reply = "Начало ответа " + "данные " * 800 + "конец ответа"
+    path = write_rollout([cx_meta(TID), cx_user(prompt), cx_agent(reply), *second_turn()], thread_id=TID)
+    [latest] = feed.feed_page(path, turns=1, full_text=True)["turns"]
+    [older] = feed.feed_page(path, turns=1, before_id=latest["id"], full_text=True)["turns"]
+    [live] = feed.feed_page(path, since_id=latest["id"], full_text=True)["turns"]
+    assert (older["prompt"], older["reply"]) == (prompt, reply)
+    assert live == latest
+
+
 def test_prompt_twice_as_event_and_item_counts_once_but_a_real_repeat_stays(write_rollout):
     item = ev({"type": "item_completed", "item": {"type": "UserMessage",
                                                   "content": [{"type": "text", "text": "дальше"}]}},
@@ -111,6 +122,14 @@ def test_images_and_reasoning_are_never_decoded(write_rollout, monkeypatch):
     reasoning = cx("response_item", {"type": "reasoning", "summary": [], "encrypted_content": "QUJD"})
     feed.feed_page(write_rollout([cx_meta(TID), big, reasoning, cx_user("привет"), cx_agent("ок")], thread_id=TID))
     assert not any(b"QUJD" in (s if isinstance(s, bytes) else s.encode()) for s in seen)
+
+
+def test_image_only_prompt_reaches_the_conversation(write_rollout):
+    image = ev({"type": "user_message", "message": "", "local_images": ["/tmp/diagram.png"]},
+               "2026-09-01T10:00:02.000Z")
+    path = write_rollout([cx_meta(TID), image, cx_agent("вижу изображение")], thread_id=TID)
+    [turn] = feed.feed_page(path, full_text=True)["turns"]
+    assert (turn["prompt"], turn["images"], turn["reply"]) == ("", 1, "вижу изображение")
 
 
 def test_files_view_from_patches_and_parsed_reads(write_rollout):

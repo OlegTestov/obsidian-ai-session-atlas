@@ -60,6 +60,6 @@ describe("bundle on a clean account", () => {
        const r = runChild([path.join(HERE, "helpers", "runtime-suite.mjs")], env);
        assert.equal(r.status, 0, r.output);
        assert.equal(r.fail, 0, r.output);
-       assert.equal(r.pass, 17, r.output);
+       assert.equal(r.pass, 18, r.output);
      });
 });

@@ -298,6 +298,9 @@ def index_all(conn: sqlite3.Connection, root: str = PROJECTS_ROOT,
                         _purge(conn, row["session_id"])
                     conn.execute("DELETE FROM sources WHERE path=?", (path,))
                 stats["removed"] += 1
+        # Older indexers can delete the catalog row without knowing about its answer timestamp.
+        conn.execute("DELETE FROM opencode_answer_times WHERE NOT EXISTS ("
+                     "SELECT 1 FROM sessions WHERE sessions.session_id=opencode_answer_times.session_id)")
         db.set_meta(conn, "indexed_through", _now())
         with search_rows.writing(conn):
             if full and not incomplete:

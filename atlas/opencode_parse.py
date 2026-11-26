@@ -92,9 +92,14 @@ def _content(facts, turn, content):
         name = item.get("name")
         if not isinstance(name, str) or not name:
             continue
-        tools.append(name.replace(",", " "))
         _text(facts, turn, "commands", name)
         args = tool_args(item)
+        stat_name = name
+        if name == "skill" and (skill := text_value(args.get("id"))):
+            stat_name = "Skill:" + " ".join(skill.split())[:180]
+        elif name == "subagent" and (agent := text_value(args.get("agent"))):
+            stat_name = "Agent:" + " ".join(agent.split())[:180]
+        tools.append(stat_name.replace(",", " "))
         path = _text(facts, turn, "paths", tool_path(args)) if name in {"read", "edit", "write"} else None
         if path and name in {"edit", "write"}:
             _add_seen(facts.raw_files, path)

@@ -20,6 +20,10 @@ _last = {"lang": DEFAULT}          # language of the page's last request, for th
 
 # Plurals are lists: en [one, other], ru [one, few, many]; {n} is the number itself.
 MESSAGES: dict[str, dict] = {
+    "workspace.conflict": {"en": "Workspaces changed in another window. Review the new layout.",
+                           "ru": "Воркспейсы изменились в другом окне. Проверьте новую раскладку."},
+    "workspace.save_failed": {"en": "Atlas could not save the workspace layout.",
+                              "ru": "Atlas не удалось сохранить раскладку воркспейсов."},
     "opencode.not_installed": {"en": "OpenCode was not found on the login shell PATH.",
                                 "ru": "OpenCode не найден в PATH оболочки."},
     "opencode.v1": {"en": "OpenCode 1 is unsupported. Upgrade to OpenCode 2.",
@@ -59,6 +63,17 @@ MESSAGES: dict[str, dict] = {
                           "ru": "Эта сессия или одна из её дочерних сессий работает в OpenCode."},
     "opencode.children_changed": {"en": "The child sessions changed. Review the deletion again.",
                                    "ru": "Список дочерних сессий изменился. Проверь удаление ещё раз."},
+    "opencode.live_picker_unknown": {"en": "This option is no longer available in the session’s folder.",
+                                     "ru": "Этот вариант больше недоступен в папке сессии."},
+    "opencode.live_picker_busy": {"en": "Wait until the OpenCode session is idle.",
+                                  "ru": "Подождите, пока сессия OpenCode освободится."},
+    "opencode.live_picker_uncertain": {"en": "Check the OpenCode tab before trying the action again. It may have run.",
+                                       "ru": "Действие могло выполниться. Проверьте вкладку OpenCode перед повтором."},
+    "opencode.live_image_missing": {"en": "Attach the image again.",
+                                    "ru": "Прикрепите изображение заново."},
+    "opencode.live_image_size": {"en": "OpenCode images can total up to {mb} MB per message.",
+                                 "ru": "К одному сообщению OpenCode можно прикрепить до {mb} МБ изображений."},
+    "opencode.live_image_invalid": {"en": "{reason}", "ru": "{reason}"},
     "opencode.live_needs_tab": {"en": "Open this session in an Atlas tab first.",
                                   "ru": "Сначала откройте эту сессию во вкладке Atlas."},
     "opencode.live_generation_changed": {"en": "OpenCode restarted. Check the refreshed card and try again.",
@@ -339,6 +354,10 @@ MESSAGES: dict[str, dict] = {
                         "ru": "\n\n…  пропущено {n} символов  …\n\n"},
 
     # --- runner.py ---
+    "runner.opencode_model": {"en": "Enter the OpenCode model as provider/model in Atlas settings.",
+                             "ru": "Укажите модель OpenCode в настройках Atlas в формате провайдер/модель."},
+    "runner.opencode_empty": {"en": "OpenCode returned an empty answer.",
+                             "ru": "OpenCode вернул пустой ответ."},
     "runner.no_claude": {"en": "claude not found in PATH or in {paths}",
                          "ru": "claude не найден ни в PATH, ни в {paths}"},
     "runner.no_session": {"en": "no such session: {sid}", "ru": "нет такой сессии: {sid}"},

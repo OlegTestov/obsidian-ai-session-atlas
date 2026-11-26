@@ -48,23 +48,35 @@ async function openNewSession() {
 }
 
 async function launchNewSession() {
+  const go = $("#ns-go");
+  if (go.disabled) return;
   const cwd = folderPickValue().trim();
   const prompt = $("#ns-prompt").value;
   const agent = AtlasLogic.newSessionAgent(AtlasLogic.newSessionAgents(hostAgents), $("#ns-agent").value);
   if (!cwd) { $("#ns-note").textContent = i18n("newsess.noFolder"); folderPickFocus(); return; }
-  $("#ns-go").disabled = true;
+  go.disabled = true;
   $("#ns-note").textContent = i18n("newsess.preparing");
   let r;
   try { r = await api("/api/new-session", { cwd, prompt, agent }); }
   catch (e) {
     $("#ns-note").textContent = i18n("newsess.notStarted", { msg: e.message });
-    $("#ns-go").disabled = false;
+    go.disabled = false;
     return;
   }
   rememberDir(r.cwd);
   try { window.localStorage.setItem(LAST_AGENT_KEY, agent); } catch { /* private window */ }
-  if (tellHost("new-session", { session_id: r.session_id, command: r.command, cwd: r.cwd,
-                                title: r.title })) {
+  const launch = { session_id: r.session_id, command:r.command, cwd:r.cwd, title:r.title };
+  const board = currentWorkspace();
+  if (EMBEDDED) {
+    if (board) {
+      const reply = await requestHostLaunch("new-session", launch, crypto.randomUUID());
+      if (reply?.ok !== true) {
+        $("#ns-note").textContent = i18n("newsess.notStarted", {msg:workspaceText("launchUnconfirmed")});
+        go.disabled = false;
+        return;
+      }
+      await workspaceNewSession(board.id, r.session_id, reply.instance);
+    } else tellHost("new-session", launch);
     $("#ns-prompt").value = "";
     $("#newsess").close();
     // The process and its file appear within a couple of seconds; then the session joins the grid.

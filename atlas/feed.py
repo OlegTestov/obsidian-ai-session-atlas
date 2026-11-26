@@ -99,25 +99,26 @@ def summarize(calls: list[tuple[str, dict]]) -> list[dict]:
     return out
 
 
-def _new_turn(rec: dict) -> dict:
+def _new_turn(rec: dict, full_text: bool) -> dict:
     content = (rec.get("message") or {}).get("content")
     prompt = active.prompt_text(content)
     # `id` is the key clients merge on, so it must not depend on the read window: the record's uuid, else
     # the time plus a short hash of the text (Codex records carry no uuid).
     stamp = f"{rec.get('timestamp') or ''}:{hashlib.sha1(prompt.encode('utf-8', 'replace')).hexdigest()[:8]}"
-    return {"id": rec.get("uuid") or stamp, "prompt": prompt[:PROMPT_CHARS], "prompt_len": len(prompt),
+    return {"id": rec.get("uuid") or stamp, "prompt": prompt if full_text else prompt[:PROMPT_CHARS],
+            "prompt_len": len(prompt),
             "prompt_at": rec.get("timestamp"), "images": active._images_in(content),
             "calls": [], "reply": None, "reply_at": None, "interrupted": False,
             "collector": stepmod.Collector()}
 
 
-def build(records, with_events: bool = False) -> list[dict]:
+def build(records, with_events: bool = False, *, full_text: bool = False) -> list[dict]:
     """Turns in order. Records before your first message in the window are an earlier turn's tail; skipped."""
     turns: list[dict] = []
     for rec in records:
         kind = rec.get("type")
         if kind == "user" and active.is_message(rec):
-            turns.append(_new_turn(rec))
+            turns.append(_new_turn(rec, full_text))
             continue
         if not turns:
             continue
@@ -151,7 +152,8 @@ def build(records, with_events: bool = False) -> list[dict]:
         if with_events:
             turn["events"] = collector.finish(reply)
         turn["reply_len"] = len(reply)
-        turn["reply"] = active.markdown_tail(reply, REPLY_CHARS) if reply else None
+        if reply and not full_text:
+            turn["reply"] = active.markdown_tail(reply, REPLY_CHARS)
     return turns
 
 
@@ -177,7 +179,7 @@ def _window(path: str, size: int, window: int, agent: str = agents.CLAUDE) -> li
 def feed_page(path: str | None, turns: int = DEFAULT_TURNS, with_events: bool = False,
               before: str | None = None, since: str | None = None,
               before_id: str | None = None, since_id: str | None = None, *,
-              agent: str | None = None) -> dict:
+              agent: str | None = None, full_text: bool = False) -> dict:
     """A page of the feed. before/before_id: turns earlier than that time/turn (scrolling up); since/since_id:
     the turns from that time/turn on, inclusive, because a live turn keeps growing (the open feed's live end).
     Keyed by turn id or time, not by index from the end: a live session's end keeps growing, so indexes
@@ -194,7 +196,7 @@ def feed_page(path: str | None, turns: int = DEFAULT_TURNS, with_events: bool = 
     cap = None if (before or since or before_id) else MAX_WINDOW    # scrolling up may reach the very beginning
     window = FIRST_WINDOW
     while True:
-        built = build(_window(path, size, window, agent), with_events)
+        built = build(_window(path, size, window, agent), with_events, full_text=full_text)
         whole = window >= size
 
         def at(t: dict) -> str:

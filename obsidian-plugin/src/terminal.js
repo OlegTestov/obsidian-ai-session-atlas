@@ -244,7 +244,7 @@ class TerminalMethods {
    * A command from the catalog. A recognized one (resume, fork, new) opens through the agent tab
    * script, so after an Obsidian restart the tab gets its session back. Anything else runs as is.
    */
-  async openCommandInTerminal(command, cwd, label) {
+  async openCommandInTerminal(command, cwd, label, onOpened) {
     let launch;
     try {
       launch = parseLaunch(command);
@@ -254,25 +254,31 @@ class TerminalMethods {
       return;
     }
     const openCatalog = () => {
-      if (launch?.agent !== "opencode") return this.openCatalogCommand(command, cwd, label, launch);
+      if (launch?.agent !== "opencode") return this.openCatalogCommand(command, cwd, label, launch, onOpened);
       // An OpenCode leaf can be reused only after its current route is confirmed.
       const existing = launch.mode === "resume" && this.revealOpenCodeSession(launch.sessionId);
-      if (existing) return waitForOpenCodeSession(this.dataDir(), existing.leaf, existing.instance, launch.sessionId);
-      return this.openAgent(launch.agent, { cwd: launch.cwd, seed: launch, label });
+      if (existing) {
+        return waitForOpenCodeSession(this.dataDir(), existing.leaf, existing.instance, launch.sessionId,
+                                      this.app.workspace);
+      }
+      return this.openAgent(launch.agent, { cwd: launch.cwd, seed: launch, label, onOpened });
     };
     if (launch?.mode === "resume") {
       if (launch.agent !== "opencode" && this.revealSessionTab(launch.sessionId)) return true;
       // A second handoff can arrive before the launcher writes the session to the tab registry.
-      this.pendingSessionResumes ??= new Map();
+      const workspace = this.app?.workspace || this;
+      const workspaces = window.__sessionAtlasPendingResumes ??= new WeakMap();
+      if (!workspaces.has(workspace)) workspaces.set(workspace, new Map());
+      const resumes = workspaces.get(workspace);
       const key = `${launch.agent}:${launch.sessionId}`;
-      const pending = this.pendingSessionResumes.get(key);
+      const pending = resumes.get(key);
       if (pending) return pending;
       const opening = Promise.resolve().then(openCatalog);
-      this.pendingSessionResumes.set(key, opening);
+      resumes.set(key, opening);
       try {
         return await opening;
       } finally {
-        this.pendingSessionResumes.delete(key);
+        resumes.delete(key);
       }
     }
     // A background job already shown in a tab: that tab, not a second view of the same conversation.
@@ -280,9 +286,9 @@ class TerminalMethods {
     return openCatalog();
   }
 
-  async openCatalogCommand(command, cwd, label, launch) {
+  async openCatalogCommand(command, cwd, label, launch, onOpened) {
     if (launch) {
-      const opened = await this.openAgent(launch.agent, { cwd: launch.cwd, seed: launch, label });
+      const opened = await this.openAgent(launch.agent, { cwd: launch.cwd, seed: launch, label, onOpened });
       // A partial managed launch can already have started a process. Its failure owns the cleanup.
       if (opened !== false) return opened === true;
     }

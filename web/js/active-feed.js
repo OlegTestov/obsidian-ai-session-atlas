@@ -1,7 +1,59 @@
 // The paged conversation, steps and files inside a detailed Active card.
+/* exported showConversationSend, removeConversationSend -- used by other page scripts */
 const FEED_TURNS = 20;
 const cardViews = new Map();
 const cardPanels = new Map();
+const workspaceReading = new Map();
+const MAX_READING_PANELS = 25;
+const conversationSends = new Map();  // session id → locally sent messages awaiting their transcript turn
+const DELIVERY_TEXT = {
+  sending: i18n("active.delivery.sending"),
+  queued: i18n("active.delivery.queued"),
+  lost: i18n("active.delivery.lost"),
+};
+
+function showConversationSend(sid, nonce, draft) {
+  if (!conversationSends.has(sid)) conversationSends.set(sid, { messages: new Map(), matched: new Set() });
+  conversationSends.get(sid).messages.set(nonce, draft);
+  cardPanels.get(sid)?.drawSends?.(true);
+}
+
+function removeConversationSend(sid, nonce) {
+  const sends = conversationSends.get(sid);
+  if (!sends?.messages.delete(nonce)) return;
+  if (!sends.messages.size) conversationSends.delete(sid);
+  cardPanels.get(sid)?.drawSends?.();
+}
+
+function reconcileConversationSends(sid, turns) {
+  const sends = conversationSends.get(sid);
+  if (!sends) return;
+  for (const turn of turns) {
+    if (sends.matched.has(turn.id)) continue;
+    for (const [nonce, message] of sends.messages) {
+      if (AtlasLogic.sentTurnMatches(message, turn)) {
+        sends.messages.delete(nonce);
+        sends.matched.add(turn.id);
+        break;
+      }
+    }
+    if (!sends.messages.size) {
+      conversationSends.delete(sid);
+      return;
+    }
+  }
+}
+
+// Messages queued in the agent's terminal wait until the current step finishes.
+function queuedLine(s, box, shown) {
+  const queued = AtlasLogic.queuedNotShown(s, shown);
+  if (!queued.length) return;
+  const first = queued[0].text.replace(/\s+/g, " ").slice(0, 80);
+  const q = el("div", "queued", queued.length > 1
+    ? i18n("active.queuedMany", { n: queued.length, text: first }) : i18n("active.queuedOne", { text: first }));
+  q.title = queued.map(x => x.text).join("\n—\n");
+  box.appendChild(q);
+}
 
 function cardViewMode(sid) {
   return cardViews.get(sid) || "turns";
@@ -43,25 +95,44 @@ function attachCardPanel(card, session, pid) {
   const view = visibleCardView(session, pid);
   const slot = card.querySelector(".card-view-slot");
   const previous = cardPanels.get(sid);
-  let panel = previous;
+  const parked = workspaceReading.get(sid);
+  workspaceReading.delete(sid);
+  let panel = previous || parked?.panel;
   if (!panel || view !== panel.view || (view === "terminal" && pid !== panel.pid)) {
     if (panel) panel.dispose();
     panel = view === "terminal" ? terminalCardPanel(session, pid) : conversationPanel(session, view);
-    cardPanels.set(sid, panel);
   }
+  cardPanels.set(sid, panel);
   panel.session = session;
   card.classList.toggle("terminal-mode", view === "terminal");
   slot.replaceWith(panel.body);
   panel.mount();
+  if (parked?.panel === panel) panel.body.scrollTop = parked.top;
 }
 
-function mountCardPanels(grid, sessions = []) {
+function mountCardPanels(grid, sessions = [], positions) {
   const cards = new Map([...grid.querySelectorAll(".acard .card-view-slot")].map(slot => {
     const card = slot.closest(".acard");
     return [card.dataset.id, card];
   }));
+  const keepReading = workspaceBoards().length > 0 && positions;
+  const live = new Set(activeSessions.map(s => s.session_id));
+  for (const [sid,{panel}] of workspaceReading) if (!keepReading || !live.has(sid)) {
+    panel.dispose();
+    workspaceReading.delete(sid);
+  }
   for (const [sid, panel] of cardPanels) {
-    if (!cards.has(sid)) { panel.dispose(); cardPanels.delete(sid); }
+    if (cards.has(sid)) continue;
+    cardPanels.delete(sid);
+    if (keepReading && live.has(sid) && panel.view !== "terminal") {
+      panel.suspend();
+      workspaceReading.set(sid,{panel,top:positions.get(sid) || 0});
+    } else panel.dispose();
+  }
+  while (workspaceReading.size > MAX_READING_PANELS) {
+    const [sid,{panel}] = workspaceReading.entries().next().value;
+    panel.dispose();
+    workspaceReading.delete(sid);
   }
   for (const session of sessions) {
     const card = cards.get(session.session_id);
@@ -85,29 +156,31 @@ function conversationPanel(session, view) {
   let refreshing = false, drawn = false, disposed = false, shown = false;
   let fetched = null, fetchedAt = 0;
 
-  const url = `/api/active/feed/${encodeURIComponent(sid)}?turns=${FEED_TURNS}`
-    + (view === "turns" ? "" : `&view=${view}`);
+  const url = `/api/active/feed/${encodeURIComponent(sid)}?turns=${FEED_TURNS}&view=${view}`;
   const watch = new IntersectionObserver(entries => {
     shown = entries[0].isIntersecting;
     if (shown) refresh();
   }, { root: $("#active-grid") });
-  const panel = { view, body, session, mount() { if (drawn) draw(); watch.observe(body); },
+  const panel = { view, body, session, mount() { if (drawn || (view === "turns" && conversationSends.has(sid))) draw(); watch.observe(body); },
     refresh() { if (shown) { if (drawn) draw(); refresh(); } },
+    suspend() { shown = false; watch.disconnect(); },
     dispose() { disposed = true; watch.disconnect(); } };
+  if (view === "turns") panel.drawSends = follow => draw(false, follow);
 
-  function draw(prepended = false) {
+  function draw(prepended = false, follow = false) {
+    if (!body.isConnected) return;
     const current = panel.session;
     const turns = older.concat(live);
-    const mine = view === "turns" ? unansweredPrompt(current) : null;
-    const optimistic = mine && justSent.has(sid) && turns.at(-1)?.prompt !== mine.text ? mine : null;
     const busy = ["busy", "background"].includes(current.activity || current.status);
-    const delivery = optimistic && DELIVERY_TEXT[AtlasLogic.deliveryState(current, justSent.get(sid), Date.now())];
-    const extra = view === "turns" ? [optimistic, delivery, busy && current.progress, current.queued, current.queued_count] : [];
+    const sent = view === "turns" ? [...(conversationSends.get(sid)?.messages.values() || [])] : [];
+    const deliveries = sent.map(message => message.acknowledged
+      ? DELIVERY_TEXT[AtlasLogic.deliveryState(current, message, Date.now())] : i18n("active.sending"));
+    const extra = view === "turns" ? [sent, deliveries, busy && current.progress, current.queued, current.queued_count] : [];
     const key = JSON.stringify([view, filter, view === "files" ? files : turns, hasMore, loadingOlder, extra,
       view === "steps" ? [busy, Math.floor(Date.now() / 30000)] : null]);
     if (key === signature) return;
     signature = key;
-    const atEnd = !drawn || body.scrollHeight - body.scrollTop - body.clientHeight < 40;
+    const atEnd = follow || !drawn || body.scrollHeight - body.scrollTop - body.clientHeight < 40;
     const top = body.scrollTop, height = body.scrollHeight;
     if (!paged) {
       const expanded = body.querySelector(".fread")?.open;
@@ -121,21 +194,21 @@ function conversationPanel(session, view) {
         draw();
       }));
       else {
-        const content = turns.map((t, i) => feedTurn(t, i === turns.length - 1 && !optimistic, current));
-        if (optimistic) {
-          const sent = feedTurn({ prompt: optimistic.text, prompt_at: optimistic.at,
-            images: optimistic.images, steps: [] }, true, current);
-          if (delivery) sent.querySelector(".fwho").append(" · ", delivery);
-          content.push(sent);
-        }
-        if (!content.length) content.push(el("p", "empty", i18n("feed.noPrompts")));
+        const content = turns.map((t, i) => feedTurn(t, i === turns.length - 1 && !sent.length, current));
+        if (!content.length && !sent.length) content.push(el("p", "empty", i18n("feed.noPrompts")));
         body.replaceChildren(...head, ...content);
-        queuedLine(current, body, mine);
+        queuedLine(current, body, sent);
         if (busy && current.progress) {
           const progress = el("div", "ftxt now md");
           progress.appendChild(renderMarkdown(i18n("active.nowMd", { text: current.progress })));
           body.appendChild(progress);
         }
+        sent.forEach((message, i) => {
+          const item = feedTurn({ prompt: message.text, prompt_at: message.at,
+            images: message.paths.length, steps: [] }, false, current);
+          item.querySelector(".fwho").append(" · ", deliveries[i]);
+          body.appendChild(item);
+        });
       }
     }
     drawn = true;
@@ -166,6 +239,7 @@ function conversationPanel(session, view) {
       fetchedAt = Date.now();
       if (paged) {
         const turns = data.turns || [];
+        if (view === "turns") reconcileConversationSends(sid, turns);
         if (!last || reset) {
           if (live.length) { older = []; epoch++; }
           live = turns;

@@ -46,6 +46,13 @@ class AtlasView extends ItemView {
     }
   }
 
+  /** The parent cannot read the catalog's cross-origin URL. Save the state reported by our iframe. */
+  rememberHash(hash) {
+    if (typeof hash !== "string" || !hash.startsWith("#") || hash.length > 65536 || hash === this.hash) return;
+    this.hash = hash;
+    this.app.workspace.requestSaveLayout?.();
+  }
+
   async onOpen() {
     // setState starts rendering. Without a state (an empty tab was opened), render here.
     if (!this.frame) this.render();

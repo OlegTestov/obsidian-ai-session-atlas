@@ -54,6 +54,8 @@ function aiDefinitions(tab, watchIndex) {
         selected = value;
       });
     })),
+    textDefinition(tab, "ai.openCodeModel", () => typeof cfg().opencode_ai_model === "string" ? cfg().opencode_ai_model : "",
+      v => save({ opencode_ai_model: v.trim() }), { placeholder: "provider/model" }),
     textDefinition(tab, "cfg.sensitive",
       () => {
         const { vault_areas: areas, projects } = cfg().sensitive || {};

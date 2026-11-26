@@ -226,7 +226,7 @@ it("settings layout keeps all master controls in the specified section and row o
   ["settings.generalHeading",["settings.language","updates.setting","settings.explorer"]],
   ["settings.agentsHeading",["settings.agent.claude","settings.agent.codex","settings.agent.opencode","settings.loadAgentTabs","settings.fontSize","mail.wake"]],
   ["cfg.heading",["cfg.vaults","cfg.roots","cfg.domains","cfg.rules","cfg.tickets"]],
-  ["ai.heading",["ai.enabled","ai.agent","cfg.sensitive","ai.classification"]],
+  ["ai.heading",["ai.enabled","ai.agent","ai.openCodeModel","cfg.sensitive","ai.classification"]],
   ["settings.notificationsHeading",["settings.notify","settings.systemNotify","settings.noticeHold"]],
   ["adv.integrations",["adv.defaults","setup.limits","codexHook","codexHook.home","opencode.home"]],
   ["adv.launch",["settings.args.claude","settings.args.codex","settings.args.opencode","adv.shell"]],

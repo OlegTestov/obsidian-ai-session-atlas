@@ -120,6 +120,20 @@ def test_preview_shows_head_and_tail_and_saves_the_full_text(atlas_env, write_se
     assert oct(os.stat(prev["full_path"]).st_mode)[-3:] == "600"
 
 
+def test_two_previews_for_one_session_keep_their_own_full_text(atlas_env):
+    sid = "11111111-2222-4333-8444-555555555555"
+    first = runner.preview_payload(None, sid, "handoff", payload={"text": "Approved excerpt"})
+    second = runner.preview_payload(None, sid, "handoff", payload={"text": "Later excerpt"})
+    assert first["full_path"] != second["full_path"]
+    assert Path(first["full_path"]).read_text() == "Approved excerpt"
+    assert Path(second["full_path"]).read_text() == "Later excerpt"
+    os.utime(first["full_path"], (1, 1))
+    refreshed = runner.preview_payload(None, sid, "handoff", payload={"text": "Later excerpt"})
+    assert not Path(first["full_path"]).exists()
+    assert refreshed["full_path"] == second["full_path"]
+    assert Path(refreshed["full_path"]).read_text() == "Later excerpt"
+
+
 def test_argv_carries_the_isolation_flags():
     """Isolation is set by flags; breaking them must be caught here, not in production."""
     argv = runner._argv("/usr/bin/claude", "claude-sonnet-5", "low")

@@ -87,7 +87,8 @@ def _turns(db, sid, view, turns, *, before_id, since_id, before, since):
     rows = db.execute("SELECT id,type,seq,time_created,data FROM session_message "
                       "WHERE session_id=? AND seq>=? AND (? IS NULL OR seq<?) ORDER BY seq",
                       (sid, start, end, end))
-    result = {"turns": feed.build(_records(rows), view == "steps"), "has_more": None if forwards else older}
+    items = feed.build(_records(rows), view == "steps", full_text=view == "turns")
+    result = {"turns": items, "has_more": None if forwards else older}
     if reset:
         result["reset"] = True
     return result

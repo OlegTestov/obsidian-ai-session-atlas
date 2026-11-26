@@ -20,6 +20,12 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 MUT = [
+ ("workspace storage: a duplicate session can occupy two boards", "atlas/workspaces.py",
+  ' or sid in sessions', ''),
+ ("workspace storage: concurrent edits overwrite one another", "atlas/workspaces.py",
+  'if current["revision"] != revision:', 'if False:'),
+ ("workspace storage: a layout can be wider than five", "atlas/workspaces.py",
+  '1 <= n <= SIZE_MAX', '1 <= n <= SIZE_MAX + 1'),
  ("2191: F1 Claude sends after preflight cancellation", "atlas/runner.py",
   "    if before_send is not None:\n        before_send()\n    proc = subprocess.run(argv, input=prompt,",
   "    proc = subprocess.run(argv, input=prompt,"),
@@ -93,8 +99,8 @@ MUT = [
  ("opencode B1c: a lost tab route reports known pending state", "atlas/opencode_live.py",
   "    known = bool(pid)\n", "    known = True\n"),
  ("opencode B1c: the active transcript query has no row limit", "atlas/opencode_live.py",
-  '        ORDER BY seq DESC LIMIT ?\n    """, (sid, MESSAGE_SCAN_ROWS))',
-  '        ORDER BY seq DESC\n    """, (sid,))'),
+  'FROM session_message WHERE session_id=? ORDER BY seq DESC LIMIT ?\n    """, (MAX_CARD_RECORD_BYTES, sid, MESSAGE_SCAN_ROWS))',
+  'FROM session_message WHERE session_id=? ORDER BY seq DESC\n    """, (MAX_CARD_RECORD_BYTES, sid))'),
  ("opencode B1c: a history without recent text omits the indexed prompt", "atlas/opencode_live.py",
   '    prompt = user[1] if user else info.get("last_prompt")', "    prompt = user[1] if user else None"),
  ("opencode B1c: an unavailable service shows cached pending decisions", "atlas/opencode_live.py",
@@ -1207,7 +1213,8 @@ MUT = [
  ("codex ai: a context overflow is not retried smaller", "atlas/codex_exec.py",
   "if any(marker in detail.lower() for marker in TOO_LONG):", "if False:"),
  ("codex ai: the page picks the agent", "atlas/server.py",
-  "backend = runner.backend()                  # the agent", 'backend = body.get("backend") or runner.backend()  #'),
+  "backend = runner.artifact_backend()         # the agent",
+  'backend = body.get("backend") or runner.artifact_backend()  #'),
  ("codex hook: the card ignores the wait mark", "atlas/codex_live.py",
   'waited = codex_waits.waiting(sid, path, t["status"])', "waited = None"),
  ("codex hook: an idle thread can wait", "atlas/codex_waits.py", '    if status != "busy":\n        return None', "    pass"),
@@ -1277,7 +1284,11 @@ MUT = [
  ("codex: feed: a failed command looks fine", "atlas/codex_feed.py",
   "    if code in (None, 0):", "    if True:"),
  ("codex: feed: event and item copies doubled", "atlas/codex_feed.py",
-  "if not text or self.last[role] == text:", "if not text:"),
+  "if (not text and not images) or self.last[role] == text:", "if not text and not images:"),
+ ("active reply: image-only Claude Code turn dropped", "atlas/active.py",
+  'return kind == "user" and bool(_images_in(content))', "return False"),
+ ("active reply: image-only Codex turn dropped", "atlas/codex_feed.py",
+  "if (not text and not images) or self.last[role] == text:", "if not text or self.last[role] == text:"),
  ("codex: feed: a real repeated prompt dropped", "atlas/codex_feed.py",
   '        self.last["assistant" if role == "user" else "user"] = None', "        pass"),
  ("codex: feed: an aborted turn not interrupted", "atlas/codex_feed.py",
@@ -1806,11 +1817,12 @@ JS_MUT = [
   'openCodeRequest(s, "reply-check", { message_id: saved.id }).catch(() => null)',
   'openCodeRequest(s, "reply-check", { message_id: saved.id })'),
  ("2191: delivered reply keeps its restored ID", "web/js/opencode-active.js",
-  '  openCodeRestoredReplies.delete(sid);\n  rememberSent', '  rememberSent'),
+  '  openCodeRestoredReplies.delete(sid);\n  if (!openCodeReplyBlank(item.text)) rememberSent',
+  '  if (!openCodeReplyBlank(item.text)) rememberSent'),
  ("2191: edits bypass reconciliation of a pending reply", "web/js/opencode-active.js",
   "if (saved && saved.id !== retry?.id) {", "if (false) {"),
  ("opencode B1e: a second page forgets the restored request ID", "web/js/opencode-active.js",
-  "retry = restored?.text === text ? restored : null;", "retry = null;"),
+  "retry = sameOpenCodeReply(restored, text, images) ? restored : null;", "retry = null;"),
  ("opencode B1e: Move and Resume launch separate OpenCode tabs", "obsidian-plugin/src/terminal.js",
   "      if (pending) return pending;", '      if (pending && launch.agent !== "opencode") return pending;'),
  ("opencode B1d: a refused retry unlocks an ambiguous request", "web/js/opencode-active.js",
@@ -1881,8 +1893,8 @@ JS_MUT = [
   '      if (openCodeLaunchEnded(this.dataDir(), instance, pty)) exited.push(leaf);',
   '      if (false) exited.push(leaf);'),
  ("opencode A2b: OpenCode launch acknowledges an unverified leaf", 'obsidian-plugin/src/terminal.js',
-  'if (existing) return waitForOpenCodeSession(this.dataDir(), existing.leaf, existing.instance, launch.sessionId);',
-  'if (existing) return true;'),
+  'if (existing) {\n        return waitForOpenCodeSession(this.dataDir(), existing.leaf, existing.instance, launch.sessionId,',
+  'if (existing) return true;\n      if (false) {\n        return waitForOpenCodeSession(this.dataDir(), existing.leaf, existing.instance, launch.sessionId,'),
  ("opencode A2b: Claude Code and Codex lose generic terminal fallback", 'obsidian-plugin/src/terminal.js',
   'if (opened !== false) return opened === true;', 'return opened === true;'),
  ("opencode A2: Search does not refresh agent availability", "web/js/search.js",
@@ -1961,7 +1973,7 @@ JS_MUT = [
  ("codex hook: removable wherever it sits", "obsidian-plugin/src/codex-hook.js",
   "groups[groups.length - 1] === ours[0] && ourGroup(ours[0])", "ourGroup(ours[0])"),
  ("active: the message just sent shows again as queued", "web/js/logic.js",
-  "return i < 0 ? queued : queued.filter((_, n) => n !== i);", "return queued;"),
+  "if (index >= 0) queued.splice(index, 1);", ""),
  ("codex hook: someone else's hook counts as ours", "obsidian-plugin/src/codex-hook.js",
   'return /session-atlas/.test(String(command || "")) && /codex_hook\\.py/.test(String(command || ""));',
   'return /codex_hook\\.py/.test(String(command || ""));'),
@@ -2369,7 +2381,7 @@ JS_MUT = [
  ('plugin: an attach client has no session before input', 'obsidian-plugin/src/terminal.js',
   ' || attachedSessionState(pid, SESSIONS_DIR)', ''),
  ("plugin: directory bypasses the script", "obsidian-plugin/src/terminal.js",
-  'return this.openAgent(launch.agent, { cwd: launch.cwd, seed: launch, label });', ''),
+  'return this.openAgent(launch.agent, { cwd: launch.cwd, seed: launch, label, onOpened });', ''),
  ("plugin: pointerdown on the close button is not suppressed", "obsidian-plugin/src/guard.js",
   "    if (!this.guardKind(leaf)) return;\n    event.preventDefault();\n    event.stopPropagation();\n    event.stopImmediatePropagation();\n    if (ask)",
   "    if (!this.guardKind(leaf) || !ask) return;\n    event.preventDefault();\n    event.stopPropagation();\n    event.stopImmediatePropagation();\n    if (ask)"),
@@ -2525,8 +2537,10 @@ JS_MUT = [
   'return m && +m[1] <= max && +m[2] <= max ?', 'return m ?'),
  ("page: yesterday counts as this week", "web/js/logic.js",
   'if (days === 1) return "yesterday";', ''),
- ("page: a sent item is not cleared once the transcript catches up", "web/js/logic.js",
-  '|| t(s.prompt_at) >= t(sent.at) - 2000)', ')'),
+ ("active reply: a sent item stays after the transcript catches up", "web/js/active-feed.js",
+  'if (view === "turns") reconcileConversationSends(sid, turns);', ''),
+ ("active reply: nothing is shown before the terminal responds", "web/js/active-cards.js",
+  'if (!s.pending) showConversationSend(sid, nonce, draft);', ''),
  ("page: down moves one card, not one row", "web/js/logic.js",
   'ArrowDown: cols, ArrowUp: -cols', 'ArrowDown: 1, ArrowUp: -1'),
  ("page: navigation goes past the edge", "web/js/logic.js",
@@ -2619,8 +2633,8 @@ JS_MUT = [
   'const { error, tab, state } = await this.checkTarget(data);\n    if (error) return reply(false, error);\n    if (!STOPPABLE',
   'const { error, tab, state } = await this.checkTarget(Object.assign({}, data, { sessionId: '
   '(this.readSessionState(data.claudePid) || {}).sessionId }));\n    if (error) return reply(false, error);\n    if (!STOPPABLE'),
- ("page: an interrupted prompt «awaits a reply»", "web/js/logic.js",
-  'interrupted: t(s.interrupted_at) >= t(s.prompt_at) }', 'interrupted: false }'),
+ ("page: an earlier identical prompt counts as delivery", "web/js/logic.js",
+  'Date.parse(turn.prompt_at) >= Date.parse(sent.at)\n      && ', ''),
  ("page: delivery without a queue", "web/js/logic.js",
   'if (head && (s.queued || []).some(q => (q.text || "").trim().startsWith(head))) return "queued";', ''),
  ("page: delivery does not clear", "web/js/logic.js",
@@ -3200,8 +3214,10 @@ JS_MUT = [
   "if (ROUTE.test(box.name) && !route) continue;", ""),
  ("mail: two active entries for a session are not ambiguous", "obsidian-plugin/src/mail-nudge.js",
   "if (matches.length !== 1) return false;", "if (matches.length < 1) return false;"),
+ ("mail: OpenCode quota does not delay the nudge", "obsidian-plugin/src/mail-nudge.js",
+  " && !s.opencode_provider_limit", ""),
  ("mail: a route mailbox ignores its agent", "obsidian-plugin/src/mail-nudge.js",
-  "&& (!batch.agent || s.agent === batch.agent));", ");"),
+  "&& (!batch.agent || s.agent === batch.agent)", ""),
  ("mail: a poll goes on after the plugin closed during Active", "obsidian-plugin/src/mail-nudge.js",
   "const active = await this.plugin.fetchActive();\n      if (this.closed || root !== this.currentRoot()) return;", "const active = await this.plugin.fetchActive();"),
  ("mail: a poll goes on after the plugin closed during the tab scan", "obsidian-plugin/src/mail-nudge.js",
@@ -3351,13 +3367,19 @@ def _run(cmd):
 
 def run_python(name=None):
     focused = []
-    if (name or "").startswith("2191 C"):
+    if (name or "").startswith("workspace storage:"):
+        focused = ["tests/test_workspaces.py"]
+    elif (name or "").startswith("active reply: image-only") or name == "codex: feed: event and item copies doubled":
+        focused = ["tests/test_feed.py", "tests/test_codex_feed.py", "tests/test_active.py"]
+    elif (name or "").startswith("2191 C"):
         focused = ["tests/test_opencode_active.py", "tests/test_opencode_b1e_live.py", "-k",
                    "long_history_prefers or answer_after_last_visit"]
     elif (name or "").startswith("2191:"):
         focused = ["tests/test_codex_exec.py", "-k",
                    "confirmed_preview or job_starts_only or cancelled_or_sensitive or usage_limit_only "
                    "or oversized_confirmed or cancel_during_claude_preflight or cancelled_artifact_worker"]
+    elif name == "codex ai: the page picks the agent":
+        focused = ["tests/test_codex_exec.py::test_changing_the_artifact_provider_invalidates_a_real_preview"]
     elif (name or "").startswith("opencode B1c: fresh credentialed requests"):
         focused = ["tests/test_opencode_service.py", "-k", "connected_peer_before_sending_credentials"]
     elif (name or "").startswith("opencode B1c: a peer check"):
@@ -3474,6 +3496,9 @@ SELECTOR_MUTATIONS = {
 def run_node(path, name=None):
     # A deliberately widened process selector must never run the real cleanup integration test
     # or a bundled server on the host. Its pure selector test catches both mutations directly.
+    if (name or "").startswith("active reply:"):
+        return _run(["npm", "run", "e2e", "--", "tests/e2e/active.spec.mjs",
+                     "--grep", "a Codex reply stays visible", "--project=en-light"])
     if (name or "").startswith("2191:"):
         return _run(["node", "--test", "tests/js/opencode-active.test.mjs"])
     if (name or "").startswith(("opencode B1c:", "opencode B1d:")) and path.startswith("obsidian-plugin/"):

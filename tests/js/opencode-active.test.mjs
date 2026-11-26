@@ -471,3 +471,95 @@ test("a removal event forgets the old restored ID even if storage already holds 
   assert.equal(run("openCodeRestoredReplies.has('fixture')"), false);
   assert.equal(JSON.parse(storage.get(key)).text, "Replacement");
 });
+
+test("simultaneous OpenCode sends keep the first ambiguous ID until it is reconciled", async () => {
+  const key = "atlas.opencode.reply.fixture";
+  const storage = new Map();
+  const calls = [];
+  let tail = Promise.resolve();
+  const locks = { request(name, callback) {
+    assert.equal(name, key);
+    const next = tail.then(callback);
+    tail = next.catch(() => {});
+    return next;
+  } };
+  const pages = [firstUUID, nextUUID].map(uuid => replyPage(storage, [], uuid, ctx => {
+    ctx.navigator = { locks };
+    ctx.api = async (path, body) => {
+      calls.push([path.split("/").at(-1), body.message_id, body.text]);
+      return { delivery: null };
+    };
+  }));
+  const [first, second] = pages;
+  let secondSend;
+  first.loadStored = (name, fallback) => {
+    const value = JSON.parse(storage.get(name) || "null") ?? fallback;
+    if (!value && !secondSend) secondSend = reply(second, "Second");
+    return value;
+  };
+  await reply(first, "First");
+  await secondSend;
+  const id = "msg_" + firstUUID.replaceAll("-", "").slice(0, 26);
+  assert.deepEqual(calls, [["reply", id, "First"], ["reply-check", id, undefined]]);
+  assert.equal(JSON.parse(storage.get(key)).id, id);
+  assert.equal(second.sendState.get("fixture").note, "opencode.retryOriginal");
+});
+
+test("an image-only OpenCode reply restores and retries the same attachment and ID after reload", async () => {
+  const storage = new Map();
+  const calls = [];
+  const sid = "fixture";
+  const open = uuid => {
+    const page = replyPage(storage, calls, uuid, ctx => { ctx.MAX_ATTACH = 5; });
+    return code => vm.runInContext(code, page);
+  };
+  const first = open(firstUUID);
+  const reloaded = open(nextUUID);
+  first("const drafts = new Map(); const attachments = new Map()");
+  await first(`sendOpenCodeReply({session_id:'fixture'}, '', [{path:'/atlas/uploads/fixture.png', name:'image.png'}])`);
+  const saved = JSON.parse(storage.get("atlas.opencode.reply." + sid));
+  assert.deepEqual(saved.images, [{ path: "/atlas/uploads/fixture.png", name: "image.png" }]);
+  reloaded("const drafts = new Map(); const attachments = new Map()");
+  assert.equal(reloaded("openCodeComposerText('fixture')"), "");
+  assert.equal(reloaded("attachments.get('fixture')[0].name"), "image.png");
+  await reloaded(`sendOpenCodeReply({session_id:'fixture'}, '', attachments.get('fixture'))`);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1][1].message_id, saved.id);
+  assert.equal(JSON.stringify(calls[1][1].images), JSON.stringify(saved.images));
+});
+
+
+test("a lost native command response blocks another send until explicit acknowledgement", async () => {
+  const storage = new Map();
+  const submissions = [];
+  let confirm;
+  const text = "/fixture argument";
+  const note = {};
+  const area = { value: text, isConnected: true, disabled: false, rows: 1, closest: () => ({ querySelector: () => note }) };
+  const page = replyPage(storage, [], firstUUID, ctx => {
+    ctx.localStorage.getItem = key => storage.get(key);
+    ctx.document.querySelector = () => area;
+    ctx.closeAfterHandOff = () => {};
+    ctx.saveDrafts = () => {};
+    ctx.modal = (_title, warning, _body, _label, callback) => {
+      assert.equal(warning, "opencode.pickerUncertain");
+      confirm = callback;
+    };
+    ctx.api = async (path, body) => {
+      submissions.push([path, body.id]);
+      if (submissions.length === 1) throw Object.assign(new Error("Lost"), { status: 409, state: "live_picker_uncertain" });
+      return { ok: true };
+    };
+  });
+  const run = code => vm.runInContext(code, page);
+  run("const drafts = new Map(); const card = {session_id:'fixture', opencode_generation:'same'}");
+  const submit = () => run("runOpenCodePicker(card, '/fixture argument', [], 'command', {id:'fixture', text:'argument'})");
+  await submit();
+  await submit();
+  assert.equal(submissions.length, 1);
+  assert.equal(storage.get("atlas.opencode.picker.fixture"), firstUUID);
+  await confirm();
+  assert.equal(submissions.length, 2);
+  assert.equal(storage.size, 0);
+  assert.equal(area.value, "");
+});

@@ -27,6 +27,9 @@ class Native:
     def close_poll(self):
         pass
 
+    def check_verified_database(self):
+        pass
+
     def poll(self, route, expect=dict, *, budget=None):
         return self.data(route)
 
@@ -170,6 +173,29 @@ def test_feed_reuses_v2_text_projection_and_file_paths(monkeypatch):
     assert any(entry["edit"] or entry["write"] for entry in file_data["files"])
 
 
+def test_opencode_conversation_returns_complete_long_messages(tmp_path, monkeypatch):
+    from atlas import opencode_feed
+
+    source = tmp_path / "opencode.db"
+    shutil.copyfile(Path(__file__).parent / "fixtures/opencode/opencode.db", source)
+    monkeypatch.setenv("ATLAS_OPENCODE_HOME", str(tmp_path))
+    prompt = "Start of prompt " + "prompt " * 400 + "end of prompt"
+    reply = "Start of reply " + "reply " * 800 + "end of reply"
+    with closing(sqlite3.connect(source)) as database, database:
+        sid = database.execute("SELECT id FROM session_v2 WHERE title='OpenCode fixture plain'").fetchone()[0]
+        database.execute("DELETE FROM session_message WHERE session_id=?", (sid,))
+        database.executemany("INSERT INTO session_message VALUES (?, ?, ?, ?, ?, ?, ?)", [
+            ("fixture-user", sid, "user", 1, 1000, 1000, json.dumps({"text": prompt})),
+            ("fixture-reply", sid, "assistant", 2, 2000, 3000, json.dumps({
+                "time": {"completed": 3000}, "content": [{"type": "text", "text": reply}],
+            })),
+        ])
+    [turn] = opencode_feed.read(sid, "turns", 1)["turns"]
+    [preview] = opencode_feed.read(sid, "", 1)["turns"]
+    assert (turn["prompt"], turn["reply"]) == (prompt, reply)
+    assert len(preview["prompt"]) < len(prompt) and len(preview["reply"]) < len(reply)
+
+
 def test_v2_card_uses_settled_text_context_and_outcome(atlas_env, monkeypatch):
     from atlas import db
     from atlas.opencode_live import _card
@@ -306,6 +332,30 @@ def test_reply_tab_gone_before_dispatch_is_definitely_refused(monkeypatch):
         run_action("reply", {"session_id": SID, "message_id": "msg_" + "x" * 26, "text": "Original"})
     assert error.value.state == "live_needs_tab"
     assert native.calls == [("GET", "inbox")]
+
+
+def test_reply_does_not_post_after_the_reconciled_database_is_replaced(monkeypatch, attached, tmp_path):
+    native = Native([])
+    database = tmp_path / "opencode.db"
+    database.touch()
+    inode = database.stat().st_ino
+
+    def verify():
+        if database.stat().st_ino != inode:
+            raise service.ServiceError("profile")
+
+    def delivery(*_):
+        database.rename(tmp_path / "previous.db")
+        database.touch()
+        return None
+
+    monkeypatch.setattr(actions, "_client", lambda: native)
+    monkeypatch.setattr(actions, "_delivered", delivery)
+    native.check_verified_database = verify
+    with pytest.raises(service.ServiceError) as error:
+        run_action("reply", {"session_id": SID, "message_id": "msg_" + "x" * 26, "text": "Original"})
+    assert error.value.state == "profile" and not error.value.dispatched
+    assert not native.calls
 
 
 def test_reply_stays_ambiguous_when_reconciliation_is_unavailable(monkeypatch, attached):
@@ -452,6 +502,32 @@ def test_message_projection_reaches_beyond_cost_tail(tmp_path):
     assert (answer[0]["time_created"], answer[1]) == (1, "Last answer")
 
 
+def test_active_summary_does_not_decode_oversized_tool_payloads(monkeypatch):
+    decode = opencode_live._data
+
+    def guarded(row):
+        assert len(row["data"] or "") <= 1024 * 1024
+        return decode(row)
+
+    monkeypatch.setattr(opencode_live, "_data", guarded)
+    with closing(sqlite3.connect(":memory:")) as db, db:
+        db.row_factory = sqlite3.Row
+        db.execute("CREATE TABLE session_message (id, session_id, type, seq, time_created, data)")
+        records = [
+            ("user", {"text": "Current prompt"}),
+            ("assistant", {"time": {"completed": 2}, "content": [{"type": "text", "text": "Last answer"}]}),
+            ("assistant", {"time": {"completed": 3},
+                           "content": [{"type": "tool", "state": {"input": "x" * (2 * 1024 * 1024)}}]}),
+        ]
+        db.executemany("INSERT INTO session_message VALUES (?, ?, ?, ?, ?, ?)", [
+            (f"msg_{i}", SID, kind, i, i + 1, json.dumps(data))
+            for i, (kind, data) in enumerate(records)
+        ])
+        _, prompt, answer = opencode_live._messages(db, SID)
+    assert prompt[1] == "Current prompt"
+    assert answer[1] == "Last answer"
+
+
 def test_long_history_prefers_the_live_prompt_and_uses_the_completed_indexed_answer(atlas_env, tmp_path, monkeypatch):
     from atlas import db, index
 
@@ -514,7 +590,12 @@ def test_card_uses_indexed_prompt_when_transcript_is_missing(atlas_env, monkeypa
     with db.connect() as catalog:
         card = opencode_live._card(catalog, None, ([], None, None), {}, SID, 123, False, opencode_live.LiveService())
     assert card["prompt"] == "Indexed prompt"
-    assert card["prompt_at"] == card["last_message_at"] == "2026-11-23T10:00:00+00:00"
+    assert card["prompt_at"] is None and card["last_message_at"] is None
+    with db.connect() as catalog:
+        catalog.execute("INSERT INTO activity (session_id, key, kind, ts) VALUES (?, 'user', 'p', ?)",
+                        (SID, "2026-11-23T09:00:00.000Z"))
+        known = opencode_live._card(catalog, None, ([], None, None), {}, SID, 123, False, opencode_live.LiveService())
+    assert known["prompt_at"] == known["last_message_at"] == "2026-11-23T09:00:00.000Z"
 
 
 def test_snapshot_discards_data_if_readonly_context_rejects_it(tmp_path, monkeypatch):
@@ -535,3 +616,136 @@ def test_snapshot_discards_data_if_readonly_context_rejects_it(tmp_path, monkeyp
 
     monkeypatch.setattr(source, "open_readonly", changing_snapshot)
     assert opencode_live._snapshot(path, sid) == (None, ([], None, None))
+
+
+def test_image_only_reply_queues_a_validated_local_upload(atlas_env, monkeypatch, attached):
+    import base64
+
+    from atlas import uploads
+    from tests.test_uploads import PNG
+
+    image = uploads.save_image(base64.b64encode(PNG).decode())
+    native = Native([])
+    payloads = []
+    msg_id = "msg_" + "x" * 26
+
+    def post(method, route, payload, *, before_send):
+        before_send()
+        payloads.append((method, route, payload))
+        return {"data": {"id": msg_id, "sessionID": SID}}
+
+    native.call = post
+    monkeypatch.setattr(actions, "_client", lambda: native)
+    monkeypatch.setattr(actions, "_delivered", lambda *_: None)
+    body = {"session_id": SID, "message_id": msg_id, "text": "",
+            "images": [{"path": image["path"], "name": "1 — рисунок.png"}]}
+    assert run_action("reply", body) == {"delivery": "queued"}
+    assert payloads == [("POST", f"session/{SID}/prompt", {
+        "id": msg_id, "text": "", "delivery": "queue",
+        "files": [{"uri": Path(image["path"]).as_uri(), "name": "1 — рисунок.png"}],
+    })]
+
+
+def test_reply_never_passes_an_arbitrary_file_to_opencode(atlas_env, monkeypatch, attached, tmp_path):
+    from atlas import uploads
+    from tests.test_uploads import PNG
+
+    foreign = tmp_path / "foreign.png"
+    foreign.write_bytes(PNG)
+    directory = Path(uploads.uploads_dir())
+    linked = directory / ("a" * 32 + ".png")
+    linked.symlink_to(foreign)
+    native = Native([])
+    monkeypatch.setattr(actions, "_client", lambda: native)
+    monkeypatch.setattr(actions, "_delivered", lambda *_: None)
+
+    for file in (foreign, linked):
+        body = {"session_id": SID, "message_id": "msg_" + "x" * 26, "text": "Image",
+                "images": [{"path": str(file), "name": "foreign.png"}]}
+        with pytest.raises(service.ServiceError) as error:
+            run_action("reply", body)
+        assert error.value.status == 400
+    assert not native.calls
+
+
+def test_card_pickers_use_the_current_tabs_native_location(monkeypatch, attached, tmp_path):
+    directory = str(tmp_path)
+    monkeypatch.setattr(actions.source, "session_directory", lambda _: directory)
+    reads = []
+    native = Native([])
+
+    def data(route, *, expect=dict):
+        reads.append(route)
+        assert expect is list
+        kind, query = route.split("?", 1)
+        assert actions.urlencode({"location[directory]": directory}) == query
+        return {
+            "command": [{"name": "fixture", "description": "Scoped", "template": "Not sent to the card"}],
+            "skill": [{"id": "atlas-skill", "name": "Project skill", "path": "/synthetic"}],
+            "model": [{"id": "fixture", "name": "Fixture model", "providerID": "atlas"}],
+        }[kind]
+
+    native.data = data
+    monkeypatch.setattr(actions, "_client", lambda: native)
+    assert run_action("pickers", {"session_id": SID}) == {
+        "commands": [{"id": "fixture", "name": "fixture", "description": "Scoped"}],
+        "skills": [{"id": "atlas-skill", "name": "Project skill", "description": ""}],
+        "models": [{"id": "fixture", "name": "Fixture model", "provider": "atlas"}],
+    }
+    assert len(reads) == 3
+
+
+def test_picker_actions_are_scoped_idle_only_and_do_not_retry_ambiguous_commands(monkeypatch, attached, tmp_path):
+    directory = str(tmp_path)
+    monkeypatch.setattr(actions.source, "session_directory", lambda _: directory)
+    active = {}
+    admitted = []
+    native = Native([])
+
+    def data(route, *, expect=dict):
+        if route == "session/active":
+            return active
+        if route.startswith("model?"):
+            return [{"id": "fixture", "providerID": "atlas"}]
+        return [{"name": "fixture", "description": "Scoped"}]
+
+    def call(method, route, payload, *, before_send):
+        before_send()
+        admitted.append((method, route, payload))
+        if route.endswith("/command"):
+            raise service.ServiceError("stopped", dispatched=True)
+
+    native.call, native.data = call, data
+    monkeypatch.setattr(actions, "_client", lambda: native)
+    assert run_action("model", {"session_id": SID, "id": "fixture", "provider": "atlas"}) == {"ok": True}
+    with pytest.raises(service.ServiceError) as error:
+        run_action("model", {"session_id": SID, "id": "fixture", "provider": "other"})
+    assert error.value.status == 400
+    active[SID] = {"type": "running"}
+    with pytest.raises(service.ServiceError) as error:
+        run_action("command", {"session_id": SID, "id": "fixture", "text": "args"})
+    assert error.value.state == "live_picker_busy"
+    active.clear()
+    with pytest.raises(service.ServiceError) as error:
+        run_action("command", {"session_id": SID, "id": "fixture", "text": "args"})
+    assert error.value.state == "live_picker_uncertain"
+    assert admitted == [
+        ("POST", f"session/{SID}/model", {"model": {"id": "fixture", "providerID": "atlas"}}),
+        ("POST", f"session/{SID}/command", {"name": "fixture", "text": "args"}),
+    ]
+
+
+def test_opencode_provider_limit_is_scoped_to_the_current_turn():
+    from atlas.opencode_live import _provider_limit
+
+    user = ({"type": "user"}, {})
+    rate = {"type": "provider.rate-limit", "status": 429, "message": "Private provider body"}
+    quota = {"type": "provider.quota", "status": 402, "response": {"body": "Private response"}}
+    retry = ({"type": "assistant"}, {"retry": {"at": 1_795_560_938_170, "attempt": 2, "error": rate}})
+    idle = ({"type": "idle"}, {"outcome": "failed", "error": quota})
+    assert _provider_limit([retry, user], True) == {
+        "kind": "rate", "retry_at": "2026-11-24T22:55:38.170000+00:00",
+    }
+    assert _provider_limit([idle, user], False) == {"kind": "quota", "retry_at": None}
+    assert _provider_limit([user, idle], False) is None
+    assert _provider_limit([retry, user], None) is None

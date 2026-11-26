@@ -3,6 +3,7 @@
 // Groups live in the plugin data: {groups: {id: {name, color, collapsed}}, members: {leaf id: group id}}.
 // Mixed into the plugin class.
 import { Menu } from "obsidian";
+import { HOST_SOURCE, VIEW_TYPE } from "./constants";
 import { ConfirmCloseModal } from "./guard";
 import { cleanGroups, createGroup, joinIndex, changedLeaves, dropChanges, prune, liveGroups, dropIfEmpty } from "./groups-model";
 import { strips } from "./groups-strip";
@@ -259,6 +260,10 @@ class GroupMethods {
     this.groupMenus.add(menu);
     const own = this.groups.members[leaf.id] || null;
     const others = liveGroups(this.groups).filter((g) => g.id !== own);
+    if (own) {
+      menu.addItem((item) => item.setSection("action").setTitle(this.t("group.menu.workspace")).setIcon("layout-grid")
+        .onClick(() => void this.workspaceFromGroup(own)));
+    }
     menu.addItem((item) => item.setSection("action").setTitle(this.t("group.menu.new")).setIcon("group")
       .onClick(() => this.newGroupFor(leaf)));
     if (others.length) {
@@ -282,6 +287,21 @@ class GroupMethods {
     }
   }
 
+  async workspaceFromGroup(id) {
+    if (!this.groups.groups[id]) return;
+    const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE);
+    const leaf = leaves.find(item => item.view?.frameLoaded);
+    if (leaf) {
+      this.app.workspace.revealLeaf(leaf);
+      leaf.view.frame.contentWindow.postMessage({ source: HOST_SOURCE, type: "workspace-from-group", id }, this.atlasOrigin());
+    } else {
+      const params = new URLSearchParams(leaves[0]?.getViewState?.()?.state?.hash?.slice(1));
+      params.set("view", "active");
+      params.set("wg", id);
+      await this.openAtlas(`#${params}`);
+    }
+  }
+
   /** The same menu for a card on the catalog page: shown over the page, where it was asked for. */
   async groupMenuForPage(source, data) {
     const tab = (await this.terminalTabs()).find((t) => t.pid === data.ptyPid);
@@ -302,7 +322,8 @@ class GroupMethods {
   /** What the catalog shows on the session's card. */
   tabGroupInfo(leaf) {
     const group = this.groupOf(leaf);
-    return group ? { id: group.id, name: group.name, color: group.color } : null;
+    return group ? { id: group.id, name: group.name, color: group.color,
+      order: this.groupLeaves(group.id).indexOf(leaf) } : null;
   }
 }
 

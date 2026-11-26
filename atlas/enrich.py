@@ -72,7 +72,7 @@ def preview(conn: sqlite3.Connection, session_id: str, artifact_kind: str,
             backend: str | None = None, model: str | None = None, *,
             payload: dict | None = None) -> dict:
     """First confirmation stage: show exactly what will be sent and where, before any call."""
-    backend = backend or runner.backend()
+    backend = backend or runner.artifact_backend()
     default_model, effort = runner.model_for(artifact_kind, backend)
     model = model or default_model
     payload = runner.preview_payload(conn, session_id, artifact_kind, payload=payload)
@@ -113,7 +113,7 @@ def produce(conn: sqlite3.Connection, session_id: str, artifact_kind: str, job_i
             confirmed_payload: dict | None = None, fallback_effort: str | None = None,
             primary_effort: str | None = None, finish_job: bool = False) -> dict:
     """Second stage: the model call. The send permission is checked right here."""
-    backend = backend or runner.backend()
+    backend = backend or runner.artifact_backend()
     default_model, effort = runner.model_for(artifact_kind, backend)
     model = model or default_model
     effort = primary_effort or effort

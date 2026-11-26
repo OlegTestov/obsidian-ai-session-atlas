@@ -14,7 +14,7 @@ from . import agents, config, db
 DATABASE = "opencode.db"
 STATE = "opencode_state"
 FINGERPRINT = "opencode_fingerprint"
-VERSION = 6
+VERSION = 7
 SESSION = ("id", "title", "directory", "version", "parent_id", "fork_session_id", "fork_boundary",
            "time_created", "time_updated", "time_archived")
 MESSAGE = ("id", "session_id", "type", "seq", "time_created", "time_updated", "data")
@@ -123,6 +123,22 @@ def read(ref: agents.SourceRef, *, conn, row, subagents=(), fork_source_title=No
     facts = project(row, fork_source_title)
     facts.source_path = ref.locator
     return agents.SourceFacts(facts, [project(child) for child in subagents])
+
+
+
+def artifact_facts(locator, sid):
+    from .messages import msg
+
+    path = (data_home() / DATABASE).resolve(strict=True)
+    ref = _session_ref(path, sid)
+    if locator != ref.locator or not agents.valid_id(agents.OPENCODE, sid):
+        raise LookupError(msg("runner.no_session", sid=sid))
+    with open_readonly(path) as source:
+        if schema_state(source) == "v2":
+            row = source.execute("SELECT * FROM session_v2 WHERE id=?", (sid,)).fetchone()
+            if row:
+                return read(ref, conn=source, row=row).facts
+    raise LookupError(msg("runner.no_session", sid=sid))
 
 
 def _changed_sources(source, rows, path, st, known, previous, full):

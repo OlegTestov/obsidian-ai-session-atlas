@@ -22,8 +22,9 @@ function renderActive(skipKey, force) {
   const grid = $("#active-grid");
   arrangeActive(activeSessions);              // bring back hidden cards that have a new message
   const arranged = arrangeActive(activeSessions.filter(s => passes(s)));
-  const shown = arranged.visible;
-  const any = ACTIVE_FILTERS.some(({ key }) => activeFilter[key].size) || agentFiltered("active");
+  const board = currentWorkspace();
+  const shown = board ? workspaceSessions(board, activeSessions.filter(s => !hiddenCards[s.session_id])) : arranged.visible;
+  const any = !board && (ACTIVE_FILTERS.some(({ key }) => activeFilter[key].size) || agentFiltered("active"));
   // Keep the Active controls on one line.
   const sep = () => document.createTextNode(" · ");
   // The total is already on the "Active N" tab; here only what the filters keep.
@@ -66,27 +67,28 @@ function renderActive(skipKey, force) {
   keys.addEventListener("click", showKeys);
   summary.append(sep(), keys);
   if (state.view !== "active") return;
+  renderWorkspaceBar();
   refreshFilterButtons(skipKey);
   document.querySelectorAll(".mode button").forEach(b =>
     b.setAttribute("aria-pressed", String(b.dataset.mode === activeMode)));
   const closed = () => [backgroundSection(), closedSection()].filter(Boolean);
   // An empty grid is not the cards of the last signature: clearing a filter must draw them again.
-  if (!activeSessions.length || !shown.length) lastSignature = "";
-  if (!activeSessions.length) {
+  if (!board && (!activeSessions.length || !shown.length)) lastSignature = "";
+  if (!board && !activeSessions.length) {
     grid.replaceChildren(el("p", "empty", i18n("active.noSessions")), ...closed());
     mountCardPanels(grid);
     return;
   }
-  if (!shown.length) {
+  if (!board && !shown.length) {
     grid.replaceChildren(el("p", "empty", arranged.hiddenCount
       ? i18n("active.allHidden")
       : i18n("active.noMatches")), ...closed());
     mountCardPanels(grid);
     return;
   }
-  // During IME composition the DOM is left alone, otherwise the word breaks. Open command
-  // hints too: a redraw every 5 s would recreate the field and drop the list.
-  if (composing || document.querySelector("#active-grid .suggest:not(.hidden)")) return;
+  // Keep the focused composer while command hints are loading or open.
+  const composer = document.activeElement?.closest("#active-grid .answer");
+  if (composing || composer?.querySelector(".suggest:not(.hidden), .suggest[data-loading]")) return;
   // Plan feedback is being typed: the field is not recreated, otherwise focus and caret are lost.
   if (document.activeElement && document.activeElement.matches("#active-grid .planfb textarea")) return;
   const formControl = document.activeElement;
@@ -94,9 +96,8 @@ function renderActive(skipKey, force) {
   const formSelection = focusedForm && typeof formControl.selectionStart === "number"
     ? [formControl.selectionStart, formControl.selectionEnd, formControl.selectionDirection] : null;
   // Nothing changed: leave the DOM alone entirely, so the text scroll does not reset.
-  const signature = JSON.stringify([shown, activeMode, layout, hostReady, shown.map(tabFor), [...hostTabs.keys()], [...hostInlineTabs], [...hostHeld.keys()], [...hostBackground],
-    [...justSent].map(([sid, sent]) => [sid, AtlasLogic.deliveryState(
-      activeSessions.find(x => x.session_id === sid) || {}, sent, Date.now())]), [...dialogs], [...dialogNotes], [...dialogAnswers.values()], [...stopNotes], [...commandOutputs], pinnedCards, hiddenCards,
+  const signature = JSON.stringify([board, board?.slots.map(workspaceSlotOccupied), shown, activeMode, layout, hostReady, shown.map(tabFor), [...hostTabs.keys()], [...hostInlineTabs], [...hostHeld.keys()], [...hostBackground],
+    [...dialogs], [...dialogNotes], [...dialogAnswers.values()], [...stopNotes], [...commandOutputs], pinnedCards, hiddenCards,
     [...attachments].map(([k, v]) => [k, v.length]),
     recentClosed, backgroundJobs, [...backgroundNotes], agentPick.active, closedOpen, [...closedNotes], [...planForms], [...freeModes],
     [...planTexts].map(([k, v]) => [k, v.name, (v.text || "").length])]);
@@ -126,7 +127,7 @@ function renderActive(skipKey, force) {
   const scroll = grid.scrollTop;
   // A dialog blocks the session: such cards get their own section on top, shown only when there are any.
   const standard = !openCode.length || decide.length || waitingYou.length || working.length;
-  const sections = [decide.length ? section(i18n("active.sectionDecision"), decide, "decide") : null,
+  const sections = board ? [workspaceGrid(board, shown)] : [decide.length ? section(i18n("active.sectionDecision"), decide, "decide") : null,
                     standard ? section(i18n("active.sectionWaiting"), waitingYou) : null,
                     standard ? section(i18n("active.sectionWorking"), working) : null,
                     openCode.length ? section(i18n("opencode.active"), openCode, "open-code") : null];
@@ -137,7 +138,7 @@ function renderActive(skipKey, force) {
     && document.activeElement.closest(".acard")?.dataset.id;
   // Keep the mounted body and its scroll position across header and status updates.
   const positions = new Map([...cardPanels].map(([sid, panel]) => [sid, panel.body.scrollTop]));
-  grid.replaceChildren(...sections.filter(Boolean), ...closed());
+  grid.replaceChildren(...sections.filter(Boolean), ...(board ? [] : closed()));
   // Keep the focused form and repaint its card and the rest of the grid.
   if (focusedForm) {
     const replacement = [...grid.querySelectorAll(".oc-form")].find(form =>
@@ -148,7 +149,7 @@ function renderActive(skipKey, force) {
       if (formSelection) formControl.setSelectionRange(...formSelection);
     }
   }
-  mountCardPanels(grid, shown);
+  mountCardPanels(grid, shown, positions);
   for (const [sid, top] of positions) {
     const panel = cardPanels.get(sid);
     if (panel && state.view === "active") panel.body.scrollTop = top;

@@ -30,8 +30,14 @@ function waitingTransitions(prev, sessions) {
   for (const s of sessions || []) {
     if (!s || typeof s.session_id !== "string") continue;
     const now = activityOf(s);
-    next.set(s.session_id, now);
     const was = prev.get(s.session_id);
+    // An offline OpenCode card may be painted idle without evidence that a turn ended.
+    if (s.agent === "opencode" && now === "idle"
+        && (s.opencode_running === null || !Number.isFinite(Date.parse(s.last_message_at)))) {
+      if (was !== undefined) next.set(s.session_id, was);
+      continue;
+    }
+    next.set(s.session_id, now);
     if (was === undefined || was === now) continue;
     if ((WORKING.has(was) && isWaiting(s)) || now === "waiting") started.push(s);
   }

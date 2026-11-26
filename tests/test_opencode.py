@@ -216,6 +216,18 @@ def test_indexed_answer_uses_completed_steps(catalog):
     assert search.local_state(conn, sid)["last_answer"] == "Synthetic assistant reply"
 
 
+def test_index_purges_orphaned_answer_times_left_by_an_old_writer(catalog):
+    _, conn, scan = catalog
+    scan()
+    sid = titles(conn)["OpenCode fixture plain"]["session_id"]
+    orphan = "ses_" + "o" * 26
+    with conn:
+        conn.execute("INSERT INTO opencode_answer_times VALUES (?,?)", (orphan, 1000))
+    assert scan()["indexed"] == 0
+    assert conn.execute("SELECT ts FROM opencode_answer_times WHERE session_id=?", (orphan,)).fetchone() is None
+    assert conn.execute("SELECT ts FROM opencode_answer_times WHERE session_id=?", (sid,)).fetchone()[0] is not None
+
+
 def test_purge_only_after_complete_read(catalog, monkeypatch):
     source, conn, scan = catalog
     scan()
@@ -432,3 +444,124 @@ def test_open_code_forks_use_shared_copy_numbers(catalog, monkeypatch):
         writer.execute("UPDATE session_v2 SET title=? WHERE id=?", ("Manual name (fork #9)", second_id))
     scan()
     assert search.load_session(conn, second_id)["title"] == "Manual name (fork #9)"
+
+
+def test_opencode_statistics_group_skill_and_subagent_invocations(catalog):
+    source, conn, scan = catalog
+    with closing(sqlite3.connect(source)) as writer, writer:
+        key, raw = writer.execute(
+            "SELECT m.id,m.data FROM session_message m JOIN session_v2 s ON s.id=m.session_id "
+            "WHERE s.title='OpenCode fixture plain' AND m.type='assistant'"
+        ).fetchone()
+        data = json.loads(raw)
+        data["content"].extend([
+            {"type": "tool", "name": "skill", "state": {"input": {"id": "atlas-fixture"}}},
+            {"type": "tool", "name": "subagent", "state": {"input": {"agent": "fixture-worker"}}},
+        ])
+        writer.execute("UPDATE session_message SET data=? WHERE id=?", (json.dumps(data), key))
+    scan()
+    result = stats.summary(conn, "all", agents=["opencode"])
+    assert {"name": "atlas-fixture", "count": 1} in result["skills"]
+    assert {"name": "fixture-worker", "count": 1} in result["agents"]
+
+
+def test_opencode_artifact_preview_uses_an_explicit_provider_without_changing_classification(catalog):
+    from atlas import enrich, runner
+
+    _, conn, scan = catalog
+    Path(config.path()).write_text(json.dumps({"ai_agent": "claude", "opencode_ai_model": "atlas/fake"}))
+    config.reset()
+    scan()
+    sid = titles(conn)["OpenCode fixture plain"]["session_id"]
+    result = enrich.preview(conn, sid, "catalog_summary")
+    assert (result["backend"], result["model_id"]) == ("opencode-service", "atlas/fake")
+    assert "Fixture plain request" in json.dumps(result)
+    assert runner.backend() == runner.CLAUDE_BACKEND
+
+
+def test_open_code_generator_submits_only_to_the_verified_model_and_checks_cancellation(monkeypatch):
+    from atlas import opencode_service, runner
+
+    calls = []
+
+    class Native:
+        version = opencode_service.TESTED_VERSION
+
+        def check_verified_database(self):
+            calls.append("verified")
+
+        def call(self, method, route, payload, *, before_send, timeout):
+            before_send()
+            calls.append((method, route, payload, timeout))
+            return {"data": {"text": "Fixture artifact"}}
+
+    monkeypatch.setattr(opencode_service, "verified_client", lambda _: Native())
+    monkeypatch.setattr(runner, "llm_enabled", lambda: True)
+    result = runner.run_isolated("Only the confirmed excerpt", model="atlas/fake", backend_name="opencode-service",
+                                 timeout=25, before_send=lambda: calls.append("cancelled checked"))
+    assert result == "Fixture artifact"
+    assert calls == ["verified", "cancelled checked", ("POST", "experimental/generate/text", {
+        "model": {"providerID": "atlas", "id": "fake"}, "prompt": "Only the confirmed excerpt",
+    }, 25)]
+
+
+def test_open_code_artifact_http_requires_the_previewed_model_and_excerpt(live_server, catalog, monkeypatch):
+    import time
+
+    from atlas import opencode_service
+
+    _, conn, scan = catalog
+    Path(config.path()).write_text(json.dumps({"ai_agent": "claude", "opencode_ai_model": "atlas/fake"}))
+    config.reset()
+    scan()
+    callback = []
+
+    class Native:
+        version = opencode_service.TESTED_VERSION
+
+        def check_verified_database(self):
+            pass
+
+        def call(self, method, route, body, *, before_send, timeout):
+            before_send()
+            callback.append((method, route, body, timeout))
+            return {"data": {"text": '{"did":"Fixture generated summary","work_outcome":"done"}'}}
+
+    monkeypatch.setattr(opencode_service, "verified_client", lambda _: Native())
+    base, token = live_server
+    sid = titles(conn)["OpenCode fixture plain"]["session_id"]
+    kind = "catalog_summary"
+    headers = {"Origin": base, "X-Atlas-Token": token, "Content-Type": "application/json"}
+
+    def request(route, body=None):
+        url = base + "/api/" + route
+        data = None if body is None else json.dumps(body).encode()
+        with urlopen(Request(url, headers=headers, data=data), timeout=5) as reply:
+            return json.loads(reply.read())
+
+    initial = {"session_id": sid, "artifact_kind": kind}
+    preview = request("preview", initial)
+    assert preview["agent_name"] == "OpenCode"
+    assert preview["model_id"] == "atlas/fake"
+    assert "Fixture plain request" in preview["text"]
+    assert callback == []
+    confirmed = {
+        **initial, "confirmed": True,
+        **{key: preview[key] for key in ("backend", "model_id", "effort", "content_hash", "excerpt_hash")},
+    }
+    with pytest.raises(HTTPError) as refused:
+        request("job", {**confirmed, "model_id": "other/fake"})
+    assert refused.value.code == 409 and callback == []
+    job = request("job", confirmed)
+    for _ in range(100):
+        state = request("job/" + job["job_id"])["state"]
+        if state in {"done", "error"}:
+            break
+        time.sleep(0.02)
+    assert state == "done"
+    assert len(callback) == 1
+    method, route, body, _ = callback[0]
+    assert (method, route) == ("POST", "experimental/generate/text")
+    assert set(body) == {"model", "prompt"}
+    assert body["model"] == {"providerID": "atlas", "id": "fake"}
+    assert preview["text"] in body["prompt"]

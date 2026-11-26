@@ -8,6 +8,7 @@
 __TERMINAL_ASSETS__
 <link rel="stylesheet" nonce="__NONCE__" href="/static/stats.css">
 <link rel="stylesheet" nonce="__NONCE__" href="/static/folder-pick.css">
+<link rel="stylesheet" nonce="__NONCE__" href="/static/workspaces.css">
 </head>
 <body>
 <div id="server-banner" class="hidden" role="alert"></div>
@@ -21,6 +22,11 @@ __TERMINAL_ASSETS__
     data-i18n-title="nav.helpTitle" data-i18n-aria-label="nav.help">?</button>
 </nav>
 <section id="active" class="hidden" role="tabpanel" aria-labelledby="view-active">
+  <div id="workspace-bar">
+    <nav id="workspace-tabs" data-i18n-aria-label="workspace.title"></nav>
+    <div id="workspace-actions"></div>
+  </div>
+  <p id="workspace-notice" role="status"></p>
   <div id="active-filters" role="toolbar" aria-label="Active session filters"
     data-i18n-aria-label="common.activeFilters"></div>
   <div id="restore-banner" class="hidden" role="status"></div>
@@ -144,6 +150,7 @@ window.ATLAS_OPENCODE_AVAILABLE = __OPENCODE_AVAILABLE__; window.ATLAS_CLAUDE_IN
 <script nonce="__NONCE__" src="/static/i18n.js"></script>
 <script nonce="__NONCE__" src="/static/lang-common.js"></script>
 <script nonce="__NONCE__" src="/static/lang-active.js"></script>
+<script nonce="__NONCE__" src="/static/lang-workspaces.js"></script>
 <script nonce="__NONCE__" src="/static/lang-views.js"></script>
 <script nonce="__NONCE__" src="/static/lang-server.js"></script>
 <script nonce="__NONCE__" src="/static/lang-resume.js"></script>
@@ -160,6 +167,7 @@ window.ATLAS_OPENCODE_AVAILABLE = __OPENCODE_AVAILABLE__; window.ATLAS_CLAUDE_IN
 <script nonce="__NONCE__" src="/static/card-feed.js"></script>
 <script nonce="__NONCE__" src="/static/card.js"></script>
 <script nonce="__NONCE__" src="/static/actions.js"></script>
+<script nonce="__NONCE__" src="/static/launch-host.js"></script>
 <script nonce="__NONCE__" src="/static/opencode.js"></script>
 <script nonce="__NONCE__" src="/static/opencode-active.js"></script>
 <script nonce="__NONCE__" src="/static/resume-with.js"></script>
@@ -180,6 +188,9 @@ window.ATLAS_OPENCODE_AVAILABLE = __OPENCODE_AVAILABLE__; window.ATLAS_CLAUDE_IN
 <script nonce="__NONCE__" src="/static/active-order.js"></script>
 <script nonce="__NONCE__" src="/static/active-restore.js"></script>
 <script nonce="__NONCE__" src="/static/active-closed.js"></script>
+<script nonce="__NONCE__" src="/static/layout-grid.js"></script>
+<script nonce="__NONCE__" src="/static/workspaces.js"></script>
+<script nonce="__NONCE__" src="/static/workspace-editor.js"></script>
 <script nonce="__NONCE__" src="/static/active-filters.js"></script>
 <script nonce="__NONCE__" src="/static/active-cards.js"></script>
 <script nonce="__NONCE__" src="/static/active.js"></script>

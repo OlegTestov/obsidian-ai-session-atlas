@@ -85,22 +85,12 @@
     return out;
   }
 
-  // Your message without a reply: just sent (until the transcript catches up) or from
-  // the transcript. dropSent: the message sent from the card no longer needs keeping.
-  function unansweredPrompt(s, sent) {
-    const t = iso => (iso ? new Date(iso).getTime() : 0);
-    let dropSent = false;
-    if (sent && (t(s.reply_at) > t(sent.at) || t(s.prompt_at) >= t(sent.at) - 2000)) {
-      dropSent = true;
-      sent = null;
-    }
-    if (sent) return { prompt: { text: sent.text, images: sent.images, at: sent.at, sent: true },
-                       dropSent };
-    if (s.prompt && t(s.prompt_at) > t(s.reply_at)) {
-      return { prompt: { text: s.prompt, images: s.prompt_images || 0, at: s.prompt_at,
-                         interrupted: t(s.interrupted_at) >= t(s.prompt_at) }, dropSent };
-    }
-    return { prompt: null, dropSent };
+  function sentTurnMatches(sent, turn) {
+    // Match the text the terminal receives. An earlier turn may have had the same text.
+    // eslint-disable-next-line no-control-regex -- the terminal strips control characters
+    const text = sent.text.replace(/\r\n?/g, "\n").replace(/[\x00-\x08\x0b-\x1f\x7f]/g, "").trim();
+    return Date.parse(turn.prompt_at) >= Date.parse(sent.at)
+      && (turn.prompt || "").trim() === text && (turn.images || 0) === sent.paths.length;
   }
 
   // Where a message just sent from the card is until the transcript shows it: queued (typed
@@ -114,14 +104,16 @@
     return "sending";
   }
 
-  // The agent's queue without the message just sent from the card: that one is already shown as
-  // "You … — queued" above, a second line for it would repeat it.
+  // Messages sent from the card already have their own rows. Remove one queue entry per row.
   function queuedNotShown(s, sent) {
-    const queued = s.queued || [];
-    const head = sent && sent.sent ? (sent.text || "").trim().slice(0, 40) : "";
-    if (!head) return queued;
-    const i = queued.findIndex(q => (q.text || "").trim().startsWith(head));
-    return i < 0 ? queued : queued.filter((_, n) => n !== i);
+    const queued = (s.queued || []).slice();
+    for (const message of sent) {
+      const head = message.text.trim().slice(0, 40);
+      if (!head) continue;
+      const index = queued.findIndex(q => (q.text || "").trim().startsWith(head));
+      if (index >= 0) queued.splice(index, 1);
+    }
+    return queued;
   }
 
   // Slash-command hints while "/word" is typed without a space. Prefix matches come first.
@@ -428,6 +420,6 @@
   const api = { AGENTS, findAgent, getAgent, requireAgent, savedAgentSelection, storedAgentSelection, sizeMb, freeTextOption, freeAnswerText, agentOf, agentSelection, agentParam, agentPasses, toggleAgent, newSessionAgents,
                 newSessionAgent, applyFrozenOrder, pruneClosedNotes, CLOSED_NOTE_TTL_MS, pluralRu, tasksSummary, jumpMatches, durationText, stepPasses, relPath, terminalStatus, infoParts, shortTokens, arrangeSessions, contextLevel, limitsText, limitsAge, deliveryState, DELIVERY_WAIT_MS, queuedNotShown, commandMatches,
                 historyStep, PERIODS, periodOf, valuesOf, passes, filterOptions, parseLayout,
-                backgroundReasons, unansweredPrompt, nextCard, costText };
+                backgroundReasons, sentTurnMatches, nextCard, costText };
   root.AtlasLogic = api;           // own namespace: active.js has wrappers
 })(window);

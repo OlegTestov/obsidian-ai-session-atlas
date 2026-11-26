@@ -1,6 +1,7 @@
 """What leaves the machine and through what. Fail-closed: nothing leaves without explicit permission."""
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -8,21 +9,28 @@ import re
 import shutil
 import sqlite3
 import subprocess
+import tempfile
+import time
+from contextlib import suppress
 from datetime import datetime, timezone
 
 from . import agents, codex_app, codex_exec, config, db, prompts
 from .messages import msg
 
 EXTRACTOR_VERSION = 1
+PREVIEW_TTL_SECONDS = 30 * 60
 
 # Only an explicitly listed backend counts as local. litellm alone does not mean local:
 # it routes on to an external provider.
 LOCAL_BACKENDS = {"ollama", "lmstudio", "llamacpp"}
 EXTERNAL_BACKEND = CLAUDE_BACKEND = "claude-cli"
 CODEX_BACKEND = "codex-cli"
+OPENCODE_BACKEND = "opencode-service"
+OPENCODE_MODEL = re.compile(r"([A-Za-z0-9_.:@+-]{1,160})/([A-Za-z0-9_.:@/+-]{1,180})")
 CLAUDE_LIMIT_FALLBACK_MODEL = codex_exec.SOL_MODEL
 BACKENDS = {agents.CLAUDE: CLAUDE_BACKEND, agents.CODEX: CODEX_BACKEND}
-AGENT_NAMES = {backend: agents.label(kind) for kind, backend in BACKENDS.items()}
+AGENT_NAMES = {backend: agents.label(kind) for kind, backend in
+               {**BACKENDS, agents.OPENCODE: OPENCODE_BACKEND}.items()}
 
 DEFAULT_MODEL = "sonnet"
 DEFAULT_EFFORT = "medium"
@@ -64,7 +72,7 @@ DEFAULT_TOKEN_BUDGET = 20_000
 def budget_chars(artifact_kind: str, scale: float = 1.0) -> int:
     tokens = TOKEN_BUDGET.get(artifact_kind, DEFAULT_TOKEN_BUDGET)
     # Budgets assume a 1M window; a model with a standard window gets the same share of its own.
-    window = WINDOW_1M if has_1m_window(model_for(artifact_kind)[0]) else WINDOW_DEFAULT
+    window = WINDOW_1M if has_1m_window(model_for(artifact_kind, artifact_backend())[0]) else WINDOW_DEFAULT
     return int(tokens * window / WINDOW_1M * CHARS_PER_TOKEN * scale)
 
 # A preview cannot show 3 MB whole: return the head and tail, put the full text in a file.
@@ -115,6 +123,20 @@ def backend() -> str:
     return CODEX_BACKEND if codex_app.find_codex() else CLAUDE_BACKEND
 
 
+def opencode_artifacts_enabled():
+    value = config.get("opencode_ai_model")
+    return isinstance(value, str) and OPENCODE_MODEL.fullmatch(value.strip()) is not None
+
+
+def artifact_backend() -> str:
+    value = config.get("opencode_ai_model")
+    if not value or (isinstance(value, str) and not value.strip()):
+        return backend()
+    if not opencode_artifacts_enabled():
+        raise EgressDenied(msg("runner.opencode_model"))
+    return OPENCODE_BACKEND
+
+
 def _backend_name(name: str | None) -> str:
     if name is None:
         return backend()
@@ -126,8 +148,13 @@ def _backend_name(name: str | None) -> str:
 def model_for(artifact_kind: str, backend_name: str | None = None) -> tuple[str, str]:
     """With force_1m set, models without a native 1M window get the [1m] suffix. Not every plan
     has it, so it is off by default. Codex has its own setting (`codex_exec.model_for`)."""
-    if _backend_name(backend_name) == CODEX_BACKEND:
+    kind = _backend_name(backend_name)
+    if kind == CODEX_BACKEND:
         return codex_exec.model_for(artifact_kind)
+    if kind == OPENCODE_BACKEND:
+        if not opencode_artifacts_enabled():
+            raise EgressDenied(msg("runner.opencode_model"))
+        return config.get("opencode_ai_model").strip(), "default"
     model, effort = _models().get(artifact_kind, (DEFAULT_MODEL, DEFAULT_EFFORT))
     if config.get("force_1m") and not has_1m_window(model):
         model += "[1m]"
@@ -228,7 +255,12 @@ def build_payload(conn: sqlite3.Connection, session_id: str,
     if row is None:
         raise LookupError(msg("runner.no_session", sid=session_id))
 
-    facts = agents.parse_session(row["source_path"], session_id, row["agent"])
+    if row["agent"] == agents.OPENCODE:
+        from . import agent_opencode
+
+        facts = agent_opencode.artifact_facts(row["source_path"], session_id)
+    else:
+        facts = agents.parse_session(row["source_path"], session_id, row["agent"])
     files = [r["resolved_path"] for r in conn.execute(
         "SELECT resolved_path FROM session_files WHERE session_id=?", (session_id,))]
     links = [f"{r['kind']}: {r['url']}" for r in conn.execute(
@@ -407,6 +439,33 @@ def preflight(model: str = "claude-haiku-4-5-20251001", effort: str = "low") -> 
                                detail=(proc.stderr or "").strip()[:300]))
 
 
+
+def _open_code_text(prompt, model, timeout, before_send):
+    from . import agent_opencode, opencode_service
+
+    selection = OPENCODE_MODEL.fullmatch(model) if isinstance(model, str) else None
+    if not selection:
+        raise EgressDenied(msg("runner.opencode_model"))
+    provider, mid = selection.groups()
+    client = opencode_service.verified_client(agent_opencode.data_home() / agent_opencode.DATABASE)
+    if client.version != opencode_service.TESTED_VERSION:
+        raise opencode_service.ServiceError("version_warning")
+
+    def check_send():
+        client.check_verified_database()
+        if before_send is not None:
+            before_send()
+
+    result = client.call("POST", "experimental/generate/text",
+                         {"model": {"providerID": provider, "id": mid}, "prompt": prompt},
+                         before_send=check_send, timeout=timeout)
+    data = opencode_service._response_data(result, dict)
+    text = data.get("text")
+    if not isinstance(text, str) or not text.strip():
+        raise RuntimeError(msg("runner.opencode_empty"))
+    return text
+
+
 def run_isolated(prompt: str, model: str = DEFAULT_MODEL, effort: str = DEFAULT_EFFORT,
                  timeout: int = 900, backend_name: str | None = None, schema: dict | None = None, *,
                  before_send=None) -> str:
@@ -414,7 +473,10 @@ def run_isolated(prompt: str, model: str = DEFAULT_MODEL, effort: str = DEFAULT_
     your environment and creates transcripts of its own. The Codex backend: `codex_exec.run`, where
     `schema` (JSON Schema of the answer) is enforced; `claude -p` follows the prompt alone."""
     require_llm()                  # last line of defense: every model call passes through here
-    if _backend_name(backend_name) == CODEX_BACKEND:
+    selected = _backend_name(backend_name)
+    if selected == OPENCODE_BACKEND:
+        return _open_code_text(prompt, model, timeout, before_send)
+    if selected == CODEX_BACKEND:
         try:
             if before_send is not None:
                 before_send()
@@ -443,6 +505,34 @@ def run_isolated(prompt: str, model: str = DEFAULT_MODEL, effort: str = DEFAULT_
     return proc.stdout.strip()
 
 
+def _save_preview_text(text: str, digest: str) -> str:
+    folder = os.path.join(db.atlas_home(), "payloads", "previews")
+    os.makedirs(folder, mode=0o700, exist_ok=True)
+    # A cleanup must not remove a fresh replacement installed by another preview.
+    with open(os.path.join(folder, ".lock"), "ab") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        cutoff = time.time() - PREVIEW_TTL_SECONDS
+        with os.scandir(folder) as entries:
+            for entry in entries:
+                if not re.fullmatch(r"[0-9a-f]{64}\.txt", entry.name):
+                    continue
+                try:
+                    if entry.stat(follow_symlinks=False).st_mtime < cutoff:
+                        os.unlink(entry.path)
+                except OSError:
+                    pass
+        path = os.path.join(folder, f"{digest}.txt")
+        fd, temporary = tempfile.mkstemp(dir=folder)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(text)
+            os.replace(temporary, path)
+        finally:
+            with suppress(FileNotFoundError):
+                os.unlink(temporary)
+    return path
+
+
 def preview_payload(conn: sqlite3.Connection, session_id: str, artifact_kind: str, *,
                     payload: dict | None = None) -> dict:
     """3 MB cannot be shown: return the head and tail, write the full text to a file for checking."""
@@ -454,10 +544,6 @@ def preview_payload(conn: sqlite3.Connection, session_id: str, artifact_kind: st
                  + text[-PREVIEW_TAIL:])
     else:
         shown = text
-    folder = os.path.join(db.atlas_home(), "payloads")
-    os.makedirs(folder, mode=0o700, exist_ok=True)
-    path = os.path.join(folder, f"{session_id}.{artifact_kind}.txt")
-    with open(path, "w", encoding="utf-8") as fh:
-        fh.write(text)
-    os.chmod(path, 0o600)
-    return {**payload, "text": shown, "full_path": path, "excerpt_hash": excerpt_hash(payload)}
+    digest = excerpt_hash(payload)
+    path = _save_preview_text(text, digest)
+    return {**payload, "text": shown, "full_path": path, "excerpt_hash": digest}

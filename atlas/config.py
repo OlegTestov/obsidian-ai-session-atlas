@@ -42,6 +42,7 @@ DEFAULTS = {
     "force_1m": False,                # [1m] suffix for models without a native 1M window (not on every plan)
     # Which agent runs the AI features: auto (Claude Code if installed, else Codex) | claude | codex.
     "ai_agent": "auto",
+    "opencode_ai_model": "",         # optional explicit provider/model for confirmed summaries and handoffs
     "codex_model": None,              # ["gpt-5.5", "medium"] for codex exec; empty model = Codex's default
     "codex_exec_config": [],          # extra `-c key=value` for codex exec (it skips config.toml)
     "claude_bin": None,               # path to claude; the plugin finds it via the login shell

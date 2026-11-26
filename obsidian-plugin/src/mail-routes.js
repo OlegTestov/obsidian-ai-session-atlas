@@ -8,18 +8,24 @@ import { supportsTerminal } from "./agents";
 const DIRECTORY = ".atlas-tabs";
 const ROUTE = /^atlas-(?:[cx]-[0-9a-f]{32}|o-ses_[a-z0-9]{20,28})$/;
 
-function tabRoutes(sessions, tabs, limitForTab = () => null) {
+function tabRoutes(sessions, tabs, limitForTab = () => null, includeOpenCode = false) {
   const routes = new Map();
+  const ambiguous = new Set();
   for (const session of sessions) {
     const id = session?.session_id;
     const agent = session?.agent;
-    if (agent === "opencode" || !supportsTerminal(agent) || !validId(agent, id)) continue;
+    if ((agent === "opencode" && !includeOpenCode) || !supportsTerminal(agent) || !validId(agent, id)) continue;
     if (!Array.isArray(session.ancestors)) continue;
     const tab = tabs.find(t => session.ancestors.includes(t.pid));
     const title = tab?.title?.trim();
     if (!title || title.length > 1000) continue;
     const mailbox = `atlas-${getAgent(agent).mailPrefix}-${id.replaceAll("-", "").toLowerCase()}`;
-    const usageLimit = limitForTab(id, agent, tab);
+    if (agent === "opencode" && routes.has(mailbox) && routes.get(mailbox).id !== id) {
+      routes.delete(mailbox);
+      ambiguous.add(mailbox);
+    }
+    if (ambiguous.has(mailbox)) continue;
+    const usageLimit = agent === "opencode" ? null : limitForTab(id, agent, tab);
     const pid = Number.isInteger(session.pid) && session.pid > 1 ? session.pid : null;
     routes.set(mailbox, { mailbox, title, id, agent, ...(pid && { pid }), ...(usageLimit && { usage_limit: usageLimit }) });
   }

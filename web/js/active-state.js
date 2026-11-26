@@ -1,7 +1,7 @@
 // Active: state, server polling and the link to the Obsidian plugin.
 // Classic script: shares one global scope with the other page files.
 /* exported hostHealth, activeUpdated, ACTIVE_FILTERS, PERIODS -- used by other page scripts */
-/* exported legacyGroupNames, activeFilter, filterUI, layout, LAYOUT_MAX, LAYOUT_CELLS, layoutUI -- used by other page scripts */
+/* exported legacyGroupNames, activeFilter, filterUI, layout, layoutUI -- used by other page scripts */
 /* exported SEND_TIMEOUT_MS, MAX_ATTACH, lastSignature, composing -- used by other page scripts */
 /* exported lastRenderAt, fmtShort, tellTabHost, tabFor, heldFor, hostHeld, hostBackground -- used by other page scripts */
 // --- Active tab --------------------------------------------------------------
@@ -36,18 +36,12 @@ const filterUI = {};
 let activeMode = "compact";           // compact | full
 // Columns × rows layout, per view; null means auto.
 const layout = { compact: null, full: null };
-// Compact cards are small, so up to 5 × 5; detailed ones with a reply field up to 4 × 4.
-const LAYOUT_MAX = { compact: 5, full: 4 };
-const LAYOUT_CELLS = 5;
 let layoutUI = null;
 const drafts = new Map();             // session id → unfinished reply: survives a poll
 const sendState = new Map();          // session id → {note, cls}
-const pendingSends = new Map();       // nonce → session id
+const pendingSends = new Map();       // nonce → reply awaiting the terminal host
 const SEND_TIMEOUT_MS = 6000;
-const sentDrafts = new Map();         // nonce → what exactly was sent
 const attachments = new Map();        // session id → [{path, thumb}]: images for the reply
-// Just sent: the transcript catches up in seconds, but you want to see your message at once.
-const justSent = new Map();           // session id → {text, images, at}
 const MAX_ATTACH = 5;
 let lastSignature = "";
 let composing = false;                // IME composition in progress
@@ -55,6 +49,8 @@ document.addEventListener("compositionstart", () => { composing = true; });
 document.addEventListener("compositionend", () => { composing = false; });
 let lastRenderAt = 0;
 let hostOpenCodeTabs = [];
+/* exported hostWorkspaceInstances -- used by workspace slot resolution */
+let hostWorkspaceInstances = new Map();
 
 // Short date for the card: the year only when it is not the current one.
 function fmtShort(iso) {
@@ -75,29 +71,41 @@ function tellTabHost(type, payload) {
 window.addEventListener("message", e => {
   if (e.source !== window.parent) return;
   const d = e.data;
+  if (d?.source === HOST_SOURCE && d.type === "workspace-from-group") {
+    setView("active");
+    workspaceFromGroup(d.id, true);
+    tellHost("list-tabs", {});
+    return;
+  }
   if (d && d.source === HOST_SOURCE && d.type === "bg-result") {
     backgroundResult(d.job);
     return;
   }
   if (d && d.source === HOST_SOURCE && d.type === "sent" && pendingSends.has(d.nonce)) {
-    const sid = pendingSends.get(d.nonce);
+    const draft = pendingSends.get(d.nonce);
+    const { sid, text, paths } = draft;
     pendingSends.delete(d.nonce);
-    const draft = sentDrafts.get(d.nonce);
-    sentDrafts.delete(d.nonce);
     if (d.ok) {
-      if (draft && !draft.pending) justSent.set(sid, Object.assign({ at: new Date().toISOString() }, draft));
-      if (draft) rememberSent(draft.text);
-      drafts.delete(sid);
-      saveDrafts();
-      attachments.delete(sid);
+      draft.acknowledged = true;
+      rememberSent(text);
+      const clear = (drafts.get(sid) || "") === text;
+      if (clear) {
+        drafts.delete(sid);
+        saveDrafts();
+      }
+      const files = attachments.get(sid);
+      if (files) {
+        files.splice(0, files.length, ...files.filter(file => !paths.includes(file.path)));
+        if (!files.length) attachments.delete(sid);
+      }
       renderThumbs(sid);
-      // No "sent" label: your message in the card shows the send.
-      setSendNote(sid, "", "", true);
+      setSendNote(sid, "", "", clear);
       sendState.delete(sid);
-      lastSignature = "";                  // show the sent message at once, without waiting for changes
+      cardPanels.get(sid)?.drawSends?.();
       renderActive(null, true);
       window.setTimeout(loadActive, 1500);        // the status turns to "working"
     } else {
+      removeConversationSend(sid, d.nonce);
       setSendNote(sid, i18n("active.notSent", { reason: d.reason || i18n("active.errorWord") }), "bad");
     }
     return;
@@ -109,6 +117,8 @@ window.addEventListener("message", e => {
   hostTabs = new Map(d.tabs.filter(t => t && Number.isInteger(t.ptyPid))
     .map(t => [t.ptyPid, String(t.title || "")]));
   hostInlineTabs = new Set(d.tabs.filter(t => t?.inline === true && Number.isInteger(t.ptyPid)).map(t => t.ptyPid));
+  hostWorkspaceInstances = new Map(d.tabs.filter(t => Number.isInteger(t?.ptyPid) && typeof t.instance === "string")
+    .map(t => [t.ptyPid, t.instance]));
   hostScreens = tabScreens(d.tabs);
   hostOpenCodeTabs = d.tabs.filter(t => t?.agent === "opencode" && Number.isInteger(t.ptyPid));
   if (hostOpenCodeTabs.length || d.agents?.opencode) setOpenCodeAvailable(true);
@@ -136,6 +146,7 @@ window.addEventListener("message", e => {
   requestDialogs();                      // tabs are known, so the dialogs of waiting sessions can be read
   requestRestorable();                   // and ask what the Obsidian restart closed
   renderRestoreBanner();                 // tabs closed with the plugin are offered back at once
+  refreshWorkspaceHost(d.workspaceReservations);
   renderActive();
 });
 
@@ -198,11 +209,15 @@ async function loadActive() {
     reconcileOpenCode(activeRaw.filter(s => s.agent === "opencode"), data.opencode_poll_ok);
     activeSessions = screenSessions();
     replacePendingSlots(previous, activeSessions);
+    for (const sid of conversationSends.keys()) {
+      if (!activeSessions.some(s => s.session_id === sid)) conversationSends.delete(sid);
+    }
     recentClosed = data.recent_closed || [];
     backgroundJobs = (data.background_jobs || []).filter(j => j && /^[0-9a-f]{8}$/.test(j.job_id || ""));
     pruneBackgroundNotes();
     AtlasLogic.pruneClosedNotes(closedNotes, recentClosed.map(c => c.session_id), Date.now());
     activeUpdated = new Date();
+    if (state.view === "active") void syncWorkspaces();
   } catch (e) {
     // If the server is down, cards stay as they are and the banner on top reports it.
     if (!serverDown || !activeSessions.length) {

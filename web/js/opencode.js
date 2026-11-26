@@ -3,22 +3,8 @@
 const openCodeCopyRequests = new Map();
 const openCodeCopyPending = new Set();
 
-function openCodeInTab(data, title, request) {
-  return new Promise(resolve => {
-    const finish = ok => {
-      window.removeEventListener("message", reply);
-      window.clearTimeout(timer);
-      resolve(ok);
-    };
-    const reply = event => {
-      const result = event.data;
-      if (event.source === window.parent && result?.source === HOST_SOURCE
-          && result.type === "launch-result" && result.request === request) finish(result.ok === true);
-    };
-    const timer = window.setTimeout(() => finish(false), 17000);
-    window.addEventListener("message", reply);
-    tellHost("resume", { ...data, title, launchRequest: request });
-  });
+async function openCodeInTab(data, title, request) {
+  return (await requestHostLaunch("resume", { ...data, title }, request))?.ok === true;
 }
 
 function openCodeSessionLines(rows) {
@@ -183,6 +169,12 @@ function openCodeActionBar(bar, s) {
     null, button => openCodeArchive(s, button));
   const remove = makeButton("delete.menu", "danger", () => openCodeDelete(s));
   bar.append(resume, fork, archive, remove);
+  if (facets.llm_enabled === true && facets.opencode_artifacts_enabled === true) {
+    bar.append(...cardActionMenu([
+      { label: i18n("card.handoffOnly"), run: () => startArtifact(s.session_id, "handoff", false) },
+      { label: i18n("card.detailedSummary"), run: () => startArtifact(s.session_id, "catalog_summary", false) },
+    ]));
+  }
   const open = activeSessions.find(tab => tab.session_id === s.session_id);
   if (open) bar.append(makeButton("opencode.hide", null, () => hideCard(open)));
   remove.disabled = true;

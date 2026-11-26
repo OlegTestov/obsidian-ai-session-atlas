@@ -326,9 +326,10 @@ def is_message(rec: dict) -> bool:
         return False
     if rec.get("isMeta") or rec.get("isSidechain"):
         return False
-    text = _text_of((rec.get("message") or {}).get("content")).strip()
+    content = (rec.get("message") or {}).get("content")
+    text = _text_of(content).strip()
     if not text:
-        return False                          # tool_use, tool_result, thinking
+        return kind == "user" and bool(_images_in(content))
     return kind == "assistant" or not text.startswith(NOT_A_MESSAGE)
 
 

@@ -51,7 +51,7 @@ function handleCommandOutput(d) {
   if (d.type !== "command-output" || typeof d.sessionId !== "string") return false;
   commandOutputs.set(d.sessionId, { command: String(d.command || ""), text: String(d.text || ""),
                                     panel: !!d.panel, at: new Date().toISOString() });
-  justSent.delete(d.sessionId);          // the command arrived: its answer is on the tab's screen
+  removeConversationSend(d.sessionId, d.nonce);  // the command's answer is on the tab screen
   lastSignature = "";
   renderActive(null, true);
   return true;

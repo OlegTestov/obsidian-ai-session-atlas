@@ -1,5 +1,5 @@
 // OpenCode's dialogs and reply queue are bound to native request and message IDs.
-/* exported openCodeDialog, stopOpenCode, sendOpenCodeReply, discardOpenCodeReply, reconcileOpenCode, openCodeComposerText -- used by Active */
+/* exported openCodeDialog, stopOpenCode, sendOpenCodeReply, discardOpenCodeReply, reconcileOpenCode, openCodeComposerText, openCodePickerMatches, submitOpenCodeComposer -- used by Active */
 const openCodePermissionDecisions = ["once", "reject"];
 const openCodeStopping = new Set();
 const openCodeStopTimers = new Map();
@@ -235,10 +235,143 @@ async function stopOpenCode(s) {
   void loadActive();
 }
 
+const openCodePickers = new Map();
+const openCodePickerTTL = 30_000;
+
+function openCodePickerCatalog(s) {
+  const key = JSON.stringify([s.opencode_generation, s.cwd]);
+  const now = Date.now();
+  for (const [cachedKey, entry] of openCodePickers) {
+    if (now - entry.at > openCodePickerTTL) openCodePickers.delete(cachedKey);
+  }
+  const cached = openCodePickers.get(key);
+  if (cached) return cached.promise;
+  const entry = { at: now, promise: openCodeRequest(s, "pickers").catch(error => {
+    if (openCodePickers.get(key) === entry) openCodePickers.delete(key);
+    throw error;
+  }) };
+  openCodePickers.set(key, entry);
+  return entry.promise;
+}
+
+async function openCodePickerMatches(s, text) {
+  const category = /^\/(model|skill) +(\S*)$/.exec(text);
+  if (!category && !/^\/[^\s]*$/.test(text)) return [];
+  try {
+    const catalog = await openCodePickerCatalog(s);
+    if (!category) {
+      const shortcuts = [
+        { name: "model", description: i18n("cmd.model"), next: true },
+        { name: "skill", description: i18n("opencode.skillPicker"), next: true },
+      ];
+      const reserved = new Set(shortcuts.map(item => item.name));
+      return AtlasLogic.commandMatches([...shortcuts, ...catalog.commands.filter(item => !reserved.has(item.name))], text);
+    }
+    const [, kind, needle] = category;
+    const options = kind === "model" ? catalog.models.map(model => ({
+      name: model.name, display: model.name, description: model.provider,
+      insertText: "/model " + model.provider + "/" + model.id,
+    })) : catalog.skills.map(skill => ({
+      ...skill, display: skill.name,
+      insertText: i18n("opencode.useSkill", { id: skill.id }) + " ",
+    }));
+    const q = needle.toLowerCase();
+    return options.filter(item => [item.name, item.insertText].some(value => value.toLowerCase().includes(q)));
+  } catch {
+    return [];
+  }
+}
+
+async function submitOpenCodeComposer(s, text, images) {
+  const slash = /^\/([^\s]+)(?:\s+(.*))?$/s.exec(text.trim());
+  if (!slash) return sendOpenCodeReply(s, text, images);
+  const sid = s.session_id;
+  try {
+    const [, name, value = ""] = slash;
+    const catalog = await openCodePickerCatalog(s);
+    if (name === "model" || name === "skill") {
+      const entry = name === "model"
+        ? catalog.models.find(model => model.provider + "/" + model.id === value)
+        : catalog.skills.find(skill => skill.id === value);
+      if (!entry) return setSendNote(sid, i18n("opencode.pickListedOption"), "bad");
+      if (name === "model") await runOpenCodePicker(s, text, images, "model", { id: entry.id, provider: entry.provider });
+      else {
+        const prompt = i18n("opencode.useSkill", { id: entry.id });
+        const area = document.querySelector(`.answer textarea[data-id="${CSS.escape(sid)}"]`);
+        if (area?.value !== text) return;
+        area.value = prompt;
+        drafts.set(sid, prompt);
+        saveDrafts();
+        await sendOpenCodeReply(s, prompt, images);
+      }
+    } else if (catalog.commands.some(command => command.id === name)) {
+      await runOpenCodePicker(s, text, images, "command", { id: name, text: value });
+    } else {
+      await sendOpenCodeReply(s, text, images);
+    }
+  } catch (error) {
+    setSendNote(sid, i18n("active.notSent", { reason: error.message }), "bad");
+  }
+}
+
+async function runOpenCodePicker(s, text, images, operation, payload) {
+  const sid = s.session_id;
+  if (images.length) return setSendNote(sid, i18n("opencode.pickerImages"), "bad");
+  if (openCodeReplying.has(sid) || openCodeReplyChecks.has(sid)) return;
+  const key = "atlas.opencode.picker." + sid;
+  const area = document.querySelector(`.answer textarea[data-id="${CSS.escape(sid)}"]`);
+  const run = async confirmed => {
+    if (!area?.isConnected || area.value !== text || area.disabled || openCodeReplying.has(sid)) return;
+    openCodeReplying.add(sid);
+    setSendNote(sid, i18n("active.sending"), "");
+    try {
+      await withOpenCodeReplyLock(sid, async () => {
+        if (pendingOpenCodeReply(sid)) {
+          setSendNote(sid, i18n("opencode.retryOriginal"), "bad");
+          return;
+        }
+        const pending = window.localStorage.getItem(key);
+        if (pending && pending !== confirmed) {
+          setSendNote(sid, "", "");
+          const retry = i18n("opencode.runPickerAgain");
+          modal(retry, i18n("opencode.pickerUncertain"), "", retry, async () => {
+            closeAfterHandOff();
+            await run(pending);
+          });
+          return;
+        }
+        window.localStorage.setItem(key, crypto.randomUUID());
+        try {
+          await openCodeRequest(s, operation, payload);
+          window.localStorage.removeItem(key);
+          clearOpenCodeReplyDraft(sid, { text });
+          setSendNote(sid, "", "");
+        } catch (error) {
+          if (error.status >= 400 && error.status < 500 && error.state !== "live_picker_uncertain") {
+            window.localStorage.removeItem(key);
+          }
+          throw error;
+        }
+      });
+    } catch (error) {
+      setSendNote(sid, i18n("active.notSent", { reason: error.message }), "bad");
+    } finally {
+      openCodeReplying.delete(sid);
+      void loadActive();
+    }
+  };
+  await run();
+}
+
 const openCodeReplyPrefix = "atlas.opencode.reply.";
 
 function openCodeReplyKey(sid) {
   return openCodeReplyPrefix + sid;
+}
+
+function withOpenCodeReplyLock(sid, run) {
+  const locks = window.navigator?.locks;
+  return locks ? locks.request(openCodeReplyKey(sid), run) : run();
 }
 
 function openCodeReplyBlank(text) {
@@ -259,17 +392,27 @@ function openCodeReplyTooLong(text) {
   return false;
 }
 
+function sameOpenCodeReply(item, text, images) {
+  return item?.text === text && JSON.stringify(item.images || []) === JSON.stringify(images);
+}
+
 function pendingOpenCodeReply(sid) {
   const saved = loadStored(openCodeReplyKey(sid), null);
   // Older pages could persist text rejected by Atlas before admission.
-  return saved && /^msg_[A-Za-z0-9]{26}$/.test(saved.id) && typeof saved.text === "string"
-    && !openCodeReplyBlank(saved.text) && !openCodeReplyTooLong(saved.text) ? saved : null;
+  if (!saved || !/^msg_[A-Za-z0-9]{26}$/.test(saved.id) || typeof saved.text !== "string"
+      || openCodeReplyTooLong(saved.text)) return null;
+  if (saved.images !== undefined && (!Array.isArray(saved.images) || saved.images.length > MAX_ATTACH
+      || saved.images.some(image => typeof image?.path !== "string" || typeof image.name !== "string"))) return null;
+  return !openCodeReplyBlank(saved.text) || saved.images?.length ? saved : null;
 }
 
 function openCodeComposerText(sid) {
   const saved = pendingOpenCodeReply(sid);
   const text = drafts.get(sid) || saved?.text || "";
-  if (saved?.text === text) openCodeRestoredReplies.set(sid, saved);
+  if (saved?.text === text) {
+    if (saved.images?.length && !attachments.has(sid)) attachments.set(sid, saved.images.map(image => ({ ...image })));
+    openCodeRestoredReplies.set(sid, saved);
+  }
   return text;
 }
 
@@ -307,6 +450,12 @@ function clearOpenCodeReplyDraft(sid, item) {
   }
   const area = document.querySelector(`.answer textarea[data-id="${CSS.escape(sid)}"]`);
   if (area?.value === item.text) { area.value = ""; autosize(area); }
+  if (item.images?.length) {
+    const sent = new Set(item.images.map(image => image.path));
+    const remaining = (attachments.get(sid) || []).filter(image => !sent.has(image.path));
+    attachments.set(sid, remaining);
+    renderThumbs(sid);
+  }
 }
 
 function finishOpenCodeReply(sid, item) {
@@ -314,7 +463,7 @@ function finishOpenCodeReply(sid, item) {
   if (saved ? !forgetOpenCodeReply(sid, item) : openCodeRestoredReplies.get(sid)?.id !== item.id) return;
   clearOpenCodeReplyDraft(sid, item);
   openCodeRestoredReplies.delete(sid);
-  rememberSent(item.text);
+  if (!openCodeReplyBlank(item.text)) rememberSent(item.text);
   setSendNote(sid, "", "");
   sendState.delete(sid);
 }
@@ -323,33 +472,50 @@ function discardOpenCodeReply(sid) {
   const item = pendingOpenCodeReply(sid);
   if (!item || openCodeReplying.has(sid)) return;
   const label = i18n("opencode.discardReply");
-  modal(label, i18n("opencode.discardReplyWarning"), "", label, () => {
-    if (!openCodeReplying.has(sid) && forgetOpenCodeReply(sid, item)) {
-      forgetRestoredReply(sid, item);
-      clearOpenCodeReplyDraft(sid, item);
-      setSendNote(sid, "", "");
-      sendState.delete(sid);
-    }
+  modal(label, i18n("opencode.discardReplyWarning"), "", label, async () => {
+    await withOpenCodeReplyLock(sid, () => {
+      if (!openCodeReplying.has(sid) && forgetOpenCodeReply(sid, item)) {
+        forgetRestoredReply(sid, item);
+        clearOpenCodeReplyDraft(sid, item);
+        setSendNote(sid, "", "");
+        sendState.delete(sid);
+      }
+    });
     closeAfterHandOff();
   });
 }
 
-async function sendOpenCodeReply(s, text) {
+async function sendOpenCodeReply(s, text, files = []) {
   const sid = s.session_id;
-  if (openCodeReplying.has(sid) || openCodeReplyChecks.has(sid) || openCodeReplyBlank(text)) return;
+  const images = files.map(({ path, name }) => ({ path, name }));
+  if (openCodeReplying.has(sid) || openCodeReplyChecks.has(sid) || (openCodeReplyBlank(text) && !images.length)) return;
   if (openCodeReplyTooLong(text)) {
     setSendNote(sid, i18n("opencode.replyTooLong"), "bad");
     return;
   }
   openCodeReplying.add(sid);
   setSendNote(sid, i18n("active.sending"), "");
+  try {
+    // Pages share one pending ID. Hold the lock through dispatch so another page
+    // cannot overwrite it, or start a concurrent retry of the same message.
+    await withOpenCodeReplyLock(sid, () => submitOpenCodeReply(s, text, images));
+  } catch (error) {
+    setSendNote(sid, i18n("active.notSent", { reason: error.message }), "bad");
+  } finally {
+    openCodeReplying.delete(sid);
+    void loadActive();
+  }
+}
+
+async function submitOpenCodeReply(s, text, images) {
+  const sid = s.session_id;
   let item;
   let retry;
   try {
     const saved = pendingOpenCodeReply(sid);
     const restored = openCodeRestoredReplies.get(sid);
-    retry = restored?.text === text ? restored : null;
-    if (saved?.text === text && (!retry || retry.id === saved.id)) retry = saved;
+    retry = sameOpenCodeReply(restored, text, images) ? restored : null;
+    if (sameOpenCodeReply(saved, text, images) && (!retry || retry.id === saved.id)) retry = saved;
     if (saved && saved.id !== retry?.id) {
       const checked = await openCodeRequest(s, "reply-check", { message_id: saved.id }).catch(() => null);
       if (checked?.delivery) finishOpenCodeReply(sid, saved);
@@ -358,7 +524,8 @@ async function sendOpenCodeReply(s, text) {
         return;
       }
     }
-    item = retry || { id: "msg_" + crypto.randomUUID().replaceAll("-", "").slice(0, 26), text };
+    item = retry || { id: "msg_" + crypto.randomUUID().replaceAll("-", "").slice(0, 26), text,
+      ...(images.length && { images }) };
     if (retry && retry.generation !== s.opencode_generation) {
       const checked = await openCodeRequest(s, "reply-check", { message_id: item.id });
       if (checked.delivery) {
@@ -375,7 +542,8 @@ async function sendOpenCodeReply(s, text) {
     window.localStorage.setItem(openCodeReplyKey(sid), JSON.stringify({
       ...item, generation: s.opencode_generation, ambiguous: true,
     }));
-    const result = await openCodeRequest(s, "reply", { message_id: item.id, text: item.text, ambiguous: !!retry });
+    const result = await openCodeRequest(s, "reply", { message_id: item.id, text: item.text,
+      ...(item.images?.length && { images: item.images }), ambiguous: !!retry });
     if (result.delivery) finishOpenCodeReply(sid, item);
     else setSendNote(sid, i18n("opencode.retryReply"), "bad");
   } catch (error) {
@@ -389,9 +557,6 @@ async function sendOpenCodeReply(s, text) {
     }
     setSendNote(sid, pendingOpenCodeReply(sid) ? i18n("opencode.retryReply")
       : i18n("active.notSent", { reason: error.message }), "bad");
-  } finally {
-    openCodeReplying.delete(sid);
-    void loadActive();
   }
 }
 
@@ -411,13 +576,12 @@ function reconcileOpenCode(sessions, known) {
     if (!known || openCodeReplying.has(sid) || openCodeReplyChecks.has(sid)) continue;
     const item = pendingOpenCodeReply(sid);
     if (!item) continue;
-    if (s.queued?.some(entry => entry.id === item.id)) {
-      finishOpenCodeReply(sid, item);
-      continue;
-    }
     openCodeReplyChecks.add(sid);
-    void openCodeRequest(s, "reply-check", { message_id: item.id }).then(result => {
-      if (result.delivery) finishOpenCodeReply(sid, item);
+    const delivered = s.queued?.some(entry => entry.id === item.id)
+      ? Promise.resolve(true)
+      : openCodeRequest(s, "reply-check", { message_id: item.id }).then(result => result.delivery);
+    void delivered.then(knownDelivery => {
+      if (knownDelivery) return withOpenCodeReplyLock(sid, () => finishOpenCodeReply(sid, item));
     }).catch(() => {}).finally(() => openCodeReplyChecks.delete(sid));
   }
 }

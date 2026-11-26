@@ -47,6 +47,35 @@ def test_verification_runs_once_off_the_poll_thread(tmp_path, monkeypatch):
     assert not state.verifying
 
 
+def test_shutdown_closes_a_verifier_that_finishes_late(tmp_path, monkeypatch):
+    database = tmp_path / "opencode.db"
+    database.touch()
+    registration = tmp_path / "service.json"
+    registration.touch()
+    monkeypatch.setattr(service, "binary", lambda: "/fixture/opencode")
+    monkeypatch.setattr(service, "registration_path", lambda: registration)
+    entered, complete, closed = threading.Event(), threading.Event(), threading.Event()
+    client = Mock(version=service.TESTED_VERSION)
+    client.close_poll.side_effect = closed.set
+
+    def verify(*_, **__):
+        entered.set()
+        assert complete.wait(1)
+        return client
+
+    monkeypatch.setattr(service, "verified_client", verify)
+    state = live.LiveService()
+    assert state.active(database) is None
+    assert entered.wait(1)
+    try:
+        state.shutdown()
+    finally:
+        complete.set()
+    assert closed.wait(1)
+    assert state.active(database) is None and not state.verifying
+    client.poll.assert_not_called()
+
+
 def test_lost_client_discards_active_map_and_controls(monkeypatch, tmp_path):
     state = live.LiveService()
     client = Mock(version=service.TESTED_VERSION, generation="current")

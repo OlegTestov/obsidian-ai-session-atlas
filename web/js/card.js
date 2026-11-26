@@ -114,6 +114,27 @@ function classifyBlock(s) {
   return b;
 }
 
+function cardActionMenu(items) {
+  const more = el("button", "ghost", "…");
+  more.setAttribute("aria-label", i18n("card.moreActions"));
+  const menu = el("div", "hidden"); menu.id = "menu";
+  for (const { label, run, cls } of items) {
+    const button = el("button", cls, label);
+    button.addEventListener("click", () => { menu.classList.add("hidden"); run(); });
+    menu.appendChild(button);
+  }
+  more.addEventListener("click", e => {
+    e.stopPropagation(); closeResumeWith(); menu.classList.toggle("hidden");
+    if (menu.classList.contains("hidden")) return;
+    // Right edge under the "…" button, but inside the bar on a narrow pane (CSSOM: allowed by the CSP).
+    const right = more.offsetLeft + more.offsetWidth - menu.offsetWidth;
+    const room = more.offsetParent ? more.offsetParent.clientWidth - menu.offsetWidth - 8 : right;
+    menu.style.left = Math.max(8, Math.min(right, room)) + "px";
+  });
+
+  return [more, menu];
+}
+
 // One primary button, one secondary, the rest in a menu: the decision to continue
 // the work must not look like a choice among four equal options.
 function actionBar(s) {
@@ -125,15 +146,8 @@ function actionBar(s) {
   const [withBtn, withMenu] = resumeWithButton(s);
   const fresh = el("button", null, i18n("card.newFromThis"));
   fresh.addEventListener("click", () => startArtifact(s.session_id, "handoff", true));
-  const more = el("button", "ghost", "…");
-  more.setAttribute("aria-label", i18n("card.moreActions"));
-
-  const menu = el("div", null); menu.id = "menu"; menu.classList.add("hidden");
-  const item = (label, fn) => {
-    const btn = el("button", null, label);
-    btn.addEventListener("click", () => { menu.classList.add("hidden"); fn(); });
-    menu.appendChild(btn);
-  };
+  const items = [];
+  const item = (label, run, cls) => items.push({ label, run, cls });
   const llm = facets.llm_enabled === true;
   if (llm) {
     item(i18n("card.handoffOnly"), () => startArtifact(s.session_id, "handoff", false));
@@ -141,16 +155,8 @@ function actionBar(s) {
   }
   // An agent that can fork a session exactly gets the item (Claude Code --fork-session, codex fork).
   if (s.actions && s.actions.fork_command) item(i18n("card.exactFork"), () => showResume(s, true));
-  item(i18n("delete.menu"), () => deleteSession(s));
-  menu.lastChild.classList.add("danger");
-  more.addEventListener("click", e => {
-    e.stopPropagation(); closeResumeWith(); menu.classList.toggle("hidden");
-    if (menu.classList.contains("hidden")) return;
-    // Right edge under the "…" button, but inside the bar on a narrow pane (CSSOM: allowed by the CSP).
-    const right = more.offsetLeft + more.offsetWidth - menu.offsetWidth;
-    const room = more.offsetParent ? more.offsetParent.clientWidth - menu.offsetWidth - 8 : right;
-    menu.style.left = Math.max(8, Math.min(right, room)) + "px";
-  });
+  item(i18n("delete.menu"), () => deleteSession(s), "danger");
+  const [more, menu] = cardActionMenu(items);
 
   bar.append(...(llm ? [resume, withBtn, fresh, more, menu, withMenu] : [resume, withBtn, more, menu, withMenu]));
   return bar;

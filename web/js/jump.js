@@ -2,6 +2,7 @@
 // Classic script: shares one global scope with the other page files.
 // ⌘K is free: Obsidian's menu does not use it, and key presses inside the iframe do not reach
 // Obsidian's hotkeys; "insert link" on ⌘K works only in the note editor.
+/* exported jumpTo -- used by the workspace attention list */
 let jumpItems = [];
 let jumpActive = 0;
 
@@ -76,15 +77,19 @@ function openJump() {
 
 // Live: select its card; hidden or filtered out: bring it back on screen.
 function jumpTo(it) {
-  $("#jump").close();
+  $("#jump")?.close();
   if (it.kind === "closed") { setView("search"); openCard(it.id); return; }
   if (state.view !== "active") setView("active");
+  const workspace = workspaceFor(it.id)?.board;
+  chooseWorkspace(workspace?.id || null);
   const shown = () => document.querySelector(`#active-grid .acard[data-id="${CSS.escape(it.id)}"]`);
   if (!shown()) {
     delete hiddenCards[it.id];
     store(HIDDEN_KEY, hiddenCards);
-    ACTIVE_FILTERS.forEach(({ key }) => activeFilter[key].clear());
-    legacyGroupNames = [];
+    if (!workspace) {
+      ACTIVE_FILTERS.forEach(({ key }) => activeFilter[key].clear());
+      legacyGroupNames = [];
+    }
     writeHash();
     lastSignature = "";
     renderActive(null, true);

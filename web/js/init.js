@@ -3,6 +3,7 @@
 buildFilters();
 $("#search-agent").appendChild(agentFilter("search", () => loadList(), { named: true }));
 readHash();
+workspaceFromGroup(new URLSearchParams(location.hash.slice(1)).get("wg"));
 refreshLayoutButton();
 initHeaderLimits();
 setView(state.view);

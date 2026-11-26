@@ -5,6 +5,7 @@ import { Notice } from "obsidian";
 import { DIRECTORY, ROUTE, MailRoutes, tabRoutes } from "./mail-routes";
 import { MailLimits } from "./mail-limits";
 import { shellQuote } from "./agents";
+import { validId } from "./agent-registry";
 import { NUDGEABLE } from "./constants";
 
 const NAME = /^[a-z0-9][a-z0-9._-]{0,39}$/;
@@ -49,7 +50,7 @@ function scanMail(root, routes = new Map()) {
     const route = routes.get(box.name);
     if (ROUTE.test(box.name) && !route) continue;
     const id = route?.id || readSmall(path.join(dir, "session"), 128).trim();
-    if (!SESSION.test(id)) continue;
+    if (route?.agent === "opencode" ? !validId("opencode", id) : !SESSION.test(id)) continue;
     const inbox = path.join(dir, "inbox");
     const files = entries(inbox).filter(file => file.isFile() && FILE.test(file.name))
       .map(file => file.name).sort();
@@ -82,6 +83,8 @@ class MailNudger {
     this.sent = new Map();
     this.routes = new MailRoutes();
     this.limits = new MailLimits();
+    // The initial poll also lets a restarted Atlas server retire a previous runtime's tools.
+    this.openCodeRegistration = typeof plugin.atlasRequest === "function";
   }
 
   start() {
@@ -90,6 +93,7 @@ class MailNudger {
       this.closed = true;
       this.watcher?.close();
       this.routes.clear();
+      if (!this.running) void this.syncOpenCodeMail(null);
     });
     void this.poll();
   }
@@ -119,18 +123,17 @@ class MailNudger {
     }
   }
 
-  async nudge(batch, { root, sessions, routes }) {
-    const matches = sessions.filter(s => s?.session_id === batch.id && NUDGEABLE.has(s.status)
-      && (!batch.agent || s.agent === batch.agent));
-    if (matches.length !== 1) return false;
-    const session = matches[0];
-    const tab = await this.plugin.tabForSession(session);
-    if (!tab) return false;
-    const guard = () => !this.closed && root === this.currentRoot()
-      && entries(root).some(box => box.name === batch.name && box.isDirectory())
-      && (batch.agent || readSmall(path.join(root, batch.name, "session"), 128).trim() === batch.id)
-      && entries(batch.inbox).some(file => file.isFile() && file.name === batch.files.at(-1));
-    if (!guard()) return false;
+  async syncOpenCodeMail(root) {
+    if (root === null && !this.openCodeRegistration) return new Set();
+    if (root !== null) this.openCodeRegistration = true;
+    const result = await this.plugin.atlasRequest("POST", "/api/opencode/mail/registration",
+      { owner: this.routes.instance, root });
+    if (result.status !== 200) return new Set();
+    if (root === null) this.openCodeRegistration = false;
+    return new Set(Array.isArray(result.data?.ready) ? result.data.ready : []);
+  }
+
+  async nudgeTerminal(batch, session, tab, root, guard) {
     const senders = new Set();
     for (const file of batch.files) {
       try {
@@ -145,7 +148,28 @@ class MailNudger {
     const fallback = script ? ` or run: AGENT_MAIL_HOME=${shellQuote(root)} python3 -- ${shellQuote(script)} inbox ${batch.name}` : "";
     const count = batch.files.length;
     const text = `You have ${count} new ${count === 1 ? "message" : "messages"}${from ? " from " + from : ""}. Read with mail_inbox (as: ${batch.name})${fallback}, then reply to the sender unless the letter ends with "(no reply needed)".`;
-    if (!await this.plugin.typeNudge({ text, ptyPid: tab.pid, claudePid: session.pid, sessionId: batch.id }, guard)) {
+    return this.plugin.typeNudge({ text, ptyPid: tab.pid, claudePid: session.pid, sessionId: batch.id }, guard);
+  }
+
+  async nudge(batch, { root, sessions, routes }) {
+    const matches = sessions.filter(s => s?.session_id === batch.id && NUDGEABLE.has(s.status)
+      && (!batch.agent || s.agent === batch.agent)
+      && (s.agent !== "opencode" || (s.status === "idle" && s.opencode_running === false && !s.opencode_provider_limit)));
+    if (matches.length !== 1) return false;
+    const session = matches[0];
+    const tab = await this.plugin.tabForSession(session);
+    if (!tab) return false;
+    const guard = () => !this.closed && root === this.currentRoot()
+      && entries(root).some(box => box.name === batch.name && box.isDirectory())
+      && (batch.agent || readSmall(path.join(root, batch.name, "session"), 128).trim() === batch.id)
+      && entries(batch.inbox).some(file => file.isFile() && file.name === batch.files.at(-1));
+    if (!guard()) return false;
+    if (session.agent === "opencode") {
+      const result = await this.plugin.atlasRequest("POST", "/api/opencode/mail/nudge", {
+        owner: this.routes.instance, session_id: batch.id, letter: batch.files.at(-1),
+      });
+      if (result.status !== 200 || !result.data?.delivery) return false;
+    } else if (!await this.nudgeTerminal(batch, session, tab, root, guard)) {
       return false;
     }
     this.sent.set(batch.inbox, { file: batch.files.at(-1), at: this.now() });
@@ -161,6 +185,7 @@ class MailNudger {
       this.watch(root);
       if (!root) {
         this.routes.clear();
+        await this.syncOpenCodeMail(null);
         return;
       }
       const active = await this.plugin.fetchActive();
@@ -170,7 +195,13 @@ class MailNudger {
       if (this.closed || root !== this.currentRoot()) return;
       const now = this.now();
       const routes = tabRoutes(sessions, tabs, (id, agent, tab) =>
-        this.limits.forTab(id, agent, this.plugin.screenLines(tab.leaf), now));
+        this.limits.forTab(id, agent, this.plugin.screenLines(tab.leaf), now), true);
+      const openCode = [...routes.values()].filter(route => route.agent === "opencode");
+      const ready = await this.syncOpenCodeMail(openCode.length ? root : null);
+      if (this.closed || root !== this.currentRoot()) return;
+      for (const route of openCode) {
+        if (!ready.has(route.id)) routes.delete(route.mailbox);
+      }
       const limited = new Set([...routes.values()].filter(route => route.usage_limit).map(route => route.id));
       this.limits.retain(new Set([...routes.values()].map(route => route.id)));
       try {
@@ -192,6 +223,7 @@ class MailNudger {
       console.error("AI Session Atlas: mail poll failed", error);
     } finally {
       this.running = false;
+      if (this.closed) await this.syncOpenCodeMail(null);
     }
   }
 }

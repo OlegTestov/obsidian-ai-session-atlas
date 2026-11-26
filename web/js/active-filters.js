@@ -68,7 +68,7 @@ function fillList(f) {
 const parseLayout = AtlasLogic.parseLayout;
 
 function layoutLabel() {
-  const l = layout[activeMode];
+  const l = activeLayout();
   if (l) return `${l.c}×${l.r}`;
   return activeMode === "full" ? i18n("active.auto") : "4×5";
 }
@@ -83,57 +83,45 @@ function buildLayoutPicker() {
   const pop = el("div", "lay-pop hidden");
   pop.setAttribute("role", "group");
   pop.setAttribute("aria-label", i18n("active.layoutAria"));
-  const grid = el("div", "lay-grid");
-  const hint = el("span", null, "");
-  const cells = [];
-  const paint = (c, r) => {
-    cells.forEach(b => b.classList.toggle("hot", +b.dataset.c <= c && +b.dataset.r <= r));
-    hint.textContent = c ? `${i18nN("active.cols", c)} × ${i18nN("active.rows", r)}`
-      : i18n("active.hoverAndClick");
-  };
-  for (let r = 1; r <= LAYOUT_CELLS; r++) {
-    for (let c = 1; c <= LAYOUT_CELLS; c++) {
-      const cell = el("button");
-      cell.dataset.c = c;
-      cell.dataset.r = r;
-      cell.setAttribute("aria-label", `${c} × ${r}`);
-      cell.addEventListener("mouseenter", () => paint(c, r));
-      cell.addEventListener("focus", () => paint(c, r));
-      cell.addEventListener("click", () => {
-        layout[activeMode] = { c, r };
-        closeFilters();
-        onLayoutChange();
-      });
-      cells.push(cell);
-      grid.appendChild(cell);
+  const picker = buildLayoutGrid(size => {
+    closeFilters();
+    const board = currentWorkspace();
+    if (board) {
+      openWorkspaceEditor(board.id, {size});
+      return;
     }
-  }
-  grid.addEventListener("mouseleave", () => {
-    const l = layout[activeMode];
-    paint(l ? l.c : 0, l ? l.r : 0);
+    layout[activeMode] = size;
+    onLayoutChange();
+    btn.focus({ preventScroll: true });
   });
   const auto = el("button", null, i18n("active.auto"));
-  auto.title = activeMode === "full" ? i18n("active.autoFullHint") : i18n("active.autoCompactHint");
-  auto.addEventListener("click", () => { layout[activeMode] = null; closeFilters(); onLayoutChange(); });
+  auto.addEventListener("click", () => {
+    layout[activeMode] = null;
+    closeFilters();
+    onLayoutChange();
+    btn.focus({ preventScroll: true });
+  });
   const foot = el("div", "lay-foot");
-  foot.append(hint, auto);
-  pop.append(grid, foot);
+  foot.append(picker.hint, auto);
+  pop.append(picker.grid, foot);
   pop.addEventListener("click", e => e.stopPropagation());
+  pop.addEventListener("keydown", e => {
+    if (e.key !== "Escape") return;
+    e.stopPropagation();
+    closeFilters();
+    btn.focus({ preventScroll: true });
+  });
   btn.addEventListener("click", e => {
     e.stopPropagation();
     const open = pop.classList.contains("hidden");
     closeFilters();
     pop.classList.toggle("hidden", !open);
     btn.setAttribute("aria-expanded", String(open));
-    if (open) placePop(pop, btn);
     if (open) {
-      // The field follows the view's limit: 5 × 5 for compact, 4 × 4 for detailed.
-      const max = LAYOUT_MAX[activeMode];
-      grid.classList.toggle("m5", max === 5);
-      cells.forEach(b => b.classList.toggle("off", +b.dataset.c > max || +b.dataset.r > max));
-      const l = layout[activeMode];
-      cells.forEach(b => b.classList.toggle("cur", !!l && +b.dataset.c === l.c && +b.dataset.r === l.r));
-      paint(l ? l.c : 0, l ? l.r : 0);
+      auto.title = i18n(activeMode === "full" ? "active.autoFullHint" : "active.autoCompactHint");
+      auto.hidden = Boolean(currentWorkspace());
+      picker.update(activeLayout());
+      placePop(pop, btn);
     }
   });
   wrap.append(btn, pop);
@@ -147,7 +135,7 @@ function refreshLayoutButton() {
   layoutUI.btn.replaceChildren(svgIcon([["rect", { x: 3, y: 3, width: 7, height: 7 }],
     ["rect", { x: 14, y: 3, width: 7, height: 7 }], ["rect", { x: 3, y: 14, width: 7, height: 7 }],
     ["rect", { x: 14, y: 14, width: 7, height: 7 }]]), document.createTextNode(layoutLabel()));
-  layoutUI.btn.classList.toggle("on", !!layout[activeMode]);
+  layoutUI.btn.classList.toggle("on", !!activeLayout());
 }
 
 function onLayoutChange() {

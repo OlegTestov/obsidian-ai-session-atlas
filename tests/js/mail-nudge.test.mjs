@@ -770,3 +770,52 @@ test("the nudge loop stops at the next mailbox once the root changed", async t =
   assert.equal(lookups.length, 1);
   assert.deepEqual([r.claude.writes, r.codex.writes], [[], []]);
 });
+
+test("OpenCode advertises verified tabs and queues mail through the service only while idle", async t => {
+  const r = rig(t);
+  const id = "ses_e452b92b8ffecjupj3ydze90bn";
+  const mailbox = `atlas-o-${id}`;
+  const letter = "1700000000001-000000000001.json";
+  const session = { agent: "opencode", session_id: id, status: "busy", opencode_running: true,
+    pid: 31, ancestors: [30] };
+  const tab = { pid: 30, title: "Verified OpenCode tab" };
+  const calls = [];
+  let ready = false;
+  r.plugin.fetchActive = async () => ({ sessions: [session] });
+  r.plugin.terminalTabs = async () => [tab];
+  r.plugin.tabForSession = async () => tab;
+  r.plugin.typeNudge = async () => assert.fail("OpenCode mail must never type into the TUI");
+  r.plugin.atlasRequest = async (method, route, body) => {
+    assert.equal(method, "POST");
+    calls.push({ route, body });
+    return { status: 200, data: route.endsWith("registration") ? { ready: ready ? [id] : [] } : { delivery: "queued" } };
+  };
+  r.box(mailbox);
+  r.mail(mailbox, "claude", "private letter body");
+  await r.poll();
+  assert.equal(r.nudger.routes.root, null);
+  assert.equal(calls.length, 1);
+  ready = true;
+  await r.poll();
+  assert.equal(calls.length, 2);
+  const snapshot = path.join(r.root, ".atlas-tabs", `${r.nudger.routes.instance}.json`);
+  assert.deepEqual(JSON.parse(fs.readFileSync(snapshot, "utf8")), [
+    { mailbox, title: tab.title, id, agent: "opencode", pid: 31 },
+  ]);
+  session.status = "idle";
+  session.opencode_running = false;
+  session.opencode_provider_limit = { kind: "quota" };
+  await r.poll();
+  assert.ok(!calls.some(call => call.route.endsWith("nudge")));
+  session.opencode_provider_limit = null;
+  await r.poll();
+  await r.poll();
+  r.plugin.settings.wakeOnMail = false;
+  await r.poll();
+  assert.deepEqual(calls.filter(call => call.route.endsWith("nudge")), [{
+    route: "/api/opencode/mail/nudge", body: { owner: r.nudger.routes.instance, session_id: id, letter },
+  }]);
+  assert.deepEqual(calls.at(-1), { route: "/api/opencode/mail/registration",
+    body: { owner: r.nudger.routes.instance, root: null } });
+  assert.equal(fs.existsSync(snapshot), false);
+});

@@ -219,26 +219,14 @@ describe("dialog: the option answered with typed text", () => {
   });
 });
 
-describe("unanswered prompt and delivery", () => {
-  const s = { reply_at: "2026-09-27T10:00:00Z", prompt: "сделай", prompt_at: "2026-09-27T10:05:00Z" };
-  test("unanswered prompt from the transcript", () => assert.equal(L.unansweredPrompt(s, null).prompt.text, "сделай"));
-  test("an interrupted prompt is marked", () => {
-    const cut = L.unansweredPrompt({ ...s, interrupted_at: "2026-09-27T10:05:30Z" }, null).prompt;
-    assert.ok(cut && cut.interrupted === true);
-  });
-  test("an interruption before the prompt is not about it", () => {
-    assert.equal(L.unansweredPrompt({ ...s, interrupted_at: "2026-09-27T10:01:00Z" }, null).prompt.interrupted, false);
-  });
-  test("an answered prompt is not shown", () => {
-    assert.equal(L.unansweredPrompt({ ...s, reply_at: "2026-09-27T10:06:00Z" }, null).prompt, null);
-  });
-  const sent = { text: "только что", images: 0, at: "2026-09-27T10:10:00Z" };
-  test("a just-sent message shows before the transcript", () => {
-    assert.equal(L.unansweredPrompt(s, sent).prompt.text, "только что");
-  });
-  test("once the transcript catches up, the sent message is dropped", () => {
-    const caught = L.unansweredPrompt({ ...s, prompt_at: "2026-09-27T10:10:01Z", prompt: "только что" }, sent);
-    assert.ok(caught.dropSent && caught.prompt.text === "только что");
+describe("sent prompts and delivery", () => {
+  test("only a recent transcript turn with the same prompt and image count matches", () => {
+    const sent = { text: "  первый\r\nвторой ", paths: ["image.png"], at: "2026-09-27T10:10:00Z" };
+    const turn = { prompt: "первый\nвторой", images: 1, prompt_at: "2026-09-27T10:10:01Z" };
+    assert.equal(L.sentTurnMatches(sent, turn), true);
+    assert.equal(L.sentTurnMatches(sent, { ...turn, prompt_at: "2026-09-27T10:09:59Z" }), false);
+    assert.equal(L.sentTurnMatches(sent, { ...turn, prompt: "другое" }), false);
+    assert.equal(L.sentTurnMatches(sent, { ...turn, images: 0 }), false);
   });
 
   const msg = { text: "проверь тесты и почини", at: "2026-09-27T10:00:00Z" };
@@ -249,9 +237,8 @@ describe("unanswered prompt and delivery", () => {
   });
   test("queued line: the message just sent is shown once, as yours, not again as queued", () => {
     const queue = { queued: [{ text: "проверь тесты и почини" }, { text: "и обнови README" }] };
-    assert.deepEqual(L.queuedNotShown(queue, { ...msg, sent: true }).map(q => q.text), ["и обнови README"]);
-    assert.equal(L.queuedNotShown(queue, null).length, 2);                         // nothing shown: all of it
-    assert.equal(L.queuedNotShown(queue, { text: "проверь тесты и почини" }).length, 2);  // from the transcript
+    assert.deepEqual(L.queuedNotShown(queue, [msg]).map(q => q.text), ["и обнови README"]);
+    assert.equal(L.queuedNotShown(queue, []).length, 2);
   });
   test("delivery: 15 s without a trace is lost", () => {
     assert.equal(L.deliveryState({ queued: [] }, msg, t0 + 16000), "lost");

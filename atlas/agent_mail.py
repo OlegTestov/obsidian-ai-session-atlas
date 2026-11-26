@@ -142,7 +142,7 @@ def _unread(name):
     return sorted(f for f in os.listdir(inbox) if f.endswith(".json") and not f.startswith("."))
 
 
-def inbox(name, wait=0, peek=False):
+def inbox(name, wait=0, peek=False, *, before_read=None):
     name = _name(name)
     touch(name)
     end = time.time() + max(0, min(float(wait or 0), MAX_WAIT))
@@ -150,6 +150,8 @@ def inbox(name, wait=0, peek=False):
     while not files and time.time() < end:
         time.sleep(0.5)
         files = _unread(name)
+    if before_read is not None:
+        before_read()
     out, src, dst = [], _dir(name, "inbox"), _dir(name, "read")
     for f in files:
         claimed = None
@@ -206,7 +208,7 @@ def _tab_mailbox(agent, sid):
 
 
 def _read_snapshot(file):
-    fd = os.open(file.path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    fd = os.open(file, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     with os.fdopen(fd, "rb") as fh:
         info = os.fstat(fh.fileno())
         if not stat.S_ISREG(info.st_mode) or info.st_size > TAB_LIMIT:
@@ -486,7 +488,7 @@ def _me(args):
     return _name(me)
 
 
-def _call(name, args):
+def _call(name, args, *, before_read=None):
     if name == "mail_send":
         to, title = args.get("to"), args.get("to_title")
         if (to is None) == (title is None) or (to is not None and "to_agent" in args):
@@ -499,7 +501,7 @@ def _call(name, args):
             + (status or " If the recipient is slow to reply, check their status with mail_peers.")
         )
     if name == "mail_inbox":
-        return _fmt(inbox(_me(args), args.get("wait", 0), bool(args.get("peek"))))
+        return _fmt(inbox(_me(args), args.get("wait", 0), bool(args.get("peek")), before_read=before_read))
     if name == "mail_register":
         return f"Mailbox {_me(args)} is bound to session {register(_me(args), args.get('session_id'))}."
     if name == "mail_peers":
@@ -507,7 +509,7 @@ def _call(name, args):
     raise ValueError(f"unknown tool {name}")
 
 
-def serve():
+def serve(*, dispatch=None, tools=None):
     for line in sys.stdin:
         line = line.strip()
         if not line:
@@ -527,10 +529,13 @@ def serve():
                 "instructions": REPLY_RULE,
             }
         elif method == "tools/list":
-            res = {"tools": TOOLS}
+            res = {"tools": TOOLS if tools is None else tools}
         elif method == "tools/call":
             try:
-                res = {"content": [{"type": "text", "text": _call(params.get("name"), params.get("arguments") or {})}]}
+                name = params.get("name")
+                arguments = params.get("arguments") or {}
+                answer = _call(name, arguments) if dispatch is None else dispatch(name, arguments, params.get("_meta"))
+                res = {"content": [{"type": "text", "text": answer}]}
             except Exception as e:  # report to the agent, keep the server alive
                 res = {"content": [{"type": "text", "text": f"Error: {e}"}], "isError": True}
         elif method == "ping":

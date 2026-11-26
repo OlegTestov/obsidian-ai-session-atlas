@@ -77,6 +77,14 @@ function activeCard(s) {
 
   const tags = el("div", "tags");
   tags.appendChild(agentBadge(s));
+  const limit = s.opencode_provider_limit;
+  if (limit) {
+    const label = i18n(limit.kind === "quota" ? "opencode.limitQuota" : "opencode.limitRate");
+    const time = limit.retry_at && new Date(limit.retry_at).toLocaleTimeString(I18N.locale(), {
+      hour: "2-digit", minute: "2-digit", second: "2-digit",
+    });
+    tags.append(el("span", "pill warn", time ? i18n("opencode.limitRetryAt", { label, time }) : label));
+  }
   const group = groupPill(s, pid);
   if (group) tags.appendChild(group);
   if (s.tab_group) card.classList.add("grouped", `g-${s.tab_group.color}`);
@@ -128,15 +136,16 @@ function activeCard(s) {
   const [go, close] = tabButtons(s, pid, heldPid, s.title || s.session_id);
 
   if (full) {
-    // Detailed: buttons in the header row, dates and money on one line to leave room for the reply.
+    // Detailed: actions stay in the header and wrap below the title on narrow cards.
     iconify(go, GO_SVG, i18n("active.go"));
     iconify(close, CLOSE_SVG, i18n("active.close"));
+    const actions = el("div", "card-head-actions");
     const stopFull = stopButton(s, pid, true);
-    if (stopFull) head.appendChild(stopFull);
-    head.appendChild(cardViewPicker(s, pid));
-    head.appendChild(hideButton(s, true));
-    if (bgJob) head.appendChild(bringBackButton(bgJob, true));
-    head.append(canMove(s, pid || heldPid) ? moveButton(s, true) : go, close);
+    if (stopFull) actions.appendChild(stopFull);
+    actions.append(cardViewPicker(s, pid), hideButton(s, true));
+    if (bgJob) actions.appendChild(bringBackButton(bgJob, true));
+    actions.append(canMove(s, pid || heldPid) ? moveButton(s, true) : go, close);
+    head.appendChild(actions);
     const parts = AtlasLogic.infoParts(s, ago, shortStart);
     const info = infoLine("info", [...parts.when, ...parts.nums], parts.context);
     info.title = `${whenHint}. ${turns} · ${cost}. ${costHint}`;
@@ -240,6 +249,7 @@ function pendingActiveCard(s) {
   card.append(tags, infoLine(full ? "info" : "when", [shortStart(s.started_at)].filter(Boolean), null));
   const [go, close] = tabButtons(s, pid, heldPid, title);
   if (full) {
+    const actions = el("div", "card-head-actions");
     if (hostInlineTabs.has(pid)) {
       const open = cardViewMode(s.session_id) === "terminal";
       const terminal = el("button", "mini", i18n("feed.view.terminal"));
@@ -250,14 +260,15 @@ function pendingActiveCard(s) {
         renderActive(null, true);
         if (!open) cardPanels.get(s.session_id)?.focus();
       });
-      head.appendChild(terminal);
+      actions.appendChild(terminal);
       if (open) card.appendChild(el("div", "card-view-slot"));
     }
-    if (pid || heldPid) head.appendChild(iconify(go, GO_SVG, i18n("active.go")));
+    if (pid || heldPid) actions.appendChild(iconify(go, GO_SVG, i18n("active.go")));
     if (pid) {
-      head.appendChild(iconify(close, CLOSE_SVG, i18n("active.close")));
+      actions.appendChild(iconify(close, CLOSE_SVG, i18n("active.close")));
       card.appendChild(answerForm(s, pid));
     }
+    head.appendChild(actions);
   } else if (pid || heldPid) {
     const foot = el("div", "foot");
     foot.appendChild(go);
@@ -312,31 +323,6 @@ const STATUS = {
              hint: i18n("active.status.waitingHint") },
   idle: { label: i18n("active.status.idle"), hint: i18n("active.status.idleHint") },
 };
-
-// Your last message if Claude has not answered it yet: from the transcript or just
-// sent from the card (the transcript catches up in a few seconds).
-function unansweredPrompt(s) {
-  const found = AtlasLogic.unansweredPrompt(s, justSent.get(s.session_id));
-  if (found.dropSent) justSent.delete(s.session_id);   // the transcript caught up or Claude answered
-  return found.prompt;
-}
-
-const DELIVERY_TEXT = {
-  sending: i18n("active.delivery.sending"),
-  queued: i18n("active.delivery.queued"),
-  lost: i18n("active.delivery.lost"),
-};
-
-// Typed in the tab while the agent was working: waits for its turn in the agent's queue.
-function queuedLine(s, box, shown) {
-  const queued = AtlasLogic.queuedNotShown(s, shown);
-  if (!queued.length) return;
-  const first = queued[0].text.replace(/\s+/g, " ").slice(0, 80);
-  const q = el("div", "queued", queued.length > 1
-    ? i18n("active.queuedMany", { n: queued.length, text: first }) : i18n("active.queuedOne", { text: first }));
-  q.title = queued.map(x => x.text).join("\n—\n");
-  box.appendChild(q);
-}
 
 const GO_SVG = [["path", { d: "M14 4h6v6" }], ["path", { d: "M20 4 11 13" }],
                 ["path", { d: "M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" }]];
@@ -397,7 +383,7 @@ async function attachImages(sid, files) {
     try {
       const thumb = await readAsDataURL(file);
       const saved = await api("/api/upload", { data: thumb });
-      list.push({ path: saved.path, thumb });
+      list.push({ path: saved.path, thumb, name: file.name });
     } catch (e) {
       setSendNote(sid, i18n("active.imageFailed", { msg: e.message }), "bad");
     }
@@ -414,9 +400,11 @@ function thumbsInto(box, sid) {
   box.replaceChildren();
   (attachments.get(sid) || []).forEach((a, i) => {
     const th = el("div", "th");
-    const img = el("img");
-    img.src = a.thumb;
-    img.alt = i18n("active.imageAlt", { n: i + 1 });
+    const img = a.thumb ? el("img") : el("span", "th-name", a.name);
+    if (a.thumb) {
+      img.src = a.thumb;
+      img.alt = i18n("active.imageAlt", { n: i + 1 });
+    }
     const drop = el("button", null, "✕");
     drop.title = i18n("active.removeImage");
     drop.addEventListener("click", () => {
@@ -472,42 +460,47 @@ function answerForm(s, pid) {
     drafts.set(sid, area.value);
     autosize(area);
   });
-  if (!openCode) {
-    area.addEventListener("paste", e => {
-      const files = [...(e.clipboardData ? e.clipboardData.files : [])]
-        .filter(f => f.type.startsWith("image/"));
-      if (files.length) { e.preventDefault(); attachImages(sid, files); }
-    });
-    area.addEventListener("dragover", e => { e.preventDefault(); form.classList.add("drop"); });
-    area.addEventListener("dragleave", () => form.classList.remove("drop"));
-    area.addEventListener("drop", e => {
-      e.preventDefault();
-      form.classList.remove("drop");
-      attachImages(sid, [...(e.dataTransfer ? e.dataTransfer.files : [])]);
-    });
-    clip.addEventListener("click", () => picker.click());
-    picker.addEventListener("change", () => { attachImages(sid, [...picker.files]); picker.value = ""; });
-  }
+  area.addEventListener("paste", e => {
+    const files = [...(e.clipboardData ? e.clipboardData.files : [])]
+      .filter(f => f.type.startsWith("image/"));
+    if (files.length) { e.preventDefault(); attachImages(sid, files); }
+  });
+  area.addEventListener("dragover", e => { e.preventDefault(); form.classList.add("drop"); });
+  area.addEventListener("dragleave", () => form.classList.remove("drop"));
+  area.addEventListener("drop", e => {
+    e.preventDefault();
+    form.classList.remove("drop");
+    attachImages(sid, [...(e.dataTransfer ? e.dataTransfer.files : [])]);
+  });
+  clip.addEventListener("click", () => picker.click());
+  picker.addEventListener("change", () => { attachImages(sid, [...picker.files]); picker.value = ""; });
 
   const controls = agentControls(s);
+  if (openCode) controls.commandSource = text => openCodePickerMatches(s, text);
   if (controls.commands && controls.agent === "codex") ensureCommands("codex"); // its /model picker needs the models
   const submit = () => {
     const text = area.value;
-    if (openCode) { if (!send.disabled) void sendOpenCodeReply(s, text); return; }
+    if (openCode) {
+      if (!send.disabled) void submitOpenCodeComposer(s, text, attachments.get(sid) || []);
+      return;
+    }
     // "/effort" and "/model" without an argument would open a picker in the tab, so buttons pick here.
     const pick = controls.commands && argChoices(text, controls.agent);
     if (pick && !pick.optional) { chooser.show(text); return; }
     const images = (attachments.get(sid) || []).map(a => a.path);
     if ((!text.trim() && !images.length) || send.disabled) return;
     const nonce = Math.random().toString(36).slice(2);
-    pendingSends.set(nonce, sid);
-    sentDrafts.set(nonce, { text, images: images.length, pending: s.pending });
+    const draft = { sid, text, paths: images, at: new Date().toISOString(), acknowledged: false };
+    drafts.set(sid, text);
+    pendingSends.set(nonce, draft);
     setSendNote(sid, i18n("active.sending"), "");
+    if (!s.pending) showConversationSend(sid, nonce, draft);
     commandOutputs.delete(sid);                 // a new reply replaces the previous one
     tellTabHost("send-text", { ptyPid: pid, claudePid: s.pid, sessionId: sid, text, images, nonce });
     window.setTimeout(() => {
       if (!pendingSends.has(nonce)) return;
       pendingSends.delete(nonce);
+      removeConversationSend(sid, nonce);
       setSendNote(sid, i18n("active.noHostReply"), "bad");
     }, SEND_TIMEOUT_MS);
   };
@@ -521,16 +514,16 @@ function answerForm(s, pid) {
   }
   const row = el("div", "row2");
   if (openCode) {
-    row.append(area, send);
+    row.append(clip, area, send, picker);
     const discard = el("button", "discard-reply", i18n("opencode.discardReply"));
     discard.hidden = !pendingOpenCodeReply(sid);
     discard.addEventListener("click", () => discardOpenCodeReply(sid));
-    form.append(suggest, row, note, discard);
+    form.append(suggest, thumbs, row, note, discard);
   } else {
     row.append(clip, area, send, picker);
     form.append(suggest, chooser.row, thumbs, row, note);
   }
-  window.setTimeout(() => { if (!openCode) renderThumbs(sid); if (area.value) autosize(area); }, 0);
+  window.setTimeout(() => { renderThumbs(sid); if (area.value) autosize(area); }, 0);
   return form;
 }
 

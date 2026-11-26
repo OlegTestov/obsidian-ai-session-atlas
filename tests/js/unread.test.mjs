@@ -27,6 +27,16 @@ describe("nextUnread", () => {
     assert.deepEqual(ids(nextUnread(new Set(), now, started, new Set())), [A_ID]);
   });
 
+  it("an unavailable OpenCode transcript does not announce a fabricated stop", () => {
+    const previous = new Map([[A_ID, "busy"]]);
+    const card = { ...S(A_ID, "idle"), agent: "opencode", opencode_running: false };
+    const { next, started } = waitingTransitions(previous, [card]);
+    assert.deepEqual(started, []);
+    assert.equal(next.get(A_ID), "busy");
+    const known = { ...card, last_message_at: "2026-11-24T20:00:00Z" };
+    assert.deepEqual(waitingTransitions(next, [known]).started, [known]);
+  });
+
   it("a dialog counts as finished too", () => {
     const prev = new Map([[A_ID, "idle"]]);
     const now = [S(A_ID, "waiting")];

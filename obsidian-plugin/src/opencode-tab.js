@@ -45,9 +45,14 @@ function openCodeLaunchEnded(dataDir, instance, pty) {
   } catch { return false; }
 }
 
-async function waitForOpenCodeSession(dataDir, leaf, instance, sid) {
+async function waitForOpenCodeSession(dataDir, leaf, instance, sid, workspace) {
   const deadline = Date.now() + 15000;
   while (Date.now() < deadline) {
+    if (typeof workspace?.iterateAllLeaves === "function") {
+      let attached = false;
+      workspace.iterateAllLeaves(candidate => { if (candidate === leaf) attached = true; });
+      if (!attached) return false;
+    }
     const pty = leaf.view?.pty;
     if (openCodeLaunchEnded(dataDir, instance, pty)) return false;
     const record = pty && readOpenCodeTab(dataDir, instance);

@@ -81,7 +81,7 @@ class Converter:
 
     def _text(self, role: str, ts, text: str, images: int = 0) -> list[dict]:
         text = (text or "").strip()
-        if not text or self.last[role] == text:
+        if (not text and not images) or self.last[role] == text:
             return []
         self.last[role] = text
         self.last["assistant" if role == "user" else "user"] = None   # a real repeat comes after a reply

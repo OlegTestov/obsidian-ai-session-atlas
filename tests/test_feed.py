@@ -52,6 +52,13 @@ def test_notifications_and_interrupts_are_not_turns():
     assert len(turns) == 1 and turns[0]["interrupted"] is True
 
 
+def test_image_only_prompt_starts_a_conversation_turn():
+    image = rec(type="user", timestamp="2026-09-27T10:01:00.000Z",
+                message={"role": "user", "content": [{"type": "image"}]})
+    [turn] = feed.build(records(image + assistant_text("вижу изображение")))
+    assert (turn["prompt"], turn["images"], turn["reply"]) == ("", 1, "вижу изображение")
+
+
 def test_long_reply_keeps_the_end():
     body = "\n".join(f"строка {i}" for i in range(2000))
     turns = feed.build(records(user_text("длинно") + assistant_text(body)))

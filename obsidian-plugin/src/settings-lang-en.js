@@ -77,6 +77,8 @@ export default {
   "ai.enabled": "Enable AI features",
   "ai.enabled.desc": "Topics, What was done and notes use your Claude Code or Codex plan, with a preview of manual sends.",
   "ai.agent": "Agent for AI features",
+  "ai.openCodeModel": "OpenCode model for summaries and handoffs",
+  "ai.openCodeModel.desc": "Optional. Use a provider/model from OpenCode and confirm the excerpt before each send.",
   "ai.agent.desc": "Automatic uses Claude Code if available, then Codex.",
   "ai.agent.invalid": "Invalid value {value}",
   "ai.agent.auto": "Automatic",

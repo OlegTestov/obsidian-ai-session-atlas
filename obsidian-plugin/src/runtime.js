@@ -132,7 +132,7 @@ class RuntimeMethods {
     return new Promise((resolve) => {
       const request = http.request({ host: "127.0.0.1", port: this.atlasPort(), path: pathname, method, timeout,
         headers: Object.assign({ Origin: origin, "X-Atlas-Token": token, "X-Atlas-Lang": this.lang() },
-                               payload ? { "Content-Type": "application/json" } : {}) }, (response) => {
+                               payload ? { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(payload) } : {}) }, (response) => {
         let text = "";
         response.setEncoding("utf8");
         response.on("data", (chunk) => { text += chunk; });

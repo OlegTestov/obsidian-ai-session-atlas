@@ -6,11 +6,12 @@ import sqlite3
 from contextlib import suppress
 from urllib.parse import urlencode
 
-from . import agent_opencode as source, agents, opencode_service as service, opencode_tabs
+from . import agent_opencode as source, agents, opencode_service as service, opencode_tabs, uploads
 from .messages import msg
 
 REQUEST_ID = re.compile(r"(?:per|frm|msg)_[A-Za-z0-9]{26}")
-OPERATIONS = ("permission", "form", "dismiss", "stop", "reply", "reply-check")
+OPERATIONS = ("permission", "form", "dismiss", "stop", "reply", "reply-check", "pickers", "command", "model")
+PICKER_ID = re.compile(r"[A-Za-z0-9_.:@/+-]{1,180}")
 
 
 def _client():
@@ -173,12 +174,13 @@ def _not_admitted(exc, sid):
             or (exc.status == 404 and tag == "SessionNotFoundError" and body.get("sessionID") == sid))
 
 
-def _reply(sid, operation, body):
+def _reply(sid, operation, body, *, client=None, before_send=None):
     message_id, text = body.get("message_id"), body.get("text")
+    images = body.get("images", [])
     if not _id(message_id, "msg") or (operation == "reply" and (
-            not isinstance(text, str) or not text.strip() or len(text) > 100_000)):
+            not isinstance(text, str) or (not text.strip() and not images) or len(text) > 100_000)):
         raise service.ServiceError("request_failed", 400)
-    client = _client()
+    client = _client() if client is None else client
     if operation == "reply":
         _require_generation(client, body)
     try:
@@ -190,9 +192,22 @@ def _reply(sid, operation, body):
     if known or operation == "reply-check":
         return {"delivery": known}
     _require_tab(sid)
+
+    def check_target():
+        if before_send is not None:
+            before_send()
+        _require_tab(sid)
+        client.check_verified_database()
+
     try:
-        result = client.call("POST", f"session/{sid}/prompt", {"id": message_id, "text": text, "delivery": "queue"},
-                             before_send=lambda: _require_tab(sid))
+        files = uploads.reply_files(images)
+    except uploads.UploadError as exc:
+        raise service.ServiceError("live_image_invalid", 400, reason=str(exc)) from None
+    prompt = {"id": message_id, "text": text, "delivery": "queue"}
+    if files:
+        prompt["files"] = files
+    try:
+        result = client.call("POST", f"session/{sid}/prompt", prompt, before_send=check_target)
     except service.ServiceError as exc:
         if not exc.dispatched or _not_admitted(exc, sid):
             raise
@@ -207,6 +222,74 @@ def _reply(sid, operation, body):
     return {"delivery": None}
 
 
+
+def _picker_rows(client, kind, directory):
+    query = urlencode({"location[directory]": directory})
+    options = []
+    for row in client.data(kind + "?" + query, expect=list):
+        if not isinstance(row, dict):
+            continue
+        value = _text(row.get("name" if kind == "command" else "id"))
+        if not PICKER_ID.fullmatch(value):
+            continue
+        name = " ".join(_text(row.get("name")).split())[:180] or value
+        entry = {"id": value, "name": name}
+        if kind == "model":
+            provider = _text(row.get("providerID"))
+            if not PICKER_ID.fullmatch(provider):
+                continue
+            entry["provider"] = provider
+        else:
+            entry["description"] = " ".join(_text(row.get("description")).split())[:240]
+        options.append(entry)
+    return options
+
+
+def _picker_operation(client, sid, operation, body):
+    directory = source.session_directory(sid)
+    if not directory:
+        raise service.ServiceError("session_missing")
+
+    def check_location():
+        _require_tab(sid)
+        if source.session_directory(sid) != directory:
+            raise service.ServiceError("live_stale", 409)
+        client.check_verified_database()
+
+    if operation == "pickers":
+        rows = {kind + "s": _picker_rows(client, kind, directory) for kind in ("command", "skill", "model")}
+        check_location()
+        return rows
+
+    options = _picker_rows(client, operation, directory)
+    value = body.get("id")
+    if operation == "command":
+        text = body.get("text")
+        found = any(item["id"] == value for item in options)
+        if not found or not isinstance(text, str) or len(text) > 100_000:
+            raise service.ServiceError("live_picker_unknown", 400)
+        payload = {"name": value, "text": text}
+    else:
+        provider = body.get("provider")
+        if not any(item["id"] == value and item["provider"] == provider for item in options):
+            raise service.ServiceError("live_picker_unknown", 400)
+        payload = {"model": {"id": value, "providerID": provider}}
+
+    def check_idle():
+        if sid in client.data("session/active"):
+            raise service.ServiceError("live_picker_busy", 409)
+        check_location()
+
+    try:
+        client.call("POST", f"session/{sid}/{operation}", payload, before_send=check_idle)
+    except service.ServiceError as exc:
+        if exc.dispatched and exc.status not in (400, 404):
+            # Native command admission does not accept a caller-provided message ID.
+            raise service.ServiceError("live_picker_uncertain", 409) from None
+        raise
+    return {"ok": True}
+
+
 def run(operation, body):
     sid = body.get("session_id")
     if operation not in OPERATIONS or not agents.valid_id(agents.OPENCODE, sid):
@@ -216,6 +299,8 @@ def run(operation, body):
     _require_tab(sid)
     client = _client()
     _require_generation(client, body)
+    if operation in ("pickers", "command", "model"):
+        return _picker_operation(client, sid, operation, body)
     if operation == "stop":
         result = client.call("POST", f"session/{sid}/interrupt", before_send=lambda: _require_tab(sid))
         if not isinstance(result, dict) or type(result.get("interrupted")) is not bool:

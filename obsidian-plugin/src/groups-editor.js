@@ -86,6 +86,7 @@ function openGroupEditor(plugin, id, anchor, { focusName = false } = {}) {
     row.addEventListener("click", () => { close(); run(); });
     return row;
   };
+  action("layout-grid", t("group.menu.workspace"), () => void plugin.workspaceFromGroup(id));
   for (const kind of agentKinds) {
     if (supportsTerminal(kind) && plugin.agentEnabled(kind)) action(terminalAgent(kind).icon, t(`group.editor.new.${kind}`),
                                           () => plugin.openInGroup(kind, id));

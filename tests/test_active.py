@@ -199,9 +199,10 @@ def test_waiting_status_carries_what_it_waits_for(atlas_env, claude_dir):
 
 
 def test_api_feed_previews_long_replies_and_rejects_invalid_ids(atlas_env, write_session, live_server):
+    prompt = "начало " + "длинный вопрос " * 150 + "конец вопроса"
     reply = "полный ответ " * 400 + "конец"
     sid = "11111111-2222-4333-8444-555555555555"
-    write_session("p", [user_text("вопрос"), assistant_text(reply)], session_id=sid)
+    write_session("p", [user_text(prompt), assistant_text(reply)], session_id=sid)
     conn = _conn(atlas_env)
     index.index_all(conn, root=str(atlas_env["projects"]))
     base, _ = live_server
@@ -209,6 +210,10 @@ def test_api_feed_previews_long_replies_and_rejects_invalid_ids(atlas_env, write
         [turn] = json.load(response)["turns"]
     assert turn["reply_len"] == len(reply)
     assert len(turn["reply"]) < turn["reply_len"] and turn["reply"].endswith("конец")
+    assert len(turn["prompt"]) < turn["prompt_len"]
+    with urllib.request.urlopen(f"{base}/api/active/feed/{sid}?view=turns", timeout=10) as response:
+        [full] = json.load(response)["turns"]
+    assert (full["prompt"], full["reply"]) == (prompt, reply)
     with pytest.raises(urllib.error.HTTPError) as bad:
         urllib.request.urlopen(f"{base}/api/active/feed/..%2Fetc", timeout=10)
     assert bad.value.code == 400

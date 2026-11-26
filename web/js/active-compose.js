@@ -57,7 +57,7 @@ function onEdge(area, dir) {
  * opts.commands === false: no slash-command hints; opts.agent picks whose commands are listed.
  */
 function enhanceComposer(area, sid, submit, opts) {
-  const hints = !opts || opts.commands !== false;
+  const hints = !opts || opts.commands !== false || !!opts.commandSource;
   const agent = opts && opts.agent;
   const pop = el("div", "suggest hidden");
   pop.setAttribute("role", "listbox");
@@ -65,13 +65,19 @@ function enhanceComposer(area, sid, submit, opts) {
   let active = 0;
   let histIndex = -1;
   let own = "";
+  let lookup = 0;
 
-  const close = () => { items = []; pop.classList.add("hidden"); };
+  const close = () => {
+    lookup++;
+    items = [];
+    pop.classList.add("hidden");
+    delete pop.dataset.loading;
+  };
   const render = () => {
     pop.replaceChildren(...items.map((c, i) => {
       const row = el("div", "sug" + (i === active ? " on" : ""));
       row.setAttribute("role", "option");
-      row.append(el("b", null, (c.sigil || "/") + c.name), el("span", null, c.description || ""));
+      row.append(el("b", null, c.display || (c.sigil || "/") + c.name), el("span", null, c.description || ""));
       // mousedown, not click: otherwise the field loses focus before the choice.
       row.addEventListener("mousedown", e => { e.preventDefault(); pick(i); });
       return row;
@@ -81,22 +87,31 @@ function enhanceComposer(area, sid, submit, opts) {
     if (on) on.scrollIntoView({ block: "nearest" });   // with the arrows, follow the selected row
   };
   const pick = i => {
-    area.value = (items[i].sigil || "/") + items[i].name + " ";
+    const nextStep = items[i].next === true;
+    area.value = items[i].insertText || (items[i].sigil || "/") + items[i].name + " ";
     drafts.set(sid, area.value);
     saveDrafts();
     close();
     autosize(area);
     area.focus();
     area.setSelectionRange(area.value.length, area.value.length);
+    if (nextStep) void suggest();
   };
   const suggest = async () => {
     if (!hints) return;
     const text = area.value;
-    const list = await ensureCommands(agent);
-    if (area.value !== text) return;           // typing continued while the list loaded
-    items = AtlasLogic.commandMatches(list, text);
-    active = Math.min(active, Math.max(0, items.length - 1));
-    render();
+    const request = ++lookup;
+    pop.dataset.loading = "";
+    try {
+      const matched = opts?.commandSource ? await opts.commandSource(text)
+        : AtlasLogic.commandMatches(await ensureCommands(agent), text);
+      if (request !== lookup || area.value !== text || area.isConnected === false) return;
+      items = matched;
+      active = Math.min(active, Math.max(0, items.length - 1));
+      render();
+    } finally {
+      if (request === lookup) delete pop.dataset.loading;
+    }
   };
 
   area.addEventListener("input", () => { histIndex = -1; saveDrafts(); suggest(); });

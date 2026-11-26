@@ -19,6 +19,7 @@ function tellHost(type, payload) {
   window.parent.postMessage(Object.assign({ source: PAGE_SOURCE, type }, payload), "*");
   return true;
 }
+
 const LOW_CONFIDENCE = 0.6;
 
 let state = { q:"", project:"", topic:"", domains:new Set(), since:"", automation:false,
@@ -152,10 +153,19 @@ function writeHash() {
   if (activeMode === "full") p.set("am", "full");
   if (layout.compact) p.set("lc", `${layout.compact.c}x${layout.compact.r}`);
   if (layout.full) p.set("lf", `${layout.full.c}x${layout.full.r}`);
+  writeWorkspaceHash(p);
   if (state.current) p.set("s", state.current);
   if (legacyGroupNames.length) p.set("ag", legacyGroupNames.join("|"));
   const next = "#" + p.toString();
-  if (location.hash !== next) history.replaceState(null, "", next);
+  if (location.hash !== next) {
+    history.replaceState(null, "", next);
+    // Obsidian saves this layout on disk. Keep search text and session details in the page.
+    const saved = new URLSearchParams();
+    for (const key of ["view", "am", "lc", "lf", "ws", "ag", ...ACTIVE_FILTERS.map(filter => filter.hash)]) {
+      if (p.has(key)) saved.set(key, p.get(key));
+    }
+    tellHost("view-state", {hash:"#" + saved.toString()});
+  }
 }
 
 function readHash() {
@@ -174,8 +184,9 @@ function readHash() {
   });
   legacyGroupNames = (p.get("ag") || "").split("|").filter(Boolean);
   activeMode = p.get("am") === "full" ? "full" : "compact";
-  layout.compact = parseLayout(p.get("lc"), LAYOUT_MAX.compact);
-  layout.full = parseLayout(p.get("lf"), LAYOUT_MAX.full);
+  layout.compact = parseLayout(p.get("lc"), LAYOUT_CELLS);
+  layout.full = parseLayout(p.get("lf"), LAYOUT_CELLS);
+  setWorkspaceFromHash(p);
   state.current = p.get("s") || null;
   $("#q").value = state.q;
   $("#since").value = state.since;

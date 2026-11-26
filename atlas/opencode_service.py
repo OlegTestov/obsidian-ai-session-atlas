@@ -255,13 +255,20 @@ def _file_sets(output):
             yield pid, fields
 
 
-def _matches_database(files, expected):
-    def identity(path):
-        info = path.stat()
-        return info.st_dev, info.st_ino
-
+def _database_files_identity(database, *, allow_missing_wal=False):
+    main = database.stat()
     try:
-        wanted = identity(expected), identity(expected.with_name(expected.name + "-wal"))
+        wal = database.with_name(database.name + "-wal").stat()
+    except FileNotFoundError:
+        if not allow_missing_wal:
+            raise
+        return (main.st_dev, main.st_ino), None
+    return (main.st_dev, main.st_ino), (wal.st_dev, wal.st_ino)
+
+
+def _matches_database(files, expected):
+    try:
+        wanted = _database_files_identity(expected)
     except OSError:
         return False
 
@@ -368,6 +375,7 @@ def _call(registration, method, path, body=None, *, timeout=3, file=None, before
         exc.dispatched = dispatched
         raise
     except (ValueError, OverflowError, RecursionError):
+        connection.close()
         raise ServiceError("request_failed", dispatched=dispatched) from None
     finally:
         if timer:
@@ -437,7 +445,15 @@ def verified_client(expected, *, budget=None):
     profile_files = [] if budget else None
     client = Client(discover(budget=budget, profile_files=profile_files))
     try:
+        if client.version == TESTED_VERSION:
+            try:
+                identity = _database_files_identity(expected, allow_missing_wal=True)
+            except OSError:
+                raise ServiceError("profile") from None
+            client._verified_database = (expected, identity)
         _profile_check(client, expected, profile_files)
+        if client._verified_database is not None:
+            client.check_verified_database()
         if budget:
             budget.remaining()
             if not client.poll_connected:
@@ -513,6 +529,18 @@ class Client:
         self.info = discovery.info
         self._poll_connection = discovery.poll_connection
         self._verified_poll_only = False
+        self._verified_database = None
+
+    def check_verified_database(self):
+        if self._verified_database is None:
+            raise ServiceError("profile")
+        database, identity = self._verified_database
+        try:
+            if _database_files_identity(database, allow_missing_wal=True) == identity:
+                return
+        except OSError:
+            pass
+        raise ServiceError("profile")
 
     @property
     def generation(self):
@@ -556,8 +584,9 @@ class Client:
                 return expected
         return None
 
-    def call(self, method, route, body=None, *, before_send=None):
-        return _call(self._registration, method, "/api/" + route, body, file=self._file, before_send=before_send)
+    def call(self, method, route, body=None, *, before_send=None, timeout=3):
+        return _call(self._registration, method, "/api/" + route, body, file=self._file,
+                     before_send=before_send, timeout=timeout)
 
     def data(self, route, method="GET", body=None, expect=dict):
         return _response_data(self.call(method, route, body), expect)

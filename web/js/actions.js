@@ -163,7 +163,9 @@ function buildHelp() {
   list(keys("help.find", 8));
 
   h(i18n("help.activeH"));
-  list(keys("help.active", 14));
+  const activeHelp = keys("help.active", 14);
+  activeHelp.splice(4, 0, i18n("help.workspaces"));
+  list(activeHelp);
 
   h(i18n("help.cardH"));
   list(keys("help.card", 3));

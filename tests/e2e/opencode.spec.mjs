@@ -248,8 +248,12 @@ test("reloading before the copy acknowledgment keeps the old request until the m
     await expect(frame.locator("#modal")).toBeVisible();
 
     // The host already opened a tab, but language navigation can discard its pending acknowledgment.
-    await frame.locator("body").evaluate(() => location.reload());
-    await frame.locator("#view-search").waitFor({ state: "visible" });
+    const embedded = page.frames().find(child => child.parentFrame() === page.mainFrame());
+    await Promise.all([
+      page.waitForEvent("framenavigated", child => child === embedded),
+      embedded.evaluate(() => location.reload()),
+    ]);
+    await embedded.waitForLoadState("domcontentloaded");
     await openCopy();
     await start.click();
     await expect(frame.locator("#m-note")).toHaveText("Saved copy is missing");

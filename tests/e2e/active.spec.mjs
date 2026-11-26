@@ -48,6 +48,70 @@ test("both live sessions show by default with badges and statuses", async ({ pag
   expect([...asked].sort()).toEqual(["account/rateLimits/read", "initialize", "initialized"]);
 });
 
+test("the layout picker previews and chooses a rectangle from the keyboard", async ({ page, open }) => {
+  await open("active");
+  const trigger = page.locator(".lay-btn");
+  const picker = page.locator(".lay-grid");
+  await trigger.click();
+  await expect(picker.locator("button:visible")).toHaveCount(25);
+  await trigger.press("Tab");
+  await expect(picker.getByRole("button", { name:"1 × 1", exact:true })).toBeFocused();
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("ArrowDown");
+  const size = picker.getByRole("button", { name:"2 × 2", exact:true });
+  await expect(size).toBeFocused();
+  await expect(picker.locator(".hot:visible")).toHaveCount(4);
+  await expect(size).toHaveAttribute("aria-pressed", "false");
+  await page.keyboard.press("Enter");
+  await expect(trigger).toBeFocused();
+  await expect(trigger).toHaveText("2×2");
+  await trigger.click();
+  await expect(size).toHaveAttribute("aria-pressed", "true");
+  await trigger.press("Tab");
+  await expect(size).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(trigger).toBeFocused();
+  await expect(picker).toBeHidden();
+  await trigger.click();
+  await picker.getByRole("button", { name:"5 × 5", exact:true }).click();
+  await expect(page.locator(".agrid.c5.r5").first()).toBeVisible();
+  await page.locator('[data-mode="full"]').click();
+  await trigger.click();
+  await expect(picker.locator("button:visible")).toHaveCount(25);
+  await picker.getByRole("button", { name:"5 × 5", exact:true }).click();
+  await expect(trigger).toHaveText("5×5");
+  const detailed = page.locator(".agrid.full.c5.r5").first();
+  await expect(detailed).toBeVisible();
+  await expect.poll(() => detailed.evaluate(grid =>
+    getComputedStyle(grid).gridTemplateColumns.split(" ").length)).toBe(5);
+  await expect(detailed).toHaveCSS("grid-auto-rows", "200px");
+  const cardHeadersFit = () => page.locator(".agrid.full.c5.r5 .acard .head").evaluateAll(headers =>
+    headers.length > 0 && headers.every(header => {
+      const { left, right } = header.getBoundingClientRect();
+      const title = header.querySelector(".t");
+      return title.getBoundingClientRect().width >= 48
+        && Array.from(header.querySelectorAll("button, select")).every(control => {
+          const bounds = control.getBoundingClientRect();
+          return bounds.width > 0 && bounds.left >= left - 1 && bounds.right <= right + 1;
+        });
+    }));
+  await expect.poll(cardHeadersFit).toBe(true);
+  await page.setViewportSize({width:980, height:900});
+  await expect.poll(cardHeadersFit).toBe(true);
+  await page.setViewportSize({width:1440, height:900});
+  await page.reload();
+  await expect(trigger).toHaveText("5×5");
+  await expect(detailed).toBeVisible();
+  await page.setViewportSize({width:320, height:720});
+  await trigger.scrollIntoViewIfNeeded();
+  await expect(trigger).toBeInViewport({ratio:1});
+  await trigger.press("Enter");
+  await expect(picker.getByRole("button", { name:"5 × 5", exact:true })).toBeInViewport();
+  await picker.getByRole("button", { name:"1 × 1", exact:true }).click();
+  await expect(trigger).toHaveText("1×1");
+  await expect(page.locator(".agrid.full.c1.r1").first()).toBeVisible();
+});
+
 test("a pending Codex card keeps its slot when the first rollout appears", async ({ page, lang }) => {
   const started = "2026-11-01T10:00:00+00:00";
   const pendingId = "pending-codex-7101-Sun-Nov-1-10:00:00-2026";
@@ -161,6 +225,29 @@ test("detailed cards default to the conversation of their own agent", async ({ p
   await expect(codex.locator("option[value=terminal]")).toBeDisabled();
 });
 
+test("the detailed conversation shows complete long prompts and replies", async ({ page, open }) => {
+  const file = run.corpus.files.claudeLive;
+  const original = fs.readFileSync(file, "utf8");
+  const records = original.trimEnd().split("\n").map(line => JSON.parse(line));
+  const prompt = "Prompt begins. " + "Full prompt. ".repeat(200) + "Prompt ends.";
+  const reply = "Reply begins. " + "Full reply. ".repeat(400) + "Reply ends.";
+  const user = records.find(row => row.type === "user");
+  const answer = records.find(row => row.type === "assistant");
+  user.message.content = prompt;
+  answer.message.content.find(block => block.type === "text").text = reply;
+  fs.writeFileSync(file, records.map(row => JSON.stringify(row)).join("\n") + "\n");
+  try {
+    await open("active");
+    await page.locator("#active-filters .mode button[data-mode=full]").click();
+    const turn = card(page, ids.claudeLive).locator(".fturn").first();
+    await expect(turn.locator(".ftxt.mine")).toHaveText(prompt);
+    await expect(turn.locator(".ftxt:not(.mine)")).toHaveText(reply);
+    await expect(turn.locator(".cutmark")).toHaveCount(0);
+  } finally {
+    fs.writeFileSync(file, original);
+  }
+});
+
 test("the card switches between conversation, steps and files independently", async ({ page, open, t }) => {
   await open("active");
   await page.locator("#active-filters .mode button[data-mode=full]").click();
@@ -229,7 +316,10 @@ window.addEventListener("message", e => {
   window.sent.push(d);
   const reply = m => e.source.postMessage(Object.assign({ source: "session-atlas-host" }, m), "*");
   if (d.type === "list-tabs") reply({ type: "tabs", tabs, health: { ok: true } });
-  if (d.type === "send-text") reply({ type: "sent", nonce: d.nonce, ok: true });
+  if (d.type === "send-text") {
+    window.answerSend = (ok, reason) => reply({ type: "sent", nonce: d.nonce, ok, reason });
+    if (!window.deferSend) window.answerSend(true);
+  }
 });
 </script></body></html>`;
 }
@@ -284,6 +374,77 @@ test("the Codex card offers Codex's own commands, skills and models; replies rea
   await expect.poll(() => page.evaluate(() => window.sent.filter(m => m.type === "send-text").at(-1))).toEqual(
     expect.objectContaining({ ptyPid: run.pids.codex.shell, sessionId: ids.codexLive,
                               text: "please also check the rounding" }));
+});
+
+test("a Codex reply stays visible while the conversation catches up", async ({ page, lang }) => {
+  const mine = "Check the rebuilt disk usage index";
+  const history = [{ id: "previous", prompt: "A recent Codex prompt", steps: [],
+    prompt_at: new Date(Date.now() - 1000).toISOString() }];
+  let prompt = history[0].prompt;
+  let promptAt = history[0].prompt_at;
+  await page.route(/\/api\/active(\?|$)/, route => route.fulfill({ json: { sessions: [{
+    session_id: ids.codexLive, agent: "codex", title: "Busy Codex", status: "busy",
+    pid: run.pids.codex.pid, ancestors: [run.pids.codex.shell], prompt, prompt_at: promptAt,
+    progress: "Progress from the current turn. ".repeat(60),
+  }] } }));
+  await page.route(`**/api/active/feed/${ids.codexLive}?*`, route => {
+    const anchor = new URL(route.request().url()).searchParams.get("since_id");
+    return route.fulfill({ json: { turns: history.slice(Math.max(0, history.findIndex(t => t.id === anchor))) } });
+  });
+  await page.route(`${run.base}/e2e-host.html`, route =>
+    route.fulfill({ contentType: "text/html; charset=utf-8", body: hostPage(lang) }));
+  await page.goto(`${run.base}/e2e-host.html`);
+  const codex = page.frameLocator("#atlas").locator(`.acard[data-id="${ids.codexLive}"]`);
+  const area = codex.locator(".answer textarea");
+  const body = codex.locator(".card-view-body");
+  const message = body.locator(".ftxt.mine").getByText(mine, { exact: true });
+  await expect(body).toContainText(prompt);
+  await expect(area).toBeEnabled();
+  await page.evaluate(() => { window.deferSend = true; });
+  await area.fill(mine);
+  await area.press("Enter");
+  await expect(message).toBeInViewport({ timeout: 1200 });
+  await expect.poll(() => page.evaluate(() => window.sent.filter(m => m.type === "send-text").length)).toBe(1);
+  await expect(body.locator(".fturn").last().locator(".fwho").first()).toContainText(
+    lang === "ru" ? "отправляю" : "sending",
+  );
+  await page.evaluate(() => {
+    window.deferSend = false;
+    window.answerSend(true);
+  });
+  await expect(area).toHaveValue("");
+  await expect(message).toBeInViewport();
+
+  prompt = mine;
+  promptAt = new Date().toISOString();
+  await body.evaluate(() => window.loadActive());
+  await expect(message).toHaveCount(1);
+  await expect(body.locator(".fturn").last().locator(".fwho").first()).toContainText(
+    lang === "ru" ? "проверяю доставку" : "checking delivery",
+  );
+
+  history.push({ id: "written", prompt: mine, prompt_at: promptAt, steps: [], reply: "Codex wrote the reply" });
+  promptAt = new Date(Date.now() + 1).toISOString();
+  await body.evaluate(() => window.loadActive());
+  await expect(body).toContainText("Codex wrote the reply");
+  await expect(message).toHaveCount(1);
+
+  // The next identical submission is distinct from the older turn with the same text.
+  await area.fill(mine);
+  await area.press("Enter");
+  await expect(area).toHaveValue("");
+  await expect(message).toHaveCount(2);
+
+  const rejected = "This message should remain in the composer";
+  await page.evaluate(() => { window.deferSend = true; });
+  await area.fill(rejected);
+  await area.press("Enter");
+  await expect(body.locator(".ftxt.mine")).toContainText([history[0].prompt, mine, mine, rejected]);
+  await expect.poll(() => page.evaluate(() => window.sent.filter(m => m.type === "send-text").at(-1)?.text)).toBe(rejected);
+  await page.evaluate(() => window.answerSend(false, "terminal unavailable"));
+  await expect(codex.locator(".answer .note")).toContainText("terminal unavailable");
+  await expect(body.locator(".ftxt.mine").getByText(rejected)).toHaveCount(0);
+  await expect(area).toHaveValue(rejected);
 });
 
 // A message sent from the card while the agent works waits in the agent's queue: the card shows it once,

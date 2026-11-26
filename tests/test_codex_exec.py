@@ -450,3 +450,27 @@ def test_cancelled_artifact_worker_keeps_no_result(atlas_env, write_session, mon
     assert job["state"] == "cancelled"
     assert job["result"] is None and job["error"] is None
     assert enrich.cached(conn, sid, kind) is None
+
+
+def test_changing_the_artifact_provider_invalidates_a_real_preview(atlas_env, write_session, live_server, monkeypatch):
+    _set(atlas_env, ai_agent="codex")
+    conn, sid = _indexed(atlas_env, write_session)
+    started = []
+    monkeypatch.setattr(server, "_run_job", lambda *args: started.append(args))
+    base, token = live_server
+    headers = {"Origin": base, "X-Atlas-Token": token}
+    artifact = {"session_id": sid, "artifact_kind": "catalog_summary"}
+    preview = json.load(_post(base + "/api/preview", artifact, headers))
+    assert preview["backend"] == runner.CODEX_BACKEND
+    confirmed = {
+        **artifact, "confirmed": True,
+        **{key: preview[key] for key in ("backend", "model_id", "effort", "content_hash", "excerpt_hash")},
+    }
+
+    _set(atlas_env, ai_agent="codex", opencode_ai_model="fixture/model")
+    with pytest.raises(urllib.error.HTTPError) as stale:
+        _post(base + "/api/job", confirmed, headers)
+    assert stale.value.code == 409
+    assert "Open the preview again" in json.loads(stale.value.read())["error"]
+    assert started == []
+    assert conn.execute("SELECT count(*) FROM egress_grants").fetchone()[0] == 0

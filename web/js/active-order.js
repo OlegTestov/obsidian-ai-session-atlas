@@ -1,6 +1,6 @@
 // Active: pinned cards and cards hidden until the next message. Stored in the browser.
 // Classic script: shares one global scope with the other page files.
-/* exported arrangeActive, unhideAll, pinButton, hideButton -- used by other page scripts */
+/* exported arrangeActive, unhideAll, unhideCard, pinButton, hideButton -- used by other page scripts */
 /* exported replacePendingSlots, sectionActivity -- used by other page scripts */
 const PINS_KEY = "atlas.pinned";
 const HIDDEN_KEY = "atlas.hidden";
@@ -30,6 +30,7 @@ function replacePendingSlots(previous, current) {
     if (!s.pending || currentIds.has(s.session_id)) continue;
     const next = real.get(processKey(s));
     if (next) {
+      workspacePendingChanged(s.session_id, next.session_id);
       const slot = frozenOrder?.indexOf(s.session_id) ?? -1;
       if (slot >= 0) {
         frozenOrder[slot] = next.session_id;
@@ -96,6 +97,12 @@ function hideCard(s) {
 
 function unhideAll() {
   hiddenCards = {};
+  store(HIDDEN_KEY, hiddenCards);
+  rerenderOrder();
+}
+
+function unhideCard(sid) {
+  delete hiddenCards[sid];
   store(HIDDEN_KEY, hiddenCards);
   rerenderOrder();
 }

@@ -289,9 +289,11 @@ class AgentMethods {
       if (kind === "opencode") {
         this.saveOpenCodeLayout?.();
         if (opts.seed?.mode === "resume"
-            && !await waitForOpenCodeSession(this.dataDir(), leaf, instance, opts.seed.sessionId)) return false;
+            && !await waitForOpenCodeSession(
+              this.dataDir(), leaf, instance, opts.seed.sessionId, this.app.workspace)) return false;
       }
       if (opts.label) new Notice(this.t("terminal.opened", { label: opts.label }));
+      opts.onOpened?.(instance);
       return true;
     } catch (error) {
       if (!started) leaf?.detach?.();

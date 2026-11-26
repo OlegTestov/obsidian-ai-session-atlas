@@ -1,6 +1,7 @@
 // Active: recently closed sessions, the process ended but there was work in the last hours.
 // Classic script: shares one global scope with the other page files.
 /* exported closedSection, backgroundSection, pruneBackgroundNotes, backgroundResult, bringBackButton, fitBringBack, watchBringBack -- used by other page scripts */
+/* exported closedRow -- also used by the workspace history */
 // The card disappears with the process; from here one button continues the session.
 const CLOSED_OPEN_KEY = "atlas.closedOpen";
 let recentClosed = [];
@@ -43,11 +44,11 @@ function closedRow(c) {
   const go = el("button", "primary", i18n("closed.continue"));
   go.type = "button";
   go.title = i18n("closed.continue.hint");
-  go.addEventListener("click", () => continueClosed(c));
+  go.addEventListener("click", () => { row.closest("dialog")?.close(); void continueClosed(c); });
   const find = el("button", null, i18n("closed.inSearch"));
   find.type = "button";
   find.title = i18n("closed.inSearch.hint");
-  find.addEventListener("click", () => { setView("search"); openCard(c.session_id); });
+  find.addEventListener("click", () => { row.closest("dialog")?.close(); setView("search"); openCard(c.session_id); });
   row.append(title, info, go, find);
   return row;
 }

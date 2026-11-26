@@ -24,7 +24,7 @@ Module._load = realLoad;
 const { COLORS, GONE_KEEP_MS, cleanGroups, nextColor, createGroup, runs, joinIndex, changedLeaves, dropChanges, prune, liveGroups,
         tabOutside, editorTop } = model;
 
-it("shows the matching agent mark on each group editor action for a new tab", () => {
+it("shows workspace creation first in both languages and keeps the agent marks", () => {
   const element = (opts) => ({
     ...opts,
     children: [],
@@ -47,11 +47,15 @@ it("shows the matching agent mark on each group editor action for a new tab", ()
     groups: { groups: { g: { name: "Group", color: "blue" } } },
     t: (key) => translate("en", key), agentEnabled: () => true, register() {},
   };
-  const editor = openGroupEditor(plugin, "g", anchor);
-  const actions = editor.children.find((child) => child.cls === "sa-group-editor-actions");
-  const icons = Object.fromEntries(actions.children.map(({ children: [icon, label] }) => [label.text, icon.icon]));
-  assert.equal(icons["New Claude Code tab"], "atlas-claude");
-  assert.equal(icons["New Codex tab"], "atlas-codex");
+  for (const [lang,label] of [["en","Create workspace…"],["ru","Создать воркспейс…"]]) {
+    plugin.t = key => translate(lang,key);
+    const editor = openGroupEditor(plugin, "g", anchor);
+    const actions = editor.children.find((child) => child.cls === "sa-group-editor-actions");
+    const items = actions.children.map(({ children: [icon, name] }) => [name.text, icon.icon]);
+    assert.deepEqual(items[0],[label,"layout-grid"]);
+    assert.equal(items.find(([name]) => name === translate(lang,"group.editor.new.claude"))[1], "atlas-claude");
+    assert.equal(items.find(([name]) => name === translate(lang,"group.editor.new.codex"))[1], "atlas-codex");
+  }
 });
 
 describe("group model", () => {
@@ -478,7 +482,7 @@ describe("group moves in the strip", () => {
     assert.ok(!titles.includes("G"), titles.join());
   });
 
-  it("the menu offers a new group, the other groups and leaving, once per menu", () => {
+  it("the menu offers group actions and workspace creation, once per menu", () => {
     const { plugin, leaf } = world(["a", "b"]);
     const g = createGroup(plugin.groups, { name: "Backend" });
     const docs = createGroup(plugin.groups, { name: "Docs" });
@@ -494,7 +498,7 @@ describe("group moves in the strip", () => {
     const menu = { addItem: (fn) => fn(item(titles)) };
     plugin.addGroupItems(menu, leaf("a"));
     plugin.addGroupItems(menu, leaf("a"));
-    assert.deepEqual(titles, ["group.menu.new", "group.menu.move", "group.menu.remove"]);
+    assert.deepEqual(titles, ["group.menu.workspace", "group.menu.new", "group.menu.move", "group.menu.remove"]);
     assert.deepEqual(sub, ["Docs"]);
   });
 });

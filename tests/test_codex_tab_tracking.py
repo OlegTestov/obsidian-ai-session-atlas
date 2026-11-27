@@ -35,6 +35,7 @@ for step in ${(s:;:)CODEX_PLAN}; do
   step="${step## }" verb="${step%% *}" arg="${step#* }"
   case "$verb" in
     open) exec {fd}>>"$arg" ;;
+    read) exec {fd}<"$arg" ;;
     write) print '{}' >> "$arg" ;;
     sleep) sleep "$arg" ;;
     spawn) /bin/bash -c 'exec -a "codex exec" sleep 30 < "$0"' "$arg" & kids+=($!) ;;
@@ -172,3 +173,31 @@ def test_copy_of_a_running_thread_does_not_ask_to_end_it(tab):
 @pytest.mark.parametrize("missing", ["01a10b5a-0000-7000-8000-000000000009"])
 def test_copy_of_a_missing_thread_starts_nothing_of_it(tab, missing):
     assert tab["run"]("codex", "cx-f3", "resume-fork", missing)[0] == [""]
+
+
+def test_segment_registry_records_and_restores_the_thread_id(tab):
+    segment = _rollout(tab["codex"], f"{TID}_{THIRD}", _meta(TID, str(tab["work"])))
+    _holder(tab, f"sleep 0.5; open {segment}; write {segment}; sleep 1.5")
+    assert _watch(tab, "cx-segment") == [TID]
+    assert tab["run"]("codex", "cx-segment")[0] == ["resume", TID]
+
+
+def test_short_codex_launch_finds_the_thread_id_in_a_segment(tab):
+    line = _meta(TID, str(tab["work"])).strip()
+    (Path(tab["env"]["PATH"].split(":")[0]) / "codex").write_text(
+        STUB + 'd="$CODEX_HOME/sessions/2026/11/13"; mkdir -p "$d"\n'
+        f"print -r -- '{line}' > \"$d/rollout-2026-11-13T11-08-50-{TID}_{THIRD}.jsonl\"\n", encoding="utf-8")
+    tab["run"]("codex", "cx-short-segment")
+    assert _registry(tab, "cx-short-segment") == [TID]
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_tracker_follows_the_newest_writer_in_either_fd_order(tab, reverse):
+    a = _rollout(tab["codex"], TID, _meta(TID, str(tab["work"])))
+    b = _rollout(tab["codex"], f"{OTHER}_{THIRD}", _meta(OTHER, str(tab["work"])))
+    newer_reader = _rollout(tab["codex"], SUB, _meta(SUB, str(tab["work"])))
+    os.utime(a, (10, 10))
+    os.utime(b, (20, 20))
+    paths = [b, a] if reverse else [a, b]
+    _holder(tab, f"open {paths[0]}; open {paths[1]}; read {newer_reader}; sleep 1.5")
+    assert _watch(tab, "cx-writer", "resume", TID)[-1] == OTHER

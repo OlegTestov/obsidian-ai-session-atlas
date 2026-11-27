@@ -4,7 +4,7 @@ Codex names a skill by the `name:` in its SKILL.md (the folder name without one)
 `~/.agents/skills/gstack/browse/SKILL.md` is `browse`, `$CODEX_HOME/skills/.system/imagegen` is
 `imagegen`, and a plugin's skill gets the plugin's name in front (`figma:figma-use`). Each session
 starts with Codex's own "Available skills" list in a developer message; the `$` list takes it from the
-newest rollout, and falls back to the skill folders when there is none. Everything is read only.
+newest rollout's retained history, falling back to the skill folders. Everything is read only.
 """
 from __future__ import annotations
 
@@ -70,13 +70,16 @@ def _newest_rollout(home: str) -> str | None:
     return None
 
 
-def _from_rollout(path: str) -> list[dict]:
+def _from_rollout(path: str, end: int | None = None) -> list[dict]:
     """Codex's own list, from a developer message near the top. Other records name "Available skills"
     too (session_meta's base instructions, an instruction about skills) without listing any."""
     try:
         with open(path, "rb") as fh:
             for _ in range(HEAD_LINES):
-                raw = fh.readline(HEAD_BYTES)
+                remaining = HEAD_BYTES if end is None else min(HEAD_BYTES, end - fh.tell())
+                if remaining <= 0:
+                    break
+                raw = fh.readline(remaining)
                 if not raw:
                     break
                 if b"Available skills" not in raw:
@@ -116,8 +119,12 @@ def _from_folders(roots: list[str]) -> list[dict]:
 
 def available(home: str, roots: list[str]) -> list[dict]:
     """[{name, description}] as Codex lists them; the first of a name wins."""
+    from . import codex_rollouts
+
     newest = _newest_rollout(home)
-    found = (_from_rollout(newest) if newest else []) or _from_folders(roots)
+    parts = codex_rollouts.lineage(newest, home) if newest else []
+    found = next((skills for part in reversed(parts) if (skills := _from_rollout(*part))), [])
+    found = found or _from_folders(roots)
     out, seen = [], set()
     for skill in found:
         if skill["name"] not in seen:

@@ -11,9 +11,12 @@ import contextlib
 import json
 import os
 import re
+from collections import OrderedDict
 from datetime import datetime, timedelta, timezone
+from itertools import islice
+from threading import Lock
 
-from . import codex_parse
+from . import codex_parse, codex_projection, codex_rollouts
 
 # Reasoning and message items (they carry base64 images) are never needed here: skipped undecoded.
 _SKIP = re.compile(rb'"payload":\s*\{"type":\s*"(?:message|reasoning)"'
@@ -208,10 +211,48 @@ def records(lines: list[bytes]) -> list[dict]:
     return out
 
 
+def _keep_feed_record(raw):
+    return None if _SKIP.search(raw, 0, 480) else raw
+
+
+def lineage_window(parts, limit: int) -> tuple[list[dict], bool]:
+    """Convert the last groups of the selected history, including turns across a join."""
+    chunks = []
+    remaining = limit + 1
+    for part, groups in codex_projection.selected(parts, _keep_feed_record, newest=True):
+        chunk = list(islice(reversed(groups), remaining))
+        if chunk:
+            # Hold the owning projection for as long as these raw groups are in use.
+            chunks.append((part, groups, chunk))
+            remaining -= len(chunk)
+            if not remaining:
+                break
+    whole = remaining > 0
+    out = []
+    for i, (part, _, groups) in enumerate(reversed(chunks)):
+        conv = Converter()
+        thread, physical = codex_parse.rollout_ids(part.path)
+        # An older window must return the same cursor even if identical prompts share a timestamp.
+        for group in islice(reversed(groups), int(not whole and i == 0), None):
+            for offset, raw in group.lines:
+                rec = codex_projection.decoded(raw)
+                if rec is None:
+                    continue
+                if rec.get("type") == "session_meta":
+                    conv = Converter()
+                for record in conv.convert(rec):
+                    if physical != thread and record["type"] == "user":
+                        record["uuid"] = f"cx:{physical}:{offset}"
+                    out.append(record)
+    return out, whole
+
+
 # --- session files ---
 
 _FILE_MARKS = (b'"patch_apply_end"', b'"FileChange"', b'"parsed_cmd"')
 _cache: dict[str, tuple] = {}         # path → (inode, bytes read, {file: counters}, cwd)
+_lineage_files = OrderedDict()
+_lineage_files_lock = Lock()
 
 
 def _note(files: dict, path: str, op: str, at, added: int = 0, removed: int = 0) -> None:
@@ -255,8 +296,37 @@ def _file_record(files: dict, rec: dict) -> None:
             _reads(files, item.get("parsed_cmd"), at)
 
 
+def _keep_file_record(raw: bytes) -> bytes | None:
+    return raw if not _SKIP.search(raw, 0, 480) and any(m in raw for m in _FILE_MARKS) else None
+
+
+def _files_in_lineage(parts):
+    key = tuple((part, codex_rollouts.file_stamp(part.path)) for part in parts)
+    with _lineage_files_lock:
+        cached = _lineage_files.get(key)
+        if cached is not None:
+            _lineage_files.move_to_end(key)
+            return cached
+    files = {}
+    for _, groups in codex_projection.selected(parts, _keep_file_record):
+        for group in groups:
+            for _, raw in group.lines:
+                rec = codex_projection.decoded(raw)
+                if rec is not None:
+                    _file_record(files, rec)
+    if len(files) <= 4096:
+        with _lineage_files_lock:
+            _lineage_files[key] = files
+            if len(_lineage_files) > 16:
+                _lineage_files.popitem(last=False)
+    return files
+
+
 def session_files(path: str) -> dict:
     """{cwd, files}: like `touched.session_files`; read from where the last pass stopped."""
+    parts = codex_rollouts.lineage(path)
+    if len(parts) > 1:
+        return _file_list(_files_in_lineage(parts), codex_rollouts.session_meta(path).get("cwd"))
     try:
         st = os.stat(path)
     except OSError:
@@ -285,6 +355,10 @@ def session_files(path: str) -> dict:
                 _file_record(files, rec)
         begin += end
     _cache[path] = (st.st_ino, begin, files, cwd)
+    return _file_list(files, cwd)
+
+
+def _file_list(files: dict, cwd: str | None) -> dict:
     out = sorted(files.values(), key=lambda f: f["last_at"] or "", reverse=True)
     out.sort(key=lambda f: f["edit"] + f["write"] == 0)
     return {"cwd": cwd, "files": [dict(f) for f in out]}

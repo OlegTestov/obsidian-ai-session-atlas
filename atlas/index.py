@@ -11,7 +11,7 @@ import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 
-from . import agents, codex_parse, config, costs, db, paths, search_rows, store
+from . import agents, codex_parse, codex_rollouts, config, costs, db, paths, search_rows, store
 
 PROJECTS_ROOT = os.environ.get("ATLAS_PROJECTS_ROOT", os.path.join(paths.claude_dir(), "projects"))
 
@@ -50,36 +50,8 @@ def discover(root: str = PROJECTS_ROOT) -> list[str]:
 def discover_codex(home: str | None = None) -> list[str]:
     """Codex rollouts: live ones by date folder, archived ones flat. Other names are not threads."""
     home = home or codex_home()
-    found = glob.glob(os.path.join(glob.escape(home), "sessions", "**", "rollout-*.jsonl"), recursive=True)
-    found += glob.glob(os.path.join(glob.escape(home), "archived_sessions", "rollout-*.jsonl"))
-    return sorted(p for p in found if codex_parse.session_id_of(p))
-
-
-CODEX_HEAD_BYTES = 8192          # ids and thread source come before the long instructions
-_SUBAGENT = re.compile(rb'"thread_source":\s*"subagent"|"source":\s*\{"subagent"')
-_PARENT = re.compile(rb'"parent_thread_id":\s*"([0-9a-fA-F-]{36})"')
-_codex_heads: dict[str, tuple] = {}   # path → (inode, parent thread id or None): a head never changes
-
-
-def _codex_parent(path: str) -> str | None:
-    """The thread that spawned this one when this is a Codex subagent thread, from the first line."""
-    try:
-        ino = os.stat(path).st_ino
-    except OSError:
-        return None
-    cached = _codex_heads.get(path)
-    if cached and cached[0] == ino:
-        return cached[1]
-    try:
-        with open(path, "rb") as fh:
-            head = fh.read(CODEX_HEAD_BYTES)
-    except OSError:
-        return None
-    first = head.split(b"\n", 1)[0]
-    found = _PARENT.search(first) if _SUBAGENT.search(first) else None
-    parent = found.group(1).decode() if found else None
-    _codex_heads[path] = (ino, parent)
-    return parent
+    threads, _ = codex_rollouts.inventory(home)
+    return sorted(p for paths in threads.values() for p in paths)
 
 
 def codex_subagents(paths: list[str]) -> dict[str, list[str]]:
@@ -87,7 +59,7 @@ def codex_subagents(paths: list[str]) -> dict[str, list[str]]:
     keeps subagents with their session. A subagent whose root thread is not here stays its own."""
     ids = {p: codex_parse.session_id_of(p) for p in paths}
     present = set(ids.values())
-    parent = {ids[p]: _codex_parent(p) for p in paths}
+    parent = {ids[p]: meta["parent"] for p in paths if (meta := codex_rollouts.session_meta(p)).get("parent")}
     by_root: dict[str, list[str]] = {}
     for path in paths:
         tid, seen = ids[path], set()
@@ -115,7 +87,7 @@ def foreign_link(path: str, folder: str) -> bool:
     return real != os.path.realpath(folder)
 
 
-def _signature(session_path: str, subagents: list[str]) -> str:
+def _signature(session_path: str, subagents: list[str], *, include_ctime=False) -> str:
     """Signature of a session together with its subagents: a change to any file refreshes the parent."""
     parts = []
     for path in [session_path, *subagents]:
@@ -123,7 +95,8 @@ def _signature(session_path: str, subagents: list[str]) -> str:
             st = os.stat(path)
         except FileNotFoundError:
             continue
-        parts.append(f"{os.path.basename(path)}:{st.st_ino}:{st.st_size}:{st.st_mtime_ns}")
+        changed = f":{st.st_ctime_ns}" if include_ctime else ""
+        parts.append(f"{os.path.basename(path)}:{st.st_ino}:{st.st_size}:{st.st_mtime_ns}{changed}")
     return "|".join(parts)
 
 

@@ -1,7 +1,7 @@
 // Active: a live Claude Code session and a live Codex thread (stand-in processes from the global setup).
 import fs from "node:fs";
 
-import { expect, ids, run, test } from "./fixtures.mjs";
+import { expect, ids, run, test, pickCardView } from "./fixtures.mjs";
 import { PHRASES } from "./corpus.mjs";
 
 const card = (page, id) => page.locator(`#active-grid .acard[data-id="${id}"]`);
@@ -25,9 +25,9 @@ test("both live sessions show by default with badges and statuses", async ({ pag
   await expect(codex.locator(".tags .agent-badge.codex")).toHaveText("Codex");
   await expect(claude.locator(".tags .agent-badge.claude")).toHaveText("Claude Code");
   // Codex: a turn started and not finished is work in progress; Claude Code: idle, waiting for you.
-  await expect(codex.locator(".head .state")).toHaveText(t.working);
+  await expect(codex.locator(".info .state")).toHaveText(t.working);
   await expect(codex).toHaveClass(/\bbusy\b/);
-  await expect(claude.locator(".head .state")).toHaveText(t.idle);
+  await expect(claude.locator(".info .state")).toHaveText(t.idle);
   await expect(codex.locator(".head .t")).toHaveText("Reconcile the ledger with the invoices");
   await expect(claude.locator(".head .t")).toHaveText("Make the login retry back off");
   await expect(codex.locator(".tags")).toContainText("billing-api");
@@ -89,8 +89,9 @@ test("the layout picker previews and chooses a rectangle from the keyboard", asy
     headers.length > 0 && headers.every(header => {
       const { left, right } = header.getBoundingClientRect();
       const title = header.querySelector(".t");
+      const controls = [...header.querySelectorAll("button")].filter(control => control.checkVisibility());
       return title.getBoundingClientRect().width >= 48
-        && Array.from(header.querySelectorAll("button, select")).every(control => {
+        && controls.length > 0 && controls.every(control => {
           const bounds = control.getBoundingClientRect();
           return bounds.width > 0 && bounds.left >= left - 1 && bounds.right <= right + 1;
         });
@@ -141,10 +142,10 @@ test("a pending Codex card keeps its slot when the first rollout appears", async
     ? ["Новая сессия Codex", "ждёт первого сообщения", "Перейти", "Закрыть", "Терминал"]
     : ["New Codex session", "waiting for the first message", "Go", "Close", "Terminal"];
   await expect(card.locator(".head .t")).toHaveText(title);
-  await expect(card.locator(".head .state")).toHaveText(status);
+  await expect(card.locator(".info .state")).toHaveText(status);
   await expect(card.locator(".d")).toHaveText(pending.cwd);
   await expect(card.locator(".agent-badge")).toHaveText("Codex");
-  await expect(card.locator(".when")).toHaveText(/\d{2}:\d{2}/);
+  await expect(card.locator(".info")).toContainText(/\d{2}:\d{2}/);
   await expect(card.getByRole("button")).toHaveText([go, close]);
   await card.getByRole("button", { name: go, exact: true }).click();
   await expect.poll(() => page.evaluate(() => window.actions.map(a => [a.type, a.ptyPid]))).toEqual([["focus-tab", 7001]]);
@@ -209,20 +210,72 @@ test("the Agent filter hides and shows each agent's cards", async ({ page, open 
   await expect(card(page, ids.codexLive)).toBeVisible();
 });
 
+test("the card header gives the title more room, with status first in the metadata", async ({ page, open }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await open("active");
+  const claude = card(page, ids.claudeLive);
+  const title = claude.locator(".head .t");
+  const widths = {};
+  for (const mode of ["compact", "full"]) {
+    await page.locator(`#active-filters .mode button[data-mode=${mode}]`).click();
+    await expect(title).toBeVisible();
+    widths[mode] = await claude.evaluate((node, width) => {
+      node.style.setProperty("width", `${width}px`);
+      return node.querySelector(".head .t").getBoundingClientRect().width;
+    }, 460);
+    await expect(title).toHaveAttribute("title", await title.textContent());
+    await expect(claude.locator(".info > .state:first-child .dot")).toBeVisible();
+    await expect(claude.locator(".head .state")).toHaveCount(0);
+  }
+  // At this width, 2067baa allocated at most 366 px to the title in both languages.
+  expect(widths.compact).toBeGreaterThan(370);
+  expect(widths.full).toBeGreaterThan(370);
+  await title.click();
+  await expect(page.locator("#view-search")).toHaveAttribute("aria-selected", "true");
+});
+
+test("the view menu opens by mouse and keyboard and marks the current view", async ({ page, open, t }) => {
+  await open("active");
+  const codex = card(page, ids.codexLive);
+  const trigger = codex.locator(".card-view-picker");
+  const menu = page.getByRole("menu", { name: t.viewMode });
+  const mode = name => menu.getByRole("menuitemradio", { name, exact: true });
+  await expect(trigger).toHaveAccessibleName(new RegExp(t.turns));
+  await trigger.click();
+  await expect(mode(t.turns)).toHaveAttribute("aria-checked", "true");
+  await expect(mode(t.terminal)).toBeDisabled();
+  await mode(t.steps).click();
+  await expect(codex.locator(".card-view-body")).toHaveAccessibleName(t.steps);
+  await expect(trigger).toHaveAccessibleName(new RegExp(t.steps));
+  await trigger.press("Enter");
+  await expect(mode(t.steps)).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(mode(t.files)).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(menu).toBeHidden();
+  await expect(trigger).toBeFocused();
+  await trigger.press("Space");
+  await page.keyboard.press("ArrowUp");
+  await expect(mode(t.turns)).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(trigger).toHaveAccessibleName(new RegExp(t.turns));
+});
+
 test("detailed cards default to the conversation of their own agent", async ({ page, open }) => {
   await open("active");
   await page.locator("#active-filters .mode button[data-mode=full]").click();
   const codex = card(page, ids.codexLive);
   const claude = card(page, ids.claudeLive);
-  await expect(claude.locator(".card-view-picker")).toHaveValue("turns");
-  await expect(codex.locator(".card-view-picker")).toHaveValue("turns");
+  await expect(claude.locator(".card-view-picker")).toHaveAttribute("data-view", "turns");
+  await expect(codex.locator(".card-view-picker")).toHaveAttribute("data-view", "turns");
   await expect(claude.locator(".card-view-body")).toContainText("Does it cap the delay?");
   await expect(claude.locator(".fturn").last()).toContainText(PHRASES.claudeLiveReply);
   await expect(claude.locator(".fturn .fwho").last()).toContainText("Claude");
   await expect(codex.locator(".card-view-body")).toContainText(PHRASES.codexLiveReply);
   await expect(codex.locator(".fturn").first()).toContainText("Codex");
   await expect(codex.locator(".ftxt.mine").last()).toContainText("Run the full test suite");
-  await expect(codex.locator("option[value=terminal]")).toBeDisabled();
+  await codex.locator(".card-view-picker").click();
+  await expect(codex.locator('.card-view-menu button[data-view="terminal"]')).toBeDisabled();
 });
 
 test("the detailed conversation shows complete long prompts and replies", async ({ page, open }) => {
@@ -255,27 +308,28 @@ test("the card switches between conversation, steps and files independently", as
   const claude = card(page, ids.claudeLive);
   const picker = codex.locator(".card-view-picker");
   const body = codex.locator(".card-view-body");
-  await expect(picker.locator("option")).toHaveCount(4);
+  await expect(codex.locator(".card-view-menu button")).toHaveCount(4);
   await expect(body.locator(".fturn")).toHaveCount(2);
   await expect(body.locator(".fturn").first()).toContainText(PHRASES.codexLiveReply);
-  await picker.selectOption("steps");
+  await pickCardView(codex, "steps");
   await expect(body.locator(".fev.bash", { hasText: "python3 scripts/reconcile.py" })).not.toHaveClass(/\berr\b/);
   const failed = body.locator(".fev.err", { hasText: "pytest -q" });
   await expect(failed.locator(".ferr")).toContainText(t.exit);
   await expect(failed.locator(".ferr")).toContainText("FAILED tests/test_ledger.py::test_total");
   await expect(body.locator(".fev.edit")).toContainText("reconcile.py");
-  await picker.selectOption("files");
+  await pickCardView(codex, "files");
   await expect(body.locator(".ffile")).toHaveCount(1);
   await expect(body.locator(".ffile .fn")).toContainText("reconcile.py");
   await expect(body.locator(".ffile .fdelta")).toHaveText("+2 −1");
-  await expect(claude.locator(".card-view-picker")).toHaveValue("turns");
+  await expect(claude.locator(".card-view-picker")).toHaveAttribute("data-view", "turns");
   await expect(claude.locator(".card-view-body")).toContainText(PHRASES.claudeLiveReply);
   await page.locator("#active-filters .mode button[data-mode=compact]").click();
-  await expect(picker).toHaveCount(0);
-  await page.locator("#active-filters .mode button[data-mode=full]").click();
-  await expect(picker).toHaveValue("files");
+  await expect(picker).toHaveAttribute("data-view", "files");
   await expect(body.locator(".ffile")).toHaveCount(1);
-  await picker.selectOption("turns");
+  await page.locator("#active-filters .mode button[data-mode=full]").click();
+  await expect(picker).toHaveAttribute("data-view", "files");
+  await expect(body.locator(".ffile")).toHaveCount(1);
+  await pickCardView(codex, "turns");
   await expect(body.locator(".fturn")).toHaveCount(2);
   await expect(page.locator("#feed")).toHaveCount(0);
 });
@@ -514,7 +568,7 @@ for (const mode of ["compact", "full"]) {
     // Not a tag: the tab's server icon before the title and a short word by the status.
     await expect(claude.locator(".head .bgico svg")).toBeVisible();
     await expect(claude.locator(".head .bgico")).toHaveAttribute("title", /ab12cd34/);
-    await expect(claude.locator(".head .state .bgword")).toHaveText(ru ? " · фоновая" : " · background");
+    await expect(claude.locator(".info .state .bgword")).toHaveText(ru ? " · фоновая" : " · background");
     await expect(claude.locator(".tags .bgjob")).toHaveCount(0);
     const order = await claude.locator(".head").evaluate(h => [...h.children].map(c => c.className.split(" ")[0]));
     expect(order.indexOf("bgico")).toBe(order.indexOf("t") - 1);       // right before the title
@@ -561,7 +615,7 @@ test("the reply field and its draft stay on the card when switching views", asyn
   await area.fill("check the card field");
   await claude.locator('input[type="file"]').setInputFiles({ name: "shot.png", mimeType: "image/png",
     buffer: Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg==", "base64") });
-  await claude.locator(".card-view-picker").selectOption("files");
+  await pickCardView(claude, "files");
   await expect(area).toHaveValue("check the card field");
   await expect(claude.locator(".thumbs img")).toHaveCount(1);
   await area.press("Enter");
@@ -633,18 +687,28 @@ test("the live conversation refresh fetches from the last turn only and merges w
   expect(asked.some(q => q.since)).toBe(false);
 });
 
-test("a reset answer reloads the latest page, so older pages can still be loaded", async ({ page, open }) => {
+test("unknown conversation anchors preserve already loaded pages", async ({ page, open }) => {
   const mk = n => ({ id: `t${n}`, prompt: `Prompt ${n}`, steps: [], reply: "Done", reply_len: 4,
     prompt_at: `2026-11-01T00:${String(n).padStart(2, "0")}:00Z`, reply_at: "2026-11-01T01:00:00Z" });
-  const turns = Array.from({ length: 30 }, (_, n) => mk(n));
+  const turns = Array.from({ length: 45 }, (_, n) => mk(n));
   const asked = [];
-  let tick = 0, lost = false;
+  let tick = 0, lost = false, loseAnchor = false;
   await page.route(`**/api/active/feed/${ids.claudeLive}?*`, route => {
     const q = new URL(route.request().url()).searchParams;
     asked.push({ ...Object.fromEntries(q), at: Date.now() });
     // The anchor fell out of the server's read window: it answers reset, with nothing to show.
-    if (q.has("since_id")) { lost = true; return route.fulfill({ json: { turns: [], has_more: true, reset: true } }); }
-    if (q.has("before_id")) return route.fulfill({ json: { turns: turns.slice(0, 10), has_more: false } });
+    if (q.has("since_id")) {
+      lost = loseAnchor;
+      return route.fulfill({ json: loseAnchor ? { turns: [], has_more: true, reset: true }
+        : { turns: turns.slice(-1), has_more: null } });
+    }
+    if (q.get("before_id") === "t25") {
+      return route.fulfill({ json: { turns: turns.slice(5, 25), has_more: true } });
+    }
+    if (q.get("before_id") === "t5") {
+      return route.fulfill({ json: { turns: q.get("before") === turns[5].prompt_at ? turns.slice(0, 5) : [],
+        has_more: false } });
+    }
     return route.fulfill({ json: { turns: turns.slice(-20), has_more: true } });
   });
   await page.route(/\/api\/active(\?|$)/, async route => {
@@ -657,14 +721,20 @@ test("a reset answer reloads the latest page, so older pages can still be loaded
   await page.locator("#active-filters .mode button[data-mode=full]").click();
   const body = card(page, ids.claudeLive).locator(".card-view-body");
   await expect(body.locator(".fturn")).toHaveCount(20);
+  await body.evaluate(el => { el.scrollTop = 0; });
+  await expect(body.locator(".fturn")).toHaveCount(40);
+  loseAnchor = true;
   await expect.poll(() => lost, { timeout: 20000 }).toBe(true);
   await expect.poll(() => asked.filter(q => q.since_id).length > 0 && asked.at(-1).since_id === undefined).toBe(true);
   const reset = asked.findIndex(q => q.since_id);
   const reload = asked.findIndex((q, i) => i > reset && !q.since_id && !q.before_id);
   expect(reload).toBeGreaterThan(reset);
   expect(asked[reload].at - asked[reset].at).toBeLessThan(1500);   // at once, not on a later poll
-  await expect(body.locator(".fturn")).toHaveCount(20);            // not emptied by the reset
+  await expect(body.locator(".fturn")).toHaveCount(40);
+  await expect(body.locator(".fturn").first()).toContainText("Prompt 5");
   await body.evaluate(el => { el.scrollTop = 0; });
-  await expect(body.locator(".fturn")).toHaveCount(30);            // the earlier page loads from the first turn shown
-  expect(asked.some(q => q.before_id === "t10")).toBe(true);
+  await expect(body.locator(".fturn")).toHaveCount(45);
+  await expect(body.locator(".fturn").first()).toContainText("Prompt 0");
+  expect(asked.some(q => q.before_id === "t5" && q.before === turns[5].prompt_at)).toBe(true);
+  await page.unrouteAll({ behavior: "ignoreErrors" });
 });

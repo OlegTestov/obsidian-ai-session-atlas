@@ -1,5 +1,5 @@
 import path from "node:path";
-import { api, expect, ids, run, test } from "./fixtures.mjs";
+import { api, expect, ids, run, test, pickCardView } from "./fixtures.mjs";
 /* global state -- the catalog page owns this binding */
 
 const copy = {
@@ -190,7 +190,7 @@ test("workspaces keep numbered slots through status changes, mode switches and r
   await expect(card(page,ids.claudeLive)).toHaveAttribute("data-workspace-slot","0");
   await page.locator('[data-mode="full"]').click();
   const picker = card(page,ids.claudeLive).locator(".card-view-picker");
-  await picker.selectOption("files");
+  await pickCardView(card(page, ids.claudeLive), "files");
   for (const row of snapshot.sessions) row.activity = row.status = row.agent === "codex" ? "idle" : "busy";
   await page.evaluate(() => window.loadActive());
   await expect(card(page,ids.claudeLive)).toHaveClass(/\bbusy\b/);
@@ -199,7 +199,7 @@ test("workspaces keep numbered slots through status changes, mode switches and r
   await boardButton(page,words.all).click();
   await expect(page.locator("#active-grid .asec .acard")).toHaveCount(2);
   await boardButton(page,"Fixed slots").click();
-  await expect(picker).toHaveValue("files");
+  await expect(picker).toHaveAttribute("data-view", "files");
   await page.reload();
   await expect(boardButton(page,"Fixed slots")).toHaveAttribute("aria-current","page");
   await expect(card(page,ids.codexLive)).toHaveAttribute("data-workspace-slot","24");

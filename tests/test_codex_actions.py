@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from atlas import active, codex_procs, db, delete, index, messages, relocate
+from atlas import active, codex_procs, codex_rollouts, db, delete, index, messages, relocate
 from tests.conftest import cx_agent, cx_meta, cx_user, write_codex_state
 
 TID = "019e0000-dddd-7000-8000-000000000004"
@@ -35,7 +35,7 @@ def lsof(open_files):
 @pytest.fixture(autouse=True)
 def _fresh():
     codex_procs._map_cache.clear()
-    codex_procs._find_cache.clear()
+    codex_rollouts._inventory_cache.clear()
     yield
 
 
@@ -98,6 +98,16 @@ def test_running_thread_is_refused(codex, monkeypatch):
     monkeypatch.setattr(active, "process_table", lambda: {77: (1, "x", CODEX)})
     monkeypatch.setattr(codex_procs, "_run", lsof({77: [codex["live"]]}))
     assert delete.footprint(codex["conn"], TID)["running"]
+    with pytest.raises(delete.DeleteError, match="running"):
+        delete.delete_session(codex["conn"], TID)
+    assert os.path.exists(codex["live"])
+
+
+@pytest.mark.parametrize("command", [f"{CODEX} resume {OTHER}", f"{CODEX} app-server"])
+def test_delete_refuses_any_held_rollout_regardless_of_the_selected_thread(codex, monkeypatch, command):
+    processes = {77: (1, "x", command)}
+    monkeypatch.setattr(active, "process_table", lambda: processes)
+    monkeypatch.setattr(codex_procs, "_run", lsof({77: [codex["other"], codex["live"]]}))
     with pytest.raises(delete.DeleteError, match="running"):
         delete.delete_session(codex["conn"], TID)
     assert os.path.exists(codex["live"])
@@ -190,8 +200,26 @@ def test_relocate_guards_for_codex(atlas_env, write_rollout, child, tmp_path, ca
     assert child.poll() is None, "a process that is not this thread outside Obsidian keeps running"
 
 
-def test_relocate_route_answers_codex_resume(atlas_env, live_server, monkeypatch, tmp_path):
+def test_move_refuses_while_another_process_holds_the_thread(atlas_env, write_rollout, monkeypatch):
+    path = write_rollout([cx_meta(TID), cx_user("move")], thread_id=TID)
+    other = write_rollout([cx_meta(OTHER), cx_user("other")], thread_id=OTHER)
+    processes = {77: (1, "x", CODEX), 78: (1, "y", f"{CODEX} resume {OTHER}")}
+    signalled = []
+    monkeypatch.setattr(relocate.os, "kill", lambda pid, sig: signalled.append((pid, sig)))
+    with pytest.raises(relocate.RelocateError):
+        relocate.stop_for_move(TID, 77, agent="codex", table_fn=lambda: processes, wait=0,
+                               run=lsof({77: [path], 78: [other, path]}))
+    assert not signalled
+
+
+@pytest.mark.parametrize("indexed", [False, True])
+def test_relocate_route_answers_codex_resume(atlas_env, live_server, monkeypatch, tmp_path, write_rollout, indexed):
     from atlas import server
+    if indexed:
+        base = tmp_path / "base"
+        base.mkdir()
+        write_rollout([cx_meta(TID, cwd=str(base)), cx_user("started here")], thread_id=TID)
+        index.index_all(_conn(atlas_env))
     monkeypatch.setattr(server.relocate, "stop_for_move",
                         lambda sid, pid, agent=None: {"stopped": True, "host_app": "iTerm", "waited": 0.25,
                                           "agent": "codex", "cwd": str(tmp_path)})

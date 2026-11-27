@@ -7,6 +7,20 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [2.21.1] - 2026-11-27
+
+### Changed
+
+- Active cards put the status next to the session details and use an icon menu to switch views, leaving more room for the title. Hover over a title to read it in full.
+- The restart banner offers the main Codex session and explains when a session cannot be resumed.
+
+### Fixed
+
+- Codex threads that are rewound keep their Active card and terminal tab. Open conversations refresh to the selected history, and search can still find reverted turns.
+- When Codex switches threads in a tab, Active directs terminal input to the current thread.
+- Sensitive locations in reverted Codex history and subagent rollouts still protect the whole session.
+- Deleting a workspace that another window already removed preserves the other workspaces.
+
 ## [2.21.0] - 2026-11-26
 
 ### Added

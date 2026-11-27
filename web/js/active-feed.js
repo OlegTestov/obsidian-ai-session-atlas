@@ -1,5 +1,5 @@
 // The paged conversation, steps and files inside a detailed Active card.
-/* exported showConversationSend, removeConversationSend -- used by other page scripts */
+/* exported showConversationSend, removeConversationSend, cardViewMenu -- used by other page scripts */
 const FEED_TURNS = 20;
 const cardViews = new Map();
 const cardPanels = new Map();
@@ -59,35 +59,99 @@ function cardViewMode(sid) {
   return cardViews.get(sid) || "turns";
 }
 
-function cardViewPicker(s, pid) {
-  const select = el("select", "card-view-picker");
-  select.setAttribute("aria-label", i18n("feed.mode"));
-  select.title = i18n("feed.mode");
-  for (const value of ["turns", "terminal", "steps", "files"]) {
-    if (s.agent === "opencode" && value === "terminal" && !hostInlineTabs.has(pid)) continue;
-    const option = el("option", null, i18n(`feed.view.${value}`));
-    option.value = value;
-    option.disabled = value === "terminal" && !hostInlineTabs.has(pid);
-    if (option.disabled) option.title = i18n("feed.terminalUnavailable");
-    select.appendChild(option);
+const VIEW_ICONS = {
+  turns: [["path", { d: "M20 4H4a2 2 0 0 0-2 2v14l4-4h14a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2Z" }],
+    ["path", { d: "M7 9h10M7 12h6" }]],
+  terminal: [["rect", { x: 2, y: 4, width: 20, height: 16, rx: 2 }],
+    ["path", { d: "m6 9 3 3-3 3m6 0h5" }]],
+  steps: [["path", { d: "M9 5h12M9 12h12M9 19h12M3 5h1M3 12h1M3 19h1" }]],
+  files: [["path", { d: "M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" }]],
+};
+
+function cardViewMenu(s, pid) {
+  const current = visibleCardView(s, pid);
+  const label = i18n("feed.currentMode", { mode: i18n(`feed.view.${current}`) });
+  const trigger = iconify(el("button", "card-view-picker"), VIEW_ICONS[current], label);
+  const menu = el("div", "card-view-menu");
+  menu.id = `card-view-menu-${s.session_id}`;
+  menu.setAttribute("popover", "auto");
+  menu.setAttribute("role", "menu");
+  menu.setAttribute("aria-label", i18n("feed.mode"));
+  trigger.type = "button";
+  trigger.title = label;
+  trigger.dataset.view = current;
+  trigger.setAttribute("aria-haspopup", "menu");
+  trigger.setAttribute("aria-controls", menu.id);
+  trigger.setAttribute("aria-expanded", "false");
+  for (const [view, icon] of Object.entries(VIEW_ICONS)) {
+    const unavailable = view === "terminal" && !hostInlineTabs.has(pid);
+    if (unavailable && s.agent === "opencode") continue;
+    const item = el("button");
+    item.type = "button";
+    item.tabIndex = -1;
+    item.disabled = unavailable;
+    item.dataset.view = view;
+    item.setAttribute("role", "menuitemradio");
+    item.setAttribute("aria-checked", String(view === current));
+    if (unavailable) item.title = i18n("feed.terminalUnavailable");
+    item.append(svgIcon(icon), el("span", null, i18n(`feed.view.${view}`)));
+    if (view === current) {
+      const check = el("span", "view-check", "✓");
+      check.setAttribute("aria-hidden", "true");
+      item.appendChild(check);
+    }
+    item.addEventListener("click", () => {
+      menu.hidePopover();
+      trigger.focus({ preventScroll: true });
+      cardViews.set(s.session_id, view);
+      renderActive(null, true);
+      if (view === "terminal") cardPanels.get(s.session_id)?.focus();
+      seeCard(s.session_id);
+    });
+    menu.appendChild(item);
   }
-  select.value = visibleCardView(s, pid);
-  select.addEventListener("change", () => {
-    if (select.value === "turns") cardViews.delete(s.session_id);
-    else cardViews.set(s.session_id, select.value);
-    const card = select.closest(".acard");
-    const placeholder = el("div", "card-view-slot");
-    card.querySelector(".card-view-body").replaceWith(placeholder);
-    attachCardPanel(card, s, pid);
-    if (select.value === "terminal") cardPanels.get(s.session_id)?.focus();
-    seeCard(s.session_id);
+  const enabled = [...menu.querySelectorAll("button:enabled")];
+  const open = (item = enabled.find(button => button.dataset.view === current) || enabled[0]) => {
+    menu.showPopover();
+    placePop(menu, trigger);
+    const rect = trigger.getBoundingClientRect();
+    if (rect.bottom + 4 + menu.offsetHeight > window.innerHeight) {
+      menu.style.top = Math.max(4, rect.top - menu.offsetHeight - 4) + "px";
+    }
+    item.focus({ preventScroll: true });
+  };
+  menu.addEventListener("beforetoggle", e => trigger.setAttribute("aria-expanded", String(e.newState === "open")));
+  trigger.addEventListener("click", () => {
+    if (menu.matches(":popover-open")) menu.hidePopover();
+    else open();
   });
-  return select;
+  trigger.addEventListener("keydown", e => {
+    if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+    e.preventDefault();
+    open(e.key === "ArrowDown" ? enabled[0] : enabled.at(-1));
+  });
+  menu.addEventListener("keydown", e => {
+    const index = enabled.indexOf(e.target);
+    if (e.key === "Escape") {
+      e.preventDefault();
+      menu.hidePopover();
+      trigger.focus({ preventScroll: true });
+      return;
+    }
+    const next = { ArrowDown: index + 1, ArrowUp: index - 1, Home: 0, End: enabled.length - 1 }[e.key];
+    if (next === undefined) return;
+    e.preventDefault();
+    enabled[(next + enabled.length) % enabled.length].focus();
+  });
+  menu.addEventListener("focusout", e => {
+    if (e.relatedTarget && e.relatedTarget !== trigger && !menu.contains(e.relatedTarget)) menu.hidePopover();
+  });
+  return [trigger, menu];
 }
 
 function visibleCardView(s, pid) {
   const view = cardViewMode(s.session_id);
-  return s.agent === "opencode" && view === "terminal" && !hostInlineTabs.has(pid) ? "turns" : view;
+  return view === "terminal" && !hostInlineTabs.has(pid) ? "turns" : view;
 }
 
 function attachCardPanel(card, session, pid) {
@@ -151,12 +215,14 @@ function conversationPanel(session, view) {
   body.setAttribute("aria-label", i18n(`feed.view.${view}`));
   const sid = session.session_id;
   const paged = view !== "files";
-  let older = [], live = [], hasMore = false, loadingOlder = false, epoch = 0;
+  let older = [], live = [], hasMore = false, loadingOlder = false;
   let signature = "", files = {}, filter = "all";
   let refreshing = false, drawn = false, disposed = false, shown = false;
   let fetched = null, fetchedAt = 0;
+  let history = "";
 
   const url = `/api/active/feed/${encodeURIComponent(sid)}?turns=${FEED_TURNS}&view=${view}`;
+  const historyQuery = () => history ? `&history=${encodeURIComponent(history)}` : "";
   const watch = new IntersectionObserver(entries => {
     shown = entries[0].isIntersecting;
     if (shown) refresh();
@@ -217,8 +283,14 @@ function conversationPanel(session, view) {
     else body.scrollTop = atEnd ? body.scrollHeight : top;
   }
 
+  function replaceHistory(data, turns) {
+    older = [];
+    live = turns;
+    hasMore = !!data.has_more;
+  }
+
   async function refresh() {
-    if (disposed || refreshing) return;
+    if (disposed || refreshing || loadingOlder) return;
     const current = panel.session;
     const activity = current.activity || current.status;
     const revision = JSON.stringify([activity, current.prompt_at, current.reply_at, current.last_activity_at,
@@ -230,23 +302,27 @@ function conversationPanel(session, view) {
     try {
       // Only from the last shown turn on (inclusive: it may still be growing); older ones are kept.
       const last = paged ? live.at(-1)?.id : null;
-      let data = await api(url + (last ? `&since_id=${encodeURIComponent(last)}` : ""));
-      // The anchor is gone (compaction, rewrite, too far behind): load the latest page as on first open.
+      let data = await api(url + historyQuery() + (last ? `&since_id=${encodeURIComponent(last)}` : ""));
+      // A missing cursor can still belong to the history already on screen.
       const reset = !!(last && data.reset);
-      if (reset) data = await api(url);
+      if (reset && !data.history_changed) data = await api(url + historyQuery());
       if (disposed) return;
       fetched = revision;
       fetchedAt = Date.now();
       if (paged) {
+        history = data.history || history;
         const turns = data.turns || [];
         if (view === "turns") reconcileConversationSends(sid, turns);
-        if (!last || reset) {
-          if (live.length) { older = []; epoch++; }
-          live = turns;
-          hasMore = !!data.has_more;
+        if (!last || data.history_changed) replaceHistory(data, turns);
+        else if (reset) {
+          const latest = new Map(turns.map(turn => [turn.id, turn]));
+          const loaded = new Set(older.concat(live).map(turn => turn.id));
+          const update = turn => turn.id && latest.get(turn.id) || turn;
+          older = older.map(update);
+          live = live.map(update).concat(turns.filter(turn => !turn.id || !loaded.has(turn.id)));
         } else if (turns.length) live = live.slice(0, -1).concat(turns);
       } else files = data;
-      draw();
+      draw(false, data.history_changed);
     } catch (error) {
       if (!disposed && !drawn) body.replaceChildren(el("p", "empty", i18n("feed.error", { msg: error.message })));
     } finally {
@@ -264,22 +340,31 @@ function conversationPanel(session, view) {
 
   async function loadOlder() {
     const first = older[0] || live[0];
-    const before = first?.id ? `&before_id=${encodeURIComponent(first.id)}`
-      : first?.prompt_at ? `&before=${encodeURIComponent(first.prompt_at)}` : "";
-    if (disposed || !paged || !hasMore || loadingOlder || !before) return;
+    const before = (first?.id ? `&before_id=${encodeURIComponent(first.id)}` : "")
+      + (first?.prompt_at ? `&before=${encodeURIComponent(first.prompt_at)}` : "");
+    if (disposed || !paged || !hasMore || loadingOlder || refreshing || !before) return;
     loadingOlder = true;
-    const mine = epoch;
+    let changed = false;
     draw(true);
     try {
-      const data = await api(url + before);
-      if (disposed || mine !== epoch) return;
-      const turns = data.turns || [];
+      const data = await api(url + historyQuery() + before);
+      if (disposed) return;
+      history = data.history || history;
+      changed = !!data.history_changed;
+      if (changed) {
+        const turns = data.turns || [];
+        if (view === "turns") reconcileConversationSends(sid, turns);
+        replaceHistory(data, turns);
+        return;
+      }
+      const loaded = new Set(older.concat(live).map(turn => turn.id));
+      const turns = (data.turns || []).filter(turn => !turn.id || !loaded.has(turn.id));
       older = turns.concat(older);
       hasMore = !!data.has_more && turns.length > 0;
     } catch { /* The earlier-page button remains available for a retry. */ }
     finally {
       loadingOlder = false;
-      if (!disposed) draw(true);
+      if (!disposed) draw(!changed, changed);
     }
   }
 

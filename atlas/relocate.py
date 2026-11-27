@@ -65,15 +65,6 @@ def _gone(pid: int, proc_start: str | None, table_fn) -> bool:
         or _command(table, pid).strip() == "<defunct>"
 
 
-def _codex_owner(session_id: str, pid: int, table: dict, run) -> dict | None:
-    """An interactive `codex` holding this thread's rollout open right now: {start, cwd} or None."""
-    if not codex_procs.owner(pid, session_id, table, run=run):
-        return None
-    path = codex_procs.find_rollout(session_id)
-    cwd = codex_procs.session_meta(path).get("cwd") if path else None
-    return {"start": table[pid][1], "cwd": cwd if cwd and os.path.isdir(cwd) else None}
-
-
 def stop_for_move(session_id: str, pid, *, sessions_dir: str | None = None, table_fn=None,
                   wait: float = EXIT_WAIT_SECONDS, sleep=time.sleep, run=None,
                   agent: str | None = None) -> dict:
@@ -89,6 +80,7 @@ def stop_for_move(session_id: str, pid, *, sessions_dir: str | None = None, tabl
     data = _state(pid, sessions_dir) if agent in (None, agents.CLAUDE) else None
     table = table_fn()
     extra: dict = {}
+    check_codex = False
     if data:
         if data.get("sessionId") != session_id or not active.is_interactive(data):
             raise RelocateError(msg("relocate.foreign_pid"))
@@ -100,14 +92,21 @@ def stop_for_move(session_id: str, pid, *, sessions_dir: str | None = None, tabl
     elif agent in (None, agents.CLAUDE) and _attached(session_id, pid, table, sessions_dir):
         start = table[pid][1]        # an attach client: stopping it leaves the job running
     else:
-        codex = _codex_owner(session_id, pid, table, run) if agent in (None, agents.CODEX) else None
-        if codex is None:
+        if agent not in (None, agents.CODEX):
             raise RelocateError(msg("relocate.foreign_pid"))
-        start = codex["start"]
-        extra = {"agent": "codex", "cwd": codex["cwd"]}
+        start = table[pid][1]
+        check_codex = True
     app = host_app(pid, table)
     if app == "Obsidian":
         raise RelocateError(msg("relocate.in_obsidian"))
+    if check_codex:
+        path, other_holder = codex_procs.move_owner(pid, session_id, table, run=run)
+        if not path:
+            raise RelocateError(msg("relocate.foreign_pid"))
+        if other_holder:
+            raise RelocateError(msg("delete.running"))
+        cwd = codex_procs.session_meta(path).get("cwd")
+        extra = {"agent": "codex", "cwd": cwd if cwd and os.path.isdir(cwd) else None}
     os.kill(pid, signal.SIGTERM)
     waited = 0.0
     while waited < wait:

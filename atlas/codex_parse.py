@@ -12,14 +12,16 @@ import json
 import os
 import re
 import sqlite3
+from contextlib import contextmanager
 from urllib.parse import quote
 
-from . import activity, agents, codex_skills
-from .parse import SessionFacts, _add_seen, _harvest_all, _harvest_tickets, _turn, iter_complete_lines
+from . import activity, agents, codex_skills, resolve
+from .parse import SessionFacts, _add_seen, _harvest_all, _harvest_tickets, _turn
 
 AGENT = agents.CODEX
-PARSE_VERSION = 2     # 2: skills by Codex's own names, once a turn; a forked subagent's copied turns skipped
-ROLLOUT_ID = re.compile(rf"^rollout-.*-({agents.id_pattern(AGENT)[1:-1]})\.jsonl$")
+PARSE_VERSION = 5     # 5: all rollout locations participate in sensitivity
+_UUID = agents.id_pattern(AGENT)[1:-1]
+ROLLOUT_ID = re.compile(rf"^rollout-.*?-({_UUID})(?:_({_UUID}))?\.jsonl$")
 PATCH_FILE = re.compile(r"^\*\*\* (?:(?:Add|Update|Delete) File|Move to): *(.+?)\s*$", re.M)
 # `exec` runs model-written JavaScript; the shell command is the `cmd:` string inside it.
 JS_CMD = re.compile(r"""\bcmd\s*:\s*("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`[^`]*`)""")
@@ -31,7 +33,7 @@ SKILL_MENTION = re.compile(rb'"role":\s*"user",\s*"content":\s*\[\{"type":\s*"in
 JS_SPAWN = re.compile(r"\bspawn_agent\(\s*\{(.{0,2000}?)\}\s*\)", re.S)
 JS_AGENT_TYPE = re.compile(r"""\bagent_type\s*:\s*["'`]([A-Za-z0-9_.-]{1,60})["'`]""")
 TITLE_LIMIT = 200
-COPIED_EVENTS = ("user_message", "agent_message", "item_completed", "patch_apply_end")
+COPIED_EVENTS = ("user_message", "agent_message", "item_completed", "patch_apply_end", "token_count")
 # Records never indexed, recognised from the line head without decoding it: message items carry
 # base64 images and outputs carry raw tool output, up to ~20 MB a line. Anything else is decoded.
 _SKIP_HEAD = re.compile(
@@ -43,9 +45,15 @@ _SKIP_HEAD = re.compile(
 _HEAD_TS = re.compile(rb'"timestamp":\s*"([0-9T:.Z+-]{10,40})"')
 
 
+def rollout_ids(path: str) -> tuple[str, str] | None:
+    """(Canonical thread ID, physical rollout ID) from a Codex filename."""
+    match = ROLLOUT_ID.fullmatch(os.path.basename(path))
+    return (match[1], match[2] or match[1]) if match else None
+
+
 def session_id_of(path: str) -> str | None:
-    m = ROLLOUT_ID.match(os.path.basename(path))
-    return m.group(1) if m else None
+    ids = rollout_ids(path)
+    return ids[0] if ids else None
 
 
 def _js_string(literal: str) -> str:
@@ -94,9 +102,12 @@ def _diff_lines(change: dict) -> tuple[int, int]:
 class _Rollout:
     """Per-file reading state that does not belong in SessionFacts."""
 
-    def __init__(self, facts: SessionFacts) -> None:
+    def __init__(self, facts: SessionFacts, recent_locations: bool = False) -> None:
         self.facts = facts
+        self.recent_locations = recent_locations
         self.meta_seen = False
+        self.cwd = None
+        self.locations = set()
         # A subagent spawned with its parent's context starts with a copy of the parent's turn: its
         # calls, commands, skills and messages were already counted in the parent. Turns of the
         # threads read before this one (the root, then its subagents) are skipped.
@@ -109,6 +120,28 @@ class _Rollout:
         # A prompt or reply may arrive twice: as an event and as a completed item. Pairs across
         # the two channels collapse; repeats inside one channel are real (a second "continue").
         self.pending = {"prompt": {}, "answer": {}}
+
+    def location(self, places: list, value) -> None:
+        if self.recent_locations and value in places:
+            places.remove(value)
+        _add_seen(places, value)
+
+    def set_cwd(self, value, *, copied=False) -> None:
+        if isinstance(value, str) and value:
+            self.cwd = value
+            self.sensitivity(value)
+            if not copied:
+                self.location(self.facts.cwds, value)
+
+    def sensitivity(self, path: str) -> None:
+        if not self.facts.sensitive_location and path not in self.locations:
+            self.locations.add(path)
+            self.facts.sensitive_location = resolve.resolve_sensitivity([], [path]) == "sensitive"
+
+    def file_path(self, path: str, *, copied: bool = False) -> None:
+        self.sensitivity(resolve.normalize(path, self.cwd))
+        if not copied:
+            _add_seen(self.facts.raw_files, path)
 
     def _first_copy(self, what: str, channel: str, text: str) -> bool:
         waiting = self.pending[what]
@@ -164,11 +197,12 @@ class _Rollout:
                 self.turn_skills.add(name)
                 self.tools.append("Skill:" + name)
 
-    def patch_paths(self, text: str) -> None:
+    def patch_paths(self, text: str, *, copied: bool = False) -> None:
         for path in PATCH_FILE.findall(text or ""):
-            self.facts.paths.append(path)
-            _turn(self.facts)["paths"].append(path)
-            _add_seen(self.facts.raw_files, path)
+            self.file_path(path, copied=copied)
+            if not copied:
+                self.facts.paths.append(path)
+                _turn(self.facts)["paths"].append(path)
 
     def tokens(self, info, ts: str | None) -> None:
         """One reply's usage. Codex repeats the same token_count when only rate limits change."""
@@ -205,9 +239,9 @@ def _session_meta(r: _Rollout, p: dict) -> None:
     f.session_id = f.session_id or str(p.get("id") or p.get("session_id") or "")
     f.entrypoint = p.get("originator") or None
     f.version = p.get("cli_version") or None
-    _add_seen(f.cwds, p.get("cwd"))
+    r.set_cwd(p.get("cwd"))
     git = p.get("git") if isinstance(p.get("git"), dict) else {}
-    _add_seen(f.branches, git.get("branch"))
+    r.location(f.branches, git.get("branch"))
     source = p.get("source")
     f.spawned = p.get("thread_source") == "subagent" or (isinstance(source, dict) and "subagent" in source)
     # `codex fork`, /fork and a Desktop fork name their source; subagent and review threads do too,
@@ -217,41 +251,46 @@ def _session_meta(r: _Rollout, p: dict) -> None:
         f.forked_at = p.get("timestamp") if isinstance(p.get("timestamp"), str) else None
 
 
-def _event(r: _Rollout, p: dict, ts: str | None) -> None:
+def _event(r: _Rollout, p: dict, ts: str | None, *, copied: bool = False) -> None:
     kind = p.get("type")
-    if kind == "user_message":
-        r.prompt(p.get("message"), ts, "event")
-    elif kind == "agent_message":
-        r.answer(p.get("message"), "event")
-    elif kind == "item_completed":
-        item = p.get("item") if isinstance(p.get("item"), dict) else {}
-        if item.get("type") == "UserMessage":
-            r.prompt(_texts(item.get("content"), "text"), ts, "item")
-        elif item.get("type") == "AgentMessage":
-            r.answer(_texts(item.get("content"), "text"), "item")
-        elif item.get("type") == "FileChange" and isinstance(item.get("changes"), dict):
-            for path in item["changes"]:
-                _add_seen(r.facts.raw_files, path)
-    elif kind == "token_count":
-        r.tokens(p.get("info"), ts)
-    elif kind == "patch_apply_end" and isinstance(p.get("changes"), dict):
+    if kind == "patch_apply_end" and isinstance(p.get("changes"), dict):
         f = r.facts
         for path, change in p["changes"].items():
-            _add_seen(f.raw_files, path)
-            if isinstance(change, dict) and p.get("success") is not False:
+            r.file_path(path, copied=copied)
+            if not copied and isinstance(change, dict) and p.get("success") is not False:
                 added, removed = _diff_lines(change)
                 f.lines_added = (f.lines_added or 0) + added
                 f.lines_removed = (f.lines_removed or 0) + removed
+    elif kind == "item_completed":
+        item = p.get("item") if isinstance(p.get("item"), dict) else {}
+        if item.get("type") == "FileChange" and isinstance(item.get("changes"), dict):
+            for path in item["changes"]:
+                r.file_path(path, copied=copied)
+        elif not copied and item.get("type") == "UserMessage":
+            r.prompt(_texts(item.get("content"), "text"), ts, "item")
+        elif not copied and item.get("type") == "AgentMessage":
+            r.answer(_texts(item.get("content"), "text"), "item")
+    elif copied:
+        return
+    elif kind == "user_message":
+        r.prompt(p.get("message"), ts, "event")
+    elif kind == "agent_message":
+        r.answer(p.get("message"), "event")
+    elif kind == "token_count":
+        r.tokens(p.get("info"), ts)
 
 
-def _response_item(r: _Rollout, p: dict) -> None:
+def _response_item(r: _Rollout, p: dict, *, copied: bool = False) -> None:
     """Only calls: messages come from events, and reasoning or outputs are never indexed."""
     kind = p.get("type")
     if kind not in ("function_call", "custom_tool_call"):
         return
     name = str(p.get("name") or "?")
-    r.facts.machine_turns += 1
+    if not copied:
+        r.facts.machine_turns += 1
     if kind == "function_call":
+        if copied and name != "apply_patch":
+            return
         try:
             args = json.loads(p.get("arguments") or "{}")
         except (TypeError, ValueError):
@@ -260,11 +299,16 @@ def _response_item(r: _Rollout, p: dict) -> None:
             args = {}
         if name == "spawn_agent":
             name = "Agent:" + str(args.get("agent_type") or "default")
-        r.tools.append(name.replace(",", " "))
+        if not copied:
+            r.tools.append(name.replace(",", " "))
         if name in SHELL_CALLS:
             r.command(_shell_command(args))
         elif name == "apply_patch":
-            r.patch_paths(str(args.get("input") or ""))
+            r.patch_paths(str(args.get("input") or ""), copied=copied)
+        return
+    if copied:
+        if name in ("apply_patch", "exec"):
+            r.patch_paths(str(p.get("input") or ""), copied=True)
         return
     r.tools.append(name.replace(",", " "))
     text = str(p.get("input") or "")
@@ -303,70 +347,140 @@ def parse_file(path: str, session_id: str | None = None, title: str | None = Non
     A rollout "Resume with…" wrote holds copies up to `copied_until`: only its session_meta counts.
     `turns`: turn ids of the threads read before (a subagent's parent); their records here are a copy
     of the parent's history and are skipped. This thread's own turn ids are added to it."""
+    return _parse(path, session_id, title, continued_from, copied_until, turns)
+
+
+def parse_group(path: str, rollouts: list[str], *, title=None, continued_from=None,
+                copied_until=None, turns=None) -> SessionFacts:
+    """Read every physical rollout of an indexed thread into a single set of facts."""
+    from . import codex_rollouts, index
+
+    home = index.codex_home()
+    paths = {*rollouts, path}
+    copies = codex_rollouts.preferred_copies(paths, home)
+    files = sorted(copies.values() or [path], key=lambda p: (os.path.basename(p), p))
+    parts = [codex_rollouts.Part(p) for p in files]
+    facts = _parse(path, None, title, continued_from, copied_until, turns, parts)
+    # A losing physical copy contributes no search or stats, but may still contain a sensitive path.
+    if not facts.sensitive_location:
+        facts.sensitive_location = sensitive_copies(paths.difference(files))
+    lineage = codex_rollouts.lineage(path, home)
+    if len(parts) > 1 or len(lineage) > 1:
+        current = _parse(path, None, title, continued_from, copied_until, None, lineage, project=True)
+        facts.sensitive_location |= current.sensitive_location
+        for field in ("first_user_text", "first_assistant_text", "last_prompt", "cwds", "branches", "entrypoint",
+                      "version", "spawned", "forked_from", "forked_at", "started_at", "last_activity_at"):
+            setattr(facts, field, getattr(current, field))
+    return facts
+
+
+def sensitive_copies(paths) -> bool:
+    return any(parse_file(p).sensitive_location for p in paths)
+
+
+def parse_lineage(path: str, session_id: str) -> SessionFacts:
+    """The selected conversation, for excerpts, prompts and model context."""
+    from . import codex_procs, codex_rollouts
+
+    head = codex_procs.selected_rollout(session_id) or path
+    parts = codex_rollouts.lineage(head)
+    return _parse(head, session_id, None, None, None, None, parts, project=True)
+
+
+def _keep_excerpt_record(raw: bytes) -> bytes:
+    # The parser needs only the timestamp and skill marker on these potentially large records.
+    return raw[:600] if _SKIP_HEAD.search(raw, 0, 480) else raw
+
+
+def _parse(path, session_id, title, continued_from, copied_until, turns, parts=None, *, project=False) -> SessionFacts:
+    from . import codex_projection, codex_rollouts
+
     facts = SessionFacts(session_id=session_id or session_id_of(path) or "", source_path=path,
                          agent=AGENT, continued_from=continued_from, copied_until=copied_until)
     if title:
         facts.title, facts.title_source = title, "codex"
-    r = _Rollout(facts)
-    r.known_turns = frozenset(turns or ())
-    with open(path, "rb") as fh:
-        for offset, raw in iter_complete_lines(fh):
-            facts.complete_bytes = offset
-            if _SKIP_HEAD.search(raw, 0, 480):
-                facts.records += 1
-                head = _HEAD_TS.search(raw, 0, 480)
-                head_ts = head.group(1).decode() if head else None
-                if _copied(facts, head_ts):
-                    facts.copied += 1
-                    continue
-                _note_time(facts, head_ts)
-                skill = None if r.turn in r.known_turns else SKILL_MENTION.search(raw, 0, 600)
-                if skill:
-                    r.skills([skill.group(1).decode()])
-                continue
-            try:
-                rec = json.loads(raw)
-            except ValueError:
-                facts.bad_lines += 1
-                continue
-            if not isinstance(rec, dict):
-                facts.bad_lines += 1
-                continue
-            facts.records += 1
-            ts = rec.get("timestamp") if isinstance(rec.get("timestamp"), str) else None
-            p = rec.get("payload") if isinstance(rec.get("payload"), dict) else {}
-            kind = rec.get("type")
-            if not _copied(facts, ts):
-                _note_time(facts, ts)
-            elif kind != "session_meta":
-                facts.copied += 1
-                continue
-            if (kind == "event_msg" and p.get("type") == "task_started") or kind == "turn_context":
-                turn = _turn_id(p) or r.turn
-                if turn != r.turn or kind == "event_msg":
-                    r.turn_skills = set()          # a new turn: its skills count again
-                r.turn = turn
-                if turns is not None and r.turn:
-                    turns.add(r.turn)
-            if r.turn in r.known_turns and (
-                    kind == "response_item" or (kind == "event_msg" and p.get("type") in COPIED_EVENTS)):
-                continue
-            if kind == "session_meta":
-                _session_meta(r, p)
-            elif kind == "turn_context":
-                r.model = p.get("model") or r.model
-                _add_seen(facts.models, p.get("model"))
-                _add_seen(facts.cwds, p.get("cwd"))
-            elif kind == "event_msg":
-                _event(r, p, ts)
-            elif kind == "response_item":
-                _response_item(r, p)
-            elif kind == "compacted" and str(p.get("message") or "").strip():
-                summary = str(p["message"]).strip()
-                facts.summaries.append(summary)
-                _turn(facts, start_new=True)["summaries"].append(summary)
+    projected = project and parts and len(parts) > 1
+    if projected:
+        sources = ((part, (item for group in groups for item in group.lines))
+                   for part, groups in codex_projection.selected(parts, _keep_excerpt_record))
+    else:
+        sources = ((part, codex_rollouts.lines(part)) for part in parts or [codex_rollouts.Part(path)])
+    for part, records in sources:
+        start, last = facts.started_at, facts.last_activity_at
+        facts.started_at = facts.last_activity_at = facts.last_main_ts = None
+        facts.pending_active = 0.0
+        _parse_part(facts, records, turns, part.path == path, recent_locations=bool(projected))
+        if start:
+            facts.started_at = min(start, facts.started_at or start)
+        if last:
+            facts.last_activity_at = max(last, facts.last_activity_at or last)
     _harvest_all(facts)
     return facts
+
+
+def _parse_part(facts: SessionFacts, source, turns, is_head: bool, *, recent_locations=False) -> None:
+    r = _Rollout(facts, recent_locations)
+    r.known_turns = frozenset(turns or ())
+    for offset, raw in source:
+        if is_head:
+            facts.complete_bytes = offset
+        if _SKIP_HEAD.search(raw, 0, 480):
+            facts.records += 1
+            head = _HEAD_TS.search(raw, 0, 480)
+            head_ts = head.group(1).decode() if head else None
+            if _copied(facts, head_ts):
+                facts.copied += 1
+                continue
+            _note_time(facts, head_ts)
+            skill = None if r.turn in r.known_turns else SKILL_MENTION.search(raw, 0, 600)
+            if skill:
+                r.skills([skill.group(1).decode()])
+            continue
+        try:
+            rec = json.loads(raw)
+        except ValueError:
+            facts.bad_lines += 1
+            continue
+        if not isinstance(rec, dict):
+            facts.bad_lines += 1
+            continue
+        facts.records += 1
+        ts = rec.get("timestamp") if isinstance(rec.get("timestamp"), str) else None
+        p = rec.get("payload") if isinstance(rec.get("payload"), dict) else {}
+        kind = rec.get("type")
+        if not _copied(facts, ts):
+            _note_time(facts, ts)
+        elif kind != "session_meta":
+            facts.copied += 1
+            if kind == "turn_context":
+                r.set_cwd(p.get("cwd"), copied=True)
+            elif kind == "event_msg":
+                _event(r, p, ts, copied=True)
+            elif kind == "response_item":
+                _response_item(r, p, copied=True)
+            continue
+        if (kind == "event_msg" and p.get("type") == "task_started") or kind == "turn_context":
+            turn = _turn_id(p) or r.turn
+            if turn != r.turn or kind == "event_msg":
+                r.turn_skills = set()          # a new turn: its skills count again
+            r.turn = turn
+            if turns is not None and r.turn:
+                turns.add(r.turn)
+        copied_turn = r.turn in r.known_turns
+        if kind == "session_meta":
+            _session_meta(r, p)
+        elif kind == "turn_context":
+            r.model = p.get("model") or r.model
+            _add_seen(facts.models, p.get("model"))
+            r.set_cwd(p.get("cwd"))
+        elif kind == "event_msg":
+            _event(r, p, ts, copied=copied_turn and p.get("type") in COPIED_EVENTS)
+        elif kind == "response_item":
+            _response_item(r, p, copied=copied_turn)
+        elif kind == "compacted" and str(p.get("message") or "").strip():
+            summary = str(p["message"]).strip()
+            facts.summaries.append(summary)
+            _turn(facts, start_new=True)["summaries"].append(summary)
 
 
 def _state_db(home: str) -> str | None:
@@ -400,27 +514,48 @@ def _index_names(home: str):
         return
 
 
+@contextmanager
+def _state_connection(home: str):
+    path = _state_db(home)
+    conn = None
+    try:
+        if path:
+            conn = sqlite3.connect(f"file:{quote(path)}?mode=ro", uri=True, timeout=0.25)
+            conn.execute("PRAGMA query_only=ON")
+        yield conn
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def selected_paths(home: str, thread_id: str | None = None) -> dict[str, str]:
+    """The path selected by Codex 0.171/0.172 in threads.rollout_path."""
+    try:
+        with _state_connection(home) as conn:
+            if conn is None:
+                return {}
+            sql = "SELECT id, rollout_path FROM threads"
+            rows = conn.execute(sql + " WHERE id=?", (thread_id,)) if thread_id else conn.execute(sql)
+            return {tid: os.path.join(home, path) for tid, path in rows if tid and isinstance(path, str) and path}
+    except sqlite3.Error:
+        return {}
+
+
 def _state_titles(home: str) -> dict[str, tuple[str | None, str | None]]:
     """{thread id: (name, title)} from the state database. Read-only: any failure means none."""
-    path = _state_db(home)
-    if not path:
-        return {}
     try:
-        conn = sqlite3.connect(f"file:{quote(path)}?mode=ro", uri=True, timeout=1.0)
+        with _state_connection(home) as conn:
+            if conn is None:
+                return {}
+            cols = {row[1] for row in conn.execute("PRAGMA table_info(threads)")}
+            if "id" not in cols or not cols & {"name", "title"}:
+                return {}
+            name = "name" if "name" in cols else "NULL"
+            title = "title" if "title" in cols else "NULL"
+            return {str(i): (_clean_title(n), _clean_title(t))
+                    for i, n, t in conn.execute(f"SELECT id, {name}, {title} FROM threads") if i}
     except sqlite3.Error:
         return {}
-    try:
-        cols = {row[1] for row in conn.execute("PRAGMA table_info(threads)")}
-        if "id" not in cols or not cols & {"name", "title"}:
-            return {}
-        name = "name" if "name" in cols else "NULL"
-        title = "title" if "title" in cols else "NULL"
-        return {str(i): (_clean_title(n), _clean_title(t))
-                for i, n, t in conn.execute(f"SELECT id, {name}, {title} FROM threads") if i}
-    except sqlite3.Error:
-        return {}
-    finally:
-        conn.close()
 
 
 def _title_key(tid: str):

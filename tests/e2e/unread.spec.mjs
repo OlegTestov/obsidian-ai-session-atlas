@@ -1,7 +1,7 @@
 /* global READ -- page global, used inside page.evaluate */
 // Unread marks on Active cards: the plugin sends which sessions finished while you were away; the page
 // shows a dot and a "N new" button and reports the cards you open. A stand-in host page plays the plugin.
-import { expect, ids, run, test } from "./fixtures.mjs";
+import { expect, ids, run, test, pickCardView } from "./fixtures.mjs";
 
 function hostPage(lang, unread, mode = "compact", answerSeen = true) {
   const tabs = [{ ptyPid: run.pids.claude.shell, title: "claude tab" },
@@ -95,7 +95,7 @@ test("switching a card's view marks it as read", async ({ page, lang }) => {
   const frame = await openHost(page, lang, [ids.codexLive], "full", false);
   const codex = frame.locator(`.acard[data-id="${ids.codexLive}"]`);
   await expect(codex.locator(".unread-dot")).toBeVisible();
-  await codex.locator(".card-view-picker").selectOption("files");
+  await pickCardView(codex, "files");
   await expect(codex.locator(".unread-dot")).toHaveCount(0);
   await expect.poll(() => seenSent(page)).toEqual([expect.objectContaining({ ids: [ids.codexLive] })]);
 });

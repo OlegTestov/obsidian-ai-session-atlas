@@ -39,11 +39,35 @@ valid_job_id() {
   [[ "$1" =~ '^[0-9a-f]{8}$' ]]
 }
 
-# Codex names a rollout rollout-<time>-<thread id>.jsonl, in sessions/YYYY/MM/DD or archived_sessions.
+# A segment suffix names the physical rollout. Resume always takes the thread ID before it.
+codex_rollout_thread_id() {
+  local uuid MATCH
+  local -a match
+  load_agent_patterns || return 1
+  uuid="${ATLAS_ID_PATTERNS[codex]}"
+  uuid="${uuid[2,-2]}"
+  setopt localoptions
+  unsetopt rematchpcre bashrematch
+  local LC_ALL=C
+  [[ "${1:t}" =~ "^rollout-.*-(${uuid})(_${uuid})?\.jsonl$" ]] || return 1
+  REPLY="$match[1]"
+}
+
+codex_session_files() {
+  local sid="$1" root file REPLY
+  reply=()
+  valid_id codex "$sid" || return 1
+  for root in "$CODEX_SESSIONS_DIR" "$CODEX_ARCHIVED_DIR"; do
+    for file in "$root"/**/rollout-*-"$sid"(|_*).jsonl(N.); do
+      codex_rollout_thread_id "$file" && [[ "$REPLY" == "$sid" ]] && reply+=("$file")
+    done
+  done
+  (( ${#reply} > 0 ))
+}
+
 codex_session_exists() {
-  valid_id codex "$1" || return 1
-  local -a found=("$CODEX_SESSIONS_DIR"/**/rollout-*-"$1".jsonl(N.) "$CODEX_ARCHIVED_DIR"/**/rollout-*-"$1".jsonl(N.))
-  (( ${#found} > 0 ))
+  local -a reply
+  codex_session_files "$1"
 }
 
 # Any project folder: a tab from AI Session Atlas can open outside the vault too.
@@ -137,11 +161,10 @@ claude_session_pid() {
 }
 
 # A codex process holding this thread's rollout open (Codex keeps its live thread's file open).
-codex_session_pid() {
-  local session_id="$1" pid
-  codex_session_exists "$session_id" || return 1
-  local -a found=("$CODEX_SESSIONS_DIR"/**/rollout-*-"$session_id".jsonl(N.) "$CODEX_ARCHIVED_DIR"/**/rollout-*-"$session_id".jsonl(N.))
-  for pid in ${(f)"$(/usr/sbin/lsof -t -- "${found[@]}" 2>/dev/null)"}; do
+codex_files_pid() {
+  local pid
+  (( $# )) || return 1
+  for pid in ${(f)"$(/usr/sbin/lsof -t -- "$@" 2>/dev/null)"}; do
     local -a argv=(${=$(ps -o command= -p "$pid" 2>/dev/null)})
     [[ "${argv[1]:t}" == codex* ]] && { print -r -- "$pid"; return 0; }
   done

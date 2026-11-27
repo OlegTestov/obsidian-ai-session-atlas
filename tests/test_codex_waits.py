@@ -9,7 +9,7 @@ import sys
 
 import pytest
 
-from atlas import codex_hook, codex_live, codex_procs, codex_tail, codex_waits, db
+from atlas import codex_hook, codex_live, codex_procs, codex_rollouts, codex_tail, codex_waits, db
 from tests.conftest import cx, cx_agent, cx_meta
 from tests.test_codex_active import CODEX, TID, FakeLsof, _cards, table, turn
 
@@ -21,7 +21,8 @@ EVENT = {"hook_event_name": "PermissionRequest", "session_id": TID, "tool_name":
 
 @pytest.fixture(autouse=True)
 def _fresh_caches():
-    for cache in (codex_procs._map_cache, codex_procs._meta_cache, codex_procs._find_cache, codex_tail._cache):
+    for cache in (codex_procs._map_cache, codex_rollouts._meta_cache,
+                  codex_rollouts._inventory_cache, codex_tail._cache):
         cache.clear()
     codex_live._last_live.clear()
     yield

@@ -483,7 +483,8 @@ class Handler(BaseHTTPRequestHandler):
                         return self._json(200, dict(touched.session_files(path, agent=kind), session_id=sid,
                                                     home=os.path.expanduser("~")))
                     page = feed.feed_page(path, turns, with_events=view == "steps",
-                                          agent=kind, full_text=view == "turns", **cursors)
+                                          agent=kind, full_text=view == "turns",
+                                          history=(query.get("history") or [None])[0], **cursors)
                     return self._json(200, dict(page, session_id=sid))
                 if url.path.startswith("/api/active/plan/"):
                     sid = url.path.rsplit("/", 1)[-1]
@@ -505,6 +506,11 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(200, self._facets(conn))
                 if url.path.startswith("/api/prompts/"):
                     return self._json(200, self._prompts(conn, url.path.rsplit("/", 1)[-1]))
+                if url.path.startswith("/api/restore/codex/"):
+                    sid = url.path.rsplit("/", 1)[-1]
+                    if not agents.valid_id(agents.CODEX, sid):
+                        return self._json(400, {"error": msg("server.bad_session_id")})
+                    return self._json(200, codex_live.restore_candidate(conn, sid))
                 if url.path.startswith("/api/session/"):
                     return self._json(200, self._card(conn, url.path.rsplit("/", 1)[-1]))
                 if url.path.startswith("/api/job/"):
@@ -939,10 +945,10 @@ class Handler(BaseHTTPRequestHandler):
             stopped = relocate.stop_for_move(sid, body.get("pid"), agent=agents.session_agent(conn, sid))
         except relocate.RelocateError as exc:
             return self._json(400, {"error": str(exc)})
-        # A Codex thread not indexed yet has no catalog row: its folder comes from the rollout.
-        cwd = actions.resume_cwd(conn, sid) or stopped.pop("cwd", None)
-        stopped.pop("cwd", None)
         agent = stopped.get("agent") or agents.session_agent(conn, sid) or agents.CLAUDE
+        # The selected Codex rollout can have a different cwd from its original catalog entry.
+        cwd = stopped.pop("cwd", None) if agent == agents.CODEX else None
+        cwd = cwd or actions.resume_cwd(conn, sid)
         _active_cached["sessions"] = None          # the active list has changed
         _background_cached["jobs"] = None
         # A parked session goes on in its background job: the tab attaches to it.

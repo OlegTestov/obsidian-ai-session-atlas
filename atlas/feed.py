@@ -11,7 +11,7 @@ import json
 import os
 from collections import OrderedDict
 
-from . import active, agents, codex_feed, steps as stepmod
+from . import active, agents, codex_feed, codex_parse, codex_rollouts, steps as stepmod
 from .messages import msg, plural as nplural
 
 DEFAULT_TURNS = 8
@@ -176,28 +176,55 @@ def _window(path: str, size: int, window: int, agent: str = agents.CLAUDE) -> li
     return out
 
 
+def _codex_history(lineage, stat, previous) -> dict:
+    # A growing head keeps its identity. A new head or a different ancestor prefix changes it.
+    parts = [(codex_parse.rollout_ids(part.path) or part.path, part.end) for part in lineage]
+    identity = parts, stat.st_dev, stat.st_ino
+    fingerprint = hashlib.blake2b(repr(identity).encode("utf-8", "surrogatepass"), digest_size=16).hexdigest()
+    size = stat.st_size
+    page = {"history": f"{fingerprint}.{size}"}
+    old, _, old_size = (previous or "").partition(".")
+    if (len(old) == len(fingerprint) and 0 < len(old_size) <= 20 and old_size.isascii() and old_size.isdecimal()
+            and (old != fingerprint or int(old_size) > size)):
+        page["history_changed"] = True
+    return page
+
+
 def feed_page(path: str | None, turns: int = DEFAULT_TURNS, with_events: bool = False,
               before: str | None = None, since: str | None = None,
               before_id: str | None = None, since_id: str | None = None, *,
-              agent: str | None = None, full_text: bool = False) -> dict:
+              agent: str | None = None, full_text: bool = False, history: str | None = None) -> dict:
     """A page of the feed. before/before_id: turns earlier than that time/turn (scrolling up); since/since_id:
     the turns from that time/turn on, inclusive, because a live turn keeps growing (the open feed's live end).
     Keyed by turn id or time, not by index from the end: a live session's end keeps growing, so indexes
-    would shift. An id works for turns without a time; one that is gone answers `reset` with the last page."""
+    would shift. An id works for turns without a time; one that is gone answers `reset` with the last page.
+    A stale Codex history token answers `history_changed` with the last page, even if its cursor survives."""
     agent = agents.transcript_agent(path) if agent is None else agent
     agent = agents.require(agent, (agents.CLAUDE, agents.CODEX), "conversation feed")
     if not path:
         return {"turns": [], "has_more": False}
     turns = max(1, min(MAX_TURNS, int(turns)))
     try:
-        size = os.path.getsize(path)
+        stat = os.stat(path)
     except OSError:
         return {"turns": [], "has_more": False}
-    cap = None if (before or since or before_id) else MAX_WINDOW    # scrolling up may reach the very beginning
+    size = stat.st_size
+    lineage = codex_rollouts.lineage(path) if agent == agents.CODEX else []
+    history_state = _codex_history(lineage, stat, history) if lineage else {}
+    if history_state.get("history_changed"):
+        before = before_id = since = since_id = None
+    rollout = codex_parse.rollout_ids(path) if lineage else None
+    projected = len(lineage) > 1 or bool(rollout and rollout[0] != rollout[1])
+    cap = None if (projected or before or since or before_id) else MAX_WINDOW
     window = FIRST_WINDOW
+    groups = max(12, turns + 2)
     while True:
-        built = build(_window(path, size, window, agent), with_events, full_text=full_text)
-        whole = window >= size
+        if projected:
+            records, whole = codex_feed.lineage_window(lineage, groups)
+        else:
+            records = _window(path, size, window, agent)
+            whole = window >= size
+        built = build(records, with_events, full_text=full_text)
 
         def at(t: dict) -> str:
             return t.get("prompt_at") or ""
@@ -205,21 +232,25 @@ def feed_page(path: str | None, turns: int = DEFAULT_TURNS, with_events: bool = 
         ids = [t.get("id") for t in built]
         if since_id:
             if since_id in ids:
-                return {"turns": built[ids.index(since_id):], "has_more": None}
+                return {"turns": built[ids.index(since_id):], "has_more": None, **history_state}
             if whole or (cap and window >= cap):
-                return {"turns": built[-turns:], "has_more": len(built) > turns or not whole, "reset": True}
+                return {"turns": built[-turns:], "has_more": len(built) > turns or not whole,
+                        "reset": True, **history_state}
         elif since:
             # A turn started at `since` is fully in the window if the window starts no later than it.
             if whole or (built and at(built[0]) <= since):
                 first = next((i for i, t in enumerate(built) if at(t) >= since), len(built))
-                return {"turns": built[first:], "has_more": None}   # a later turn without a time stays
+                return {"turns": built[first:], "has_more": None, **history_state}  # a later turn without a time stays
         else:
             if before_id and before_id not in ids:
                 if whole:
-                    return {"turns": [], "has_more": False}
-                window *= 4
-                continue
-            pool = built[:ids.index(before_id)] if before_id else [t for t in built if not before or at(t) < before]
-            if len(pool) > turns or whole or (cap and window >= cap):
-                return {"turns": pool[-turns:], "has_more": len(pool) > turns or not whole}
+                    if not before:
+                        return {"turns": [], "has_more": False, **history_state}
+                    pool = [t for t in built if at(t) < before]
+                    return {"turns": pool[-turns:], "has_more": len(pool) > turns, **history_state}
+            else:
+                pool = built[:ids.index(before_id)] if before_id else [t for t in built if not before or at(t) < before]
+                if len(pool) > turns or whole or (cap and window >= cap):
+                    return {"turns": pool[-turns:], "has_more": len(pool) > turns or not whole, **history_state}
         window *= 4
+        groups *= 4

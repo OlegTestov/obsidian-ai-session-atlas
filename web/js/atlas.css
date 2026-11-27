@@ -95,11 +95,9 @@ body{margin:0;font:14px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",syste
 .acard>.decide{margin:-7px -12px 4px;padding:3px 12px;background:var(--decide);color:var(--on-decide);
   font-size:12px;font-weight:600;line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .agrid.full .acard>.decide{margin:-8px -12px 4px}
-.acard.waiting .head .state{display:none;color:var(--decide);font-weight:600}
+.acard.waiting .state{color:var(--decide);font-weight:600}
 .acard.waiting .dot{border-color:var(--decide);background:var(--decide)}
 .agrid:not(.full) .acard>.decide{padding:1px 12px;margin-bottom:2px}
-/* A compact card waiting on a decision gives the cost line's room to the strip. */
-.agrid:not(.full) .acard.waiting>.nums{display:none}
 /* The strip already names what is asked: the dialog's own title line would only repeat it. */
 .acard.waiting>.dialog>.t:not(.oc-permission-title){display:none}
 .acard.sel{outline:2px solid var(--accent);outline-offset:1px}
@@ -196,7 +194,7 @@ body{margin:0;font:14px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",syste
 .agent-icon{display:block;flex:none;width:14px;height:14px}
 .acard .head{display:flex;align-items:center;gap:6px;min-width:0}
 .acard .head .t{flex:1 1 auto;min-width:0}
-.acard .state{flex:0 0 auto;font-size:11.5px;color:var(--dim);display:flex;align-items:center;gap:5px}
+.acard .state{font-size:11.5px;color:var(--dim);display:inline-flex;align-items:center;gap:5px}
 .acard .dot{width:8px;height:8px;border-radius:50%;border:1.5px solid var(--dim);flex:0 0 auto}
 .acard.busy{border-color:var(--accent);background:var(--accent-soft)}
 .acard.busy .state{color:var(--accent);font-weight:600}
@@ -217,15 +215,12 @@ body{margin:0;font:14px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text",syste
 .acard.pending .t:hover{color:inherit}
 .acard.opencode-tab .t{cursor:default}
 .acard.opencode-tab .t:hover{color:inherit}
-.acard.pending .state{overflow:hidden;text-overflow:ellipsis;display:block;flex:0 1 auto;white-space:nowrap}
-.acard.pending .state .dot{display:inline-block;margin-right:5px}
 .acard .d{font-size:12px;color:var(--dim);line-height:1.3;overflow:hidden;
   display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
 .acard .tags{display:flex;gap:5px;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;margin:1px 0;
   scrollbar-width:none}
 .acard .tags::-webkit-scrollbar,.acard .hscroll::-webkit-scrollbar{display:none}
 .acard .tags .pill{white-space:nowrap}
-.acard .when,.acard .nums{font-size:11.5px;line-height:1.3;color:var(--dim);white-space:nowrap}
 .acard .foot{margin-top:auto;display:flex;gap:6px;align-items:center;padding-top:2px}
 .acard .foot button{flex:0 0 auto;padding:2px 9px;font-size:12px}
 .acard .head .bgico{flex:0 0 auto;display:inline-flex;align-items:center;color:var(--accent);cursor:help}
@@ -450,13 +445,11 @@ dialog::backdrop{background:rgba(0,0,0,.45)}
 .agrid.full .acard>.dialog.pvq{max-height:75%}
 /* A short detailed card gives the description and tags' room to the dialog, as compact cards do. */
 .agrid.full .acard.has-dialog{container-type:size}
-@container (max-height:280px){ .acard.has-dialog>.d,.acard.has-dialog>.tags,.acard.has-dialog>.tasks,
-  .acard.has-dialog>.info{display:none}
-  .agrid.full .acard.has-dialog>.card-view-body:not(.terminal-body){min-height:1.5em}
+@container (max-height:280px){ .acard.has-dialog>.d,.acard.has-dialog>.tags,.acard.has-dialog>.tasks{display:none}
+  .agrid.full .acard.has-dialog>.card-view-body:not(.terminal-body){min-height:0}
   .agrid.full .acard.has-dialog>.dialog{min-height:3.5em}
-  /* No room for the strip: the amber badge in the head says it, the tint stays. */
-  .acard.waiting>.decide{display:none}
-  .acard.waiting .head .state{display:inline-flex} }
+  /* The metadata already shows the amber status. */
+  .acard.waiting>.decide{display:none} }
 /* The growing field may not crowd the dialog out of a short card: past a quarter of it, it scrolls. */
 .agrid.full .acard.has-dialog .answer textarea{max-height:max(46px,25cqh)}
 .agrid.full .acard.has-dialog>.answer{margin-top:4px}
@@ -487,17 +480,22 @@ button.stop{color:var(--warn);border-color:var(--warn)}
 /* The card body uses the remaining grid height in all four modes. */
 .acard > .card-view-body{flex:1 1 0;min-height:0;overflow:auto;overscroll-behavior:contain;
   scrollbar-gutter:stable;margin-top:4px;padding:0 4px 4px 0}
-.acard .card-view-picker{flex:0 0 auto;max-width:min(32%,14em);padding:2px 4px;
-  font-size:12px;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:5px}
+.card-view-menu{position:fixed;inset:auto;margin:0;max-width:calc(100vw - 12px);padding:4px;
+  color:var(--ink);background:var(--panel);border:1px solid var(--line);border-radius:8px;
+  box-shadow:0 6px 24px rgba(0,0,0,.18)}
+.card-view-menu button{display:flex;align-items:center;gap:7px;width:100%;padding:4px 7px;
+  border:0;border-radius:4px;background:transparent;text-align:start;white-space:nowrap;font-size:12.5px}
+.card-view-menu button:not(:disabled):is(:hover,:focus){background:var(--accent-soft)}
+.card-view-menu button[aria-checked=true]{font-weight:600;color:var(--accent)}
+.card-view-menu .view-check{margin-inline-start:auto;padding-inline-start:6px}
+.card-view-menu button svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2;
+  stroke-linecap:round;stroke-linejoin:round}
+.acard.compact-feed>.d{display:none}
 .card-head-actions{display:contents}
 @container (max-width:490px){
   .agrid.full .acard .head{flex-wrap:wrap;row-gap:4px}
   .agrid.full .acard .head .t{flex-basis:0}
-  .agrid.full .acard .head .state{flex:0 1 auto;min-width:0;max-width:48%;white-space:nowrap}
-  .agrid.full .acard:not(.waiting) .head .state{display:block;overflow:hidden;text-overflow:ellipsis}
-  .agrid.full .acard:not(.waiting) .head .state .dot{display:inline-block;margin-inline-end:4px;vertical-align:1px}
   .card-head-actions{display:flex;flex:0 0 100%;align-items:center;flex-wrap:wrap;gap:4px;min-width:0}
-  .card-head-actions .card-view-picker{flex:1 1 5em;min-width:0;max-width:14em}
 }
 .card-head-actions:empty{display:none}
 .acard.terminal-mode > .answer,.acard.terminal-mode > .dialog,.acard.terminal-mode > .cmdout{display:none}

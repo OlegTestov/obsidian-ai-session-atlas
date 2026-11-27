@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from atlas import active, agents, codex_live, codex_procs, codex_tail, db, index
+from atlas import active, agents, codex_live, codex_procs, codex_rollouts, codex_tail, db, index
 from tests.conftest import cx, cx_agent, cx_context, cx_meta, cx_tokens, cx_user, user_text
 
 TID = "019e0000-aaaa-7000-8000-000000000001"
@@ -27,7 +27,8 @@ def _conn(atlas_env):
 
 @pytest.fixture(autouse=True)
 def _fresh_caches():
-    for cache in (codex_procs._map_cache, codex_procs._meta_cache, codex_procs._find_cache, codex_tail._cache):
+    for cache in (codex_procs._map_cache, codex_rollouts._meta_cache,
+                  codex_rollouts._inventory_cache, codex_tail._cache):
         cache.clear()
     codex_live._last_live.clear()
     yield

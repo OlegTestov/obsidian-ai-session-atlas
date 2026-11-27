@@ -1288,6 +1288,35 @@ describe("restore after restart", () => {
     assert.equal(restoring.restorable.length, 0);
     assert.equal(restoreReplies[restoreReplies.length - 1].m.sessions.length, 0);
   });
+  it("resolves a saved child once, hides a live root, and offers a closed root by title", async () => {
+    const child = "019e0000-1111-7000-8000-000000000003";
+    const root = "019e0000-1111-7000-8000-000000000001";
+    const at = Date.now();
+    for (const live of [true, false]) {
+      const plugin = new SessionAtlasPlugin();
+      plugin.settings = { openSessions: [
+        { agent: "codex", session_id: root, title: "Old root title", at },
+        { agent: "codex", session_id: child, title: "Saved child", at },
+      ] };
+      plugin.loadedAt = at - 30000;
+      plugin.initRestore();
+      const requests = [];
+      plugin.fetchAtlasJson = async path => {
+        requests.push(path);
+        return path.endsWith(child) ? { session_id: root, title: "Root thread" } : { session_id: root };
+      };
+      plugin.tabForSession = async () => false;
+      plugin.heldForSession = () => false;
+      const sessions = live ? [{ agent: "codex", session_id: root }] : [];
+      await plugin.trackOpenSessions(sessions, at);
+      await plugin.trackOpenSessions(sessions, at);
+      assert.equal(requests.filter(path => path.endsWith(child)).length, 1);
+      const replies = [];
+      plugin.replyRestorable({ postMessage: reply => replies.push(reply) });
+      assert.equal(replies[0].ready, true);
+      assert.deepEqual(replies[0].sessions, live ? [] : [{ agent: "codex", session_id: root, title: "Root thread", at }]);
+    }
+  });
 });
 
 // Loading the plugin: settings, the settings tab, polling after layout, the tab title.
@@ -2644,6 +2673,125 @@ describe("Codex tab: answers, reply, stop", () => {
     plugin.parentPid = (pid) => parents[pid] || 0;
     plugin.processName = (pid) => (pid === 7101 ? "codex" : "zsh");
     plugin.codexSessionIds = (pid) => (pid === 7101 ? ids : []);
+  });
+
+  it("keeps the terminal on the canonical Codex thread when it holds a segment", async () => {
+    const child = require("child_process");
+    const exec = child.execFileSync;
+    const segment = "019a0000-0000-7000-8000-00000000000f";
+    const home = fs.mkdtempSync(path.join(TMP, "codex-segment-"));
+    const file = path.join(home, `rollout-2026-11-27T10-00-00-${CODEX_ID}_${segment}.jsonl`);
+    fs.writeFileSync(file, "{}\n");
+    child.execFileSync = (command, args, opts) => command.endsWith("/lsof") && args.includes("7101")
+      ? `n${file}\nn${file}\n`
+      : exec(command, args, opts);
+    const stub = plugin.codexSessionIds;
+    const savedHome = plugin.codexHome;
+    try {
+      plugin.codexHome = () => home;
+      plugin.codexSessionIds = SessionAtlasPlugin.prototype.codexSessionIds;
+      assert.deepEqual(Array.from(plugin.codexSessionIds(7101)), [CODEX_ID]);
+      cscreen = cx.idle;
+      const target = await plugin.checkTarget(base);
+      assert.deepEqual(Array.from(target.state.sessionIds), [CODEX_ID]);
+      assert.equal(target.tab.leaf, codexLeaf);
+    } finally {
+      plugin.codexHome = savedHome;
+      plugin.codexSessionIds = stub;
+      child.execFileSync = exec;
+    }
+  });
+
+  it("opens the root's mirror target and sends input when Codex only holds a descendant segment", async () => {
+    const child = require("child_process");
+    const exec = child.execFileSync;
+    const home = fs.mkdtempSync(path.join(TMP, "codex-child-"));
+    const day = path.join(home, "sessions", "2026", "11", "27");
+    const archive = path.join(home, "archived_sessions");
+    fs.mkdirSync(day, { recursive: true });
+    fs.mkdirSync(archive);
+    const parent = "019a0000-0000-7000-8000-000000000002";
+    const descendant = "019a0000-0000-7000-8000-000000000003";
+    const segment = "019a0000-0000-7000-8000-00000000000f";
+    const file = (dir, id, source) => {
+      const name = path.join(dir, `rollout-2026-11-27T10-00-00-${id}.jsonl`);
+      fs.writeFileSync(name, JSON.stringify({ type: "session_meta", payload: source }) + "\n");
+      return name;
+    };
+    const root = file(archive, CODEX_ID, { id: CODEX_ID, source: "cli" });
+    file(day, parent, { id: parent, source: { subagent: { thread_spawn: { parent_thread_id: CODEX_ID } } } });
+    const held = file(day, `${descendant}_${segment}`, {
+      id: descendant, thread_source: "subagent", parent_thread_id: parent,
+    });
+    child.execFileSync = (command, args, opts) => command.endsWith("/lsof") && args.includes("7101")
+      ? `n${held}\n`
+      : exec(command, args, opts);
+    const stub = plugin.codexSessionIds;
+    const savedHome = plugin.codexHome;
+    try {
+      plugin.codexHome = () => home;
+      plugin.codexSessionIds = SessionAtlasPlugin.prototype.codexSessionIds;
+      cscreen = cx.idle;
+      const target = await plugin.checkTarget(base, true); // shared by the mirror and its input verifier
+      assert.equal(target.tab?.leaf, codexLeaf);
+      expectReply(await send("send-text", { text: "to the root" }, 400),
+                  "sent", true, ["to the root", "\r"]);
+      assert.ok((await plugin.checkTarget({ ...base, sessionId: descendant }, true)).error);
+      fs.unlinkSync(root);
+      assert.ok((await plugin.checkTarget(base, true)).error);
+    } finally {
+      plugin.codexHome = savedHome;
+      plugin.codexSessionIds = stub;
+      child.execFileSync = exec;
+    }
+  });
+
+  it("authorizes only the newest writable root in the recursive Codex inventory", async () => {
+    const child = require("child_process");
+    const exec = child.execFileSync;
+    const savedHome = plugin.codexHome;
+    const stub = plugin.codexSessionIds;
+    const home = fs.mkdtempSync(path.join(TMP, "codex-roots-"));
+    const other = "019a0000-0000-7000-8000-000000000005";
+    const aKid = "019a0000-0000-7000-8000-000000000006";
+    const bKid = "019a0000-0000-7000-8000-000000000007";
+    const file = (dir, id, mtime, parent) => {
+      const folder = path.join(home, dir);
+      fs.mkdirSync(folder, { recursive: true });
+      const name = path.join(folder, `rollout-synthetic-${id}.jsonl`);
+      fs.writeFileSync(name, JSON.stringify({ type: "session_meta", payload: parent
+        ? { thread_source: "subagent", parent_thread_id: parent } : { id } }) + "\n");
+      fs.utimesSync(name, mtime, mtime);
+      return name;
+    };
+    const a = file("sessions", CODEX_ID, 10);
+    const b = file("archived_sessions/nested/elsewhere", other, 20);
+    const ca = file("sessions/flat", aKid, 30, CODEX_ID);
+    const cb = file("sessions/custom/date/layout", bKid, 40, other);
+    let opened = [];
+    child.execFileSync = (command, args, opts) => {
+      if (command.endsWith("/lsof") && args.includes("7101")) {
+        return "p7101\n" + opened.map(([f, access], i) => `f${i + 10}\na${access}\nn${f}\n`).join("");
+      }
+      if (command === "ps" && args.includes("command=")) return `codex --no-daemon resume ${CODEX_ID}`;
+      return exec(command, args, opts);
+    };
+    try {
+      plugin.codexHome = () => home;
+      plugin.codexSessionIds = SessionAtlasPlugin.prototype.codexSessionIds;
+      for (const order of [[[a, "u"], [b, "u"]], [[b, "u"], [a, "u"]], [[cb, "w"], [ca, "w"]]]) {
+        opened = order;
+        assert.deepEqual(Array.from(plugin.codexSessionIds(7101)), [other]);
+        assert.ok((await plugin.checkTarget(base, true)).error, "a stale card gets no terminal target");
+        assert.equal((await plugin.checkTarget({ ...base, sessionId: other }, true)).tab?.leaf, codexLeaf);
+      }
+      opened = [[a, "u"], [b, "r"]];
+      assert.deepEqual(Array.from(plugin.codexSessionIds(7101)), [CODEX_ID]);
+    } finally {
+      plugin.codexHome = savedHome;
+      plugin.codexSessionIds = stub;
+      child.execFileSync = exec;
+    }
   });
 
   it("pending Codex input verifies the tab and process birth and is limited to typing", async () => {

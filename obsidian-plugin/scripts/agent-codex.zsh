@@ -20,12 +20,13 @@ codex_rollout_in_cwd() {
 # other tab claimed it. Only rollouts written since the start are looked at, the id is in the name.
 latest_new_codex_session_id() {
   local start_epoch="$1"
-  local best_created=0 best_id="" created session_id file
+  local best_created=0 best_id="" created session_id file REPLY
   [[ -d "$CODEX_SESSIONS_DIR" ]] || return 1
   local -a files=("$CODEX_SESSIONS_DIR"/**/rollout-*.jsonl(N.ms-$(( $(date +%s) - start_epoch + 2 ))))
   for file in "${files[@]}"; do
-    session_id="${${file:t:r}: -36}"
-    valid_id codex "$session_id" || continue
+    codex_rollout_thread_id "$file" || continue
+    session_id="$REPLY"
+    codex_user_rollout "$file" || continue
     created="$(stat -f %B "$file" 2>/dev/null || print 0)"
     [[ "$created" == <-> ]] || created=0
     (( created > 0 )) || created="$(stat -f %m "$file" 2>/dev/null || print 0)"
@@ -43,15 +44,17 @@ latest_new_codex_session_id() {
 # The interactive codex of this tab: the script's own child, or the native binary under npm's node
 # wrapper. A `codex exec` the agent runs from a command sits under a shell, further down: not ours.
 tab_codex_pids() {
-  local pid child
+  local line pid child
   local -a argv
-  for pid in ${(f)"$(/usr/bin/pgrep -P $$ 2>/dev/null)"}; do
-    argv=(${=$(ps -o command= -p "$pid" 2>/dev/null)})
+  for line in ${(f)"$(/usr/bin/pgrep -fl -P $$ 2>/dev/null)"}; do
+    pid="${line%% *}"
+    argv=(${=${line#* }})
     if [[ "${argv[1]:t}" == codex* ]]; then
       print -r -- "$pid"
     elif [[ "${argv[1]:t}" == node && "${argv[2]:t}" == codex* ]]; then
-      for child in ${(f)"$(/usr/bin/pgrep -P "$pid" 2>/dev/null)"}; do
-        argv=(${=$(ps -o command= -p "$child" 2>/dev/null)})
+      for line in ${(f)"$(/usr/bin/pgrep -fl -P "$pid" 2>/dev/null)"}; do
+        child="${line%% *}"
+        argv=(${=${line#* }})
         [[ "${argv[1]:t}" == codex* ]] && print -r -- "$child"
       done
     fi
@@ -62,68 +65,153 @@ tab_codex_pids() {
 # process and keep their rollouts open too.
 codex_user_rollout() {
   local head=""
-  head="$(/usr/bin/head -c 65536 "$1" 2>/dev/null | /usr/bin/head -n 1)"
-  head="${head//\": /\":}"
+  zmodload zsh/system || return 1
+  sysread -s 65536 head < "$1" 2>/dev/null
+  head="${head%%$'\n'*}"
+  head="${head//": /":}"
   [[ "$head" != *'"thread_source":"subagent"'* && "$head" != *'"source":{"subagent"'* ]]
 }
 
-# "<thread id> <mtime> <path>" for every user rollout the processes hold open.
+# "<thread id> <mtime> <writable> <descriptor> <path>" for the human rollouts held by this tab.
 open_codex_threads() {
   (( $# )) || return 0
-  local line file id
-  local -a seen=()
-  for line in ${(f)"$(/usr/sbin/lsof -w -a -p "${(j:,:)@}" -Fn 2>/dev/null)"}; do
-    [[ "$line" == n*/rollout-*.jsonl ]] || continue
-    file="${line#n}"
-    id="${${file:t:r}: -36}"
-    valid_id codex "$id" && (( ! ${seen[(Ie)$id]} )) || continue
-    seen+=("$id")
-    codex_user_rollout "$file" || continue
-    print -r -- "$id $(stat -f %Fm "$file" 2>/dev/null || print 0) $file"
+  local line file REPLY access=0 fd=0
+  local -A held ids descriptors
+  local -a files
+  # The descriptor report already carries vnode paths. Skip lsof's blocking filesystem lookups.
+  for line in ${(f)"$(/usr/sbin/lsof -b -w -n -P -F pfna -p "${(j:,:)@}" 2>/dev/null)"}; do
+    case "$line" in
+      f<->) access=0 fd="${line#f}" ;;
+      [pf]*) access=0 fd=0 ;;
+      a[wu]) access=1 ;;
+      n*/rollout-*.jsonl)
+        file="${line#n}"
+        if [[ -z "${held[$file]-}" ]]; then
+          codex_rollout_thread_id "$file" && codex_user_rollout "$file" || continue
+          files+=("$file")
+          ids[$file]="$REPLY"
+        fi
+        if [[ -z "${held[$file]-}" ]] || (( access > ${held[$file]} ||
+              (access == ${held[$file]} && fd < ${descriptors[$file]}) )); then
+          held[$file]="$access"
+          descriptors[$file]="$fd"
+        fi
+        ;;
+    esac
+  done
+  (( ${#files} )) || return 0
+  # Batch stat for every descriptor, even after an in-TUI switch left several files open.
+  for line in ${(f)"$(/usr/bin/stat -f '%Fm %N' "${files[@]}" 2>/dev/null)"}; do
+    file="${line#* }"
+    print -r -- "${ids[$file]} ${line%% *} ${held[$file]} ${descriptors[$file]} $file"
   done
 }
 
-# Codex gets no hook here (its hooks need trust first), so the tab follows the thread its codex holds
-# open: /new, /resume and /fork switch threads inside one process, and after an Obsidian restart the
-# tab must come back on the last one. Codex keeps every rollout it opened open, so a rollout opened
-# since the last look is the switch; otherwise the one written last is current, as Active picks it.
+# After a write, the latest writable human rollout owns the tab. A newly opened, older rollout
+# also records /resume before the first prompt. Its open descriptor is the only signal at that point.
 track_codex_thread() {
   local instance="$1" every="${OBS_AGENT_CODEX_TRACK_EVERY:-2}"
-  local current="" since=0 recorded line id mtime best best_m stop=0 nap=""
-  local -a pids rows known=()
-  # Stopped by codex_tracked with TERM: the trap only asks to stop, so a record in progress finishes and
-  # lets go of the registry lock (killed inside it, the next record would wait out the lock timeout).
+  local current="" recorded resume_hint line id mtime file best new best_file stop=0 nap="" access fd
+  local startup_resume_fd=0 later_opened later_fd newest_file
+  local -a pids rows alive
+  local -A observed seen writers latest_writers
+  local -F 9 start_poll rest
+  zmodload zsh/datetime
   trap 'stop=1; [[ -n "$nap" ]] && kill "$nap" 2>/dev/null' TERM
   recorded="$(get_resume_id codex "$instance")"
+  resume_hint="$recorded"
   while (( ! stop )) && kill -0 $$ 2>/dev/null; do
-    sleep "$every" & nap=$!
-    wait "$nap" 2>/dev/null
-    nap=""
-    (( stop )) && break
-    pids=(${(f)"$(tab_codex_pids)"})
-    (( ${#pids} )) || continue
-    rows=(${(f)"$(open_codex_threads "${pids[@]}")"})
-    (( ${#rows} )) || continue
-    best="" best_m=0
-    for line in "${rows[@]}"; do                   # newly opened: the newest of them
-      id="${line%% *}" mtime="${${line#* }%% *}"
-      (( ${known[(Ie)$id]} )) && continue
-      known+=("$id")
-      (( mtime >= best_m )) && best="$id" best_m="$mtime"
+    start_poll="$EPOCHREALTIME"
+    alive=()
+    for id in "${pids[@]}"; do
+      kill -0 "$id" 2>/dev/null && alive+=("$id")
     done
-    if [[ -n "$best" ]]; then
-      current="$best" since="$(date +%s)"
-    else
-      for line in "${rows[@]}"; do                 # written to after the switch
-        id="${line%% *}" mtime="${${line#* }%% *}"
-        (( mtime > best_m )) && best="$id" best_m="$mtime"
+    pids=("${alive[@]}")
+    (( ${#pids} )) || pids=(${(f)"$(tab_codex_pids)"})
+    if (( ${#pids} )); then
+      rows=(${(f)"$(open_codex_threads "${pids[@]}")"})
+      local best_access=-1 changed=0 present=0
+      local -F 9 best_m=-1 new_m=-1
+      best="" best_file="" new="" seen=() writers=() later_opened="" later_fd=0 startup_resume_fd=0
+      for line in "${rows[@]}"; do
+        id="${line%% *}" line="${line#* }"
+        mtime="${line%% *}" line="${line#* }"
+        access="${line%% *}" line="${line#* }"
+        fd="${line%% *}" file="${line#* }"
+        seen[$file]="$mtime"
+        (( access )) && writers[$file]="$id"
+        if (( access > best_access )); then
+          best="" new="" best_m=-1 new_m=-1 changed=0 present=0 best_access="$access"
+        fi
+        (( access == best_access )) || continue
+        [[ "$id" == "$current" ]] && present=1
+        if (( ! access )) && [[ -n "$resume_hint" && "$best" == "$resume_hint" && "$id" != "$resume_hint" ]]; then
+          :
+        elif { (( ! access )) && [[ "$id" == "$resume_hint" && "$best" != "$resume_hint" ]]; } ||
+            (( mtime > best_m )) || { (( mtime == best_m )) &&
+            { [[ "$id" == "$resume_hint" && "$best" != "$resume_hint" ]] ||
+              [[ "$best" != "$resume_hint" && "$file" > "$best_file" ]]; }; }; then
+          best="$id" best_m="$mtime" best_file="$file"
+        fi
+        if [[ -z "$current" ]] && (( access )); then
+          if [[ "$id" == "$resume_hint" ]] && (( mtime >= START_EPOCH )); then
+            startup_resume_fd="$fd"
+          elif [[ "$id" != "$resume_hint" ]] && (( mtime < START_EPOCH && fd > later_fd )); then
+            later_opened="$id" later_fd="$fd"
+          fi
+        fi
+        if [[ -z "${observed[$file]-}" ]]; then
+          if (( mtime > new_m )); then new="$id" new_m="$mtime"; fi
+        elif [[ "${observed[$file]}" != "$mtime" ]]; then
+          changed=1
+        fi
       done
-      [[ -n "$best" && "$best" != "$current" ]] && (( best_m > since )) && current="$best" since="$best_m"
+      if [[ -n "$best" ]]; then
+        if [[ -z "$current" ]]; then
+          current="$best"
+          # If the first poll missed startup, a later fd to pre-existing history still shows
+          # a promptless /resume. Require the original thread to have written during startup.
+          if [[ "$best" == "$resume_hint" ]] && (( startup_resume_fd && later_fd > startup_resume_fd )); then
+            current="$later_opened"
+          fi
+        elif (( ! present )); then
+          current="$best"
+        elif (( best_access && new_m < START_EPOCH && best_m >= START_EPOCH )) &&
+            [[ -n "$new" && "$new" != "$best" ]]; then
+          current="$new"
+        elif (( changed )) || [[ -n "$new" ]]; then
+          current="$best"
+        fi
+        observed=("${(@kv)seen}")
+        latest_writers=("${(@kv)writers}")
+        if [[ "$current" != "$recorded" ]]; then
+          upsert_resume_id codex "$instance" "$current" && recorded="$current"
+        fi
+      fi
     fi
-    if [[ -n "$current" && "$current" != "$recorded" ]]; then
-      upsert_resume_id codex "$instance" "$current" && recorded="$current"
+    rest=$(( every - (EPOCHREALTIME - start_poll) ))
+    if (( rest > 0 && ! stop )); then
+      sleep "$rest" & nap=$!
+      wait "$nap" 2>/dev/null
+      nap=""
     fi
   done
+  # A final write can land after the last lsof poll. These files are already known writers,
+  # even if the process closed their descriptors before the tracker was scheduled again.
+  if (( stop && ${#latest_writers} )); then
+    local -F 9 newest_m=-1
+    changed=0 newest_file=""
+    for line in ${(f)"$(/usr/bin/stat -f '%Fm %N' "${(@k)latest_writers}" 2>/dev/null)"}; do
+      mtime="${line%% *}" file="${line#* }"
+      [[ "${observed[$file]}" != "$mtime" ]] && changed=1
+      if (( mtime > newest_m )) || { (( mtime == newest_m )) && [[ "$file" > "$newest_file" ]]; }; then
+        newest_file="$file" newest_m="$mtime"
+      fi
+    done
+    if (( changed )) && [[ -n "$newest_file" && "${latest_writers[$newest_file]}" != "$recorded" ]]; then
+      upsert_resume_id codex "$instance" "${latest_writers[$newest_file]}"
+    fi
+  fi
 }
 
 # Runs codex in the foreground while track_codex_thread follows its thread.
@@ -143,6 +231,7 @@ run_codex() {
   local instance="$1"
   local start_epoch="$2"
   local session_id="$MAPPED_SESSION" running=""
+  local -a reply
 
   # No hook and none of the tab variables: Codex runs no hook here, and a Claude Code the agent
   # starts from a command must not record its session as this tab's (the vault's project hook would).
@@ -156,14 +245,14 @@ run_codex() {
   fi
 
   local fork_of=""
-  if [[ -n "$session_id" ]] && codex_session_exists "$session_id"; then
-    if running="$(codex_session_pid "$session_id")" && ! take_over_running Codex "$session_id" "$running"; then
+  if [[ -n "$session_id" ]] && codex_session_files "$session_id"; then
+    if running="$(codex_files_pid "${reply[@]}")" && ! take_over_running Codex "$session_id" "$running"; then
       return 0
     fi
     print "Resuming Codex session: $session_id"
     codex_tracked "$instance" "${flags[@]}" resume "$session_id"
   elif [[ -z "$session_id" && "$SEED_MODE" == resume* ]] && valid_id "$APP" "$SEED_ID" \
-      && codex_session_exists "$SEED_ID"; then
+      && codex_session_files "$SEED_ID"; then
     # From AI Session Atlas: recorded first, so a restart brings it back. A copy gets its own id
     # when it starts; until the tracker sees it, a restart resumes the source, as for Claude Code.
     upsert_resume_id codex "$instance" "$SEED_ID"
@@ -172,7 +261,7 @@ run_codex() {
       print "Forking Codex session: $SEED_ID"
       codex_tracked "$instance" "${flags[@]}" fork "$SEED_ID"
     else
-      if running="$(codex_session_pid "$SEED_ID")" && ! take_over_running Codex "$SEED_ID" "$running"; then
+      if running="$(codex_files_pid "${reply[@]}")" && ! take_over_running Codex "$SEED_ID" "$running"; then
         return 0
       fi
       print "Resuming Codex session: $SEED_ID"

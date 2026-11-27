@@ -48,7 +48,7 @@ function activeCard(s) {
     head.appendChild(icon);
   }
   const title = el("div", "t", s.title || s.session_id);
-  title.title = s.indexed ? i18n("active.openInSearch") : i18n("active.notIndexed");
+  title.title = title.textContent;
   if (s.indexed) title.addEventListener("click", () => {
     setView("search"); openCard(s.session_id);
   });
@@ -64,7 +64,7 @@ function activeCard(s) {
     state.appendChild(el("span", "bgword", " · " + i18n("active.bgShort")));
     state.title += "\n" + i18n("active.bgSessionHint", { job: bgJob });
   }
-  head.append(title, state);
+  head.append(title, ...cardViewMenu(s, pid));
   card.appendChild(head);
 
   const about = s.card_line || (s.last_prompt ? String(s.last_prompt).slice(0, 220) : "")
@@ -134,6 +134,9 @@ function activeCard(s) {
 
   const heldPid = pid ? null : heldFor(s);
   const [go, close] = tabButtons(s, pid, heldPid, s.title || s.session_id);
+  const parts = AtlasLogic.infoParts(s, ago, shortStart);
+  const info = infoLine("info", [...parts.when, ...parts.nums], parts.context, state);
+  info.title = `${whenHint}. ${turns} · ${cost}. ${costHint}`;
 
   if (full) {
     // Detailed: actions stay in the header and wrap below the title on narrow cards.
@@ -142,13 +145,10 @@ function activeCard(s) {
     const actions = el("div", "card-head-actions");
     const stopFull = stopButton(s, pid, true);
     if (stopFull) actions.appendChild(stopFull);
-    actions.append(cardViewPicker(s, pid), hideButton(s, true));
+    actions.append(hideButton(s, true));
     if (bgJob) actions.appendChild(bringBackButton(bgJob, true));
     actions.append(canMove(s, pid || heldPid) ? moveButton(s, true) : go, close);
     head.appendChild(actions);
-    const parts = AtlasLogic.infoParts(s, ago, shortStart);
-    const info = infoLine("info", [...parts.when, ...parts.nums], parts.context);
-    info.title = `${whenHint}. ${turns} · ${cost}. ${costHint}`;
     // The dialog sits right on the reply field, so it rises with the field as it grows.
     const dialog = dialogBlock(s, pid, true);
     card.append(info);
@@ -164,11 +164,6 @@ function activeCard(s) {
     if (s.agent !== "opencode" || pid) card.appendChild(freeAnswerForm(s, pid) || answerForm(s, pid));
     return card;
   }
-  const parts = AtlasLogic.infoParts(s, ago, shortStart);
-  const when = infoLine("when", parts.when, null);
-  when.title = whenHint;
-  const nums = infoLine("nums", parts.nums, parts.context);
-  nums.title = `${turns} · ${cost}. ${costHint}`;
   const foot = el("div", "foot");
   const stopCompact = stopButton(s, pid, false);
   if (stopCompact) foot.appendChild(stopCompact);
@@ -176,7 +171,11 @@ function activeCard(s) {
   if (bgJob) foot.classList.add("bgfoot");              // fitBringBack: icon only when the row does not fit
   foot.append(canMove(s, pid || heldPid) ? moveButton(s, false) : go, close);
   if (bgJob) foot.appendChild(bringBackButton(bgJob, false));
-  card.append(when, nums);
+  card.append(info);
+  if (cardViews.has(s.session_id)) {
+    card.classList.add("compact-feed");
+    card.appendChild(el("div", "card-view-slot"));
+  }
   const dialog = dialogBlock(s, pid, false);
   if (dialog) {
     card.classList.add("has-dialog");      // compact: the description and tags give their room to the dialog
@@ -192,6 +191,7 @@ function openCodeActiveCard(s) {
   const card = el("article", "acard opencode-tab");
   card.dataset.id = s.session_id;
   const title = el("div", "t", s.title);
+  title.title = title.textContent;
   const folder = el("div", "d", s.cwd || "");
   folder.title = s.cwd || "";
   const tags = el("div", "tags");
@@ -234,9 +234,11 @@ function pendingActiveCard(s) {
   const heldPid = pid ? null : heldFor(s);
   const title = i18n("active.pendingTitle", { agent: agentName(s.agent) });
   const head = el("div", "head");
+  const titleNode = el("div", "t", title);
+  titleNode.title = title;
   const status = el("span", "state");
   status.append(el("span", "dot"), i18n("active.pendingStatus"));
-  head.append(el("div", "t", title), status);
+  head.appendChild(titleNode);
   card.appendChild(head);
   if (s.cwd) {
     const folder = el("div", "d", s.cwd);
@@ -246,7 +248,7 @@ function pendingActiveCard(s) {
   const tags = el("div", "tags");
   tags.appendChild(agentBadge(s));
   const full = activeMode === "full";
-  card.append(tags, infoLine(full ? "info" : "when", [shortStart(s.started_at)].filter(Boolean), null));
+  card.append(tags, infoLine("info", [shortStart(s.started_at)].filter(Boolean), null, status));
   const [go, close] = tabButtons(s, pid, heldPid, title);
   if (full) {
     const actions = el("div", "card-head-actions");
@@ -260,7 +262,8 @@ function pendingActiveCard(s) {
         renderActive(null, true);
         if (!open) cardPanels.get(s.session_id)?.focus();
       });
-      actions.appendChild(terminal);
+      terminal.title = i18n("feed.view.terminal");
+      head.appendChild(iconify(terminal, VIEW_ICONS.terminal, terminal.title));
       if (open) card.appendChild(el("div", "card-view-slot"));
     }
     if (pid || heldPid) actions.appendChild(iconify(go, GO_SVG, i18n("active.go")));
@@ -295,13 +298,14 @@ function tasksLine(t) {
 const shortStart = iso => (iso ? fmtShort(iso).replace(",", "") : "");
 
 // Parts joined with " · "; the context is a separate coloured piece. If it does not fit, it scrolls with the wheel.
-function infoLine(cls, texts, context) {
+function infoLine(cls, texts, context, status) {
   const line = el("div", cls + " hscroll", texts.join(" · "));
   if (context) {
     const span = el("span", "ctx " + context.tone, context.text);
     span.title = context.hint;
     line.append(document.createTextNode(texts.length ? " · " : ""), span);
   }
+  if (status) line.prepend(status, line.textContent ? " · " : "");
   wheelScroll(line);
   return line;
 }

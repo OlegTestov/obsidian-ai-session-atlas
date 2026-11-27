@@ -241,7 +241,7 @@ def live_transcript(conn: sqlite3.Connection, session_id: str, projects_root: st
             return None
     path = _transcript(conn, session_id, projects_root, agent)
     if (agent or agents.transcript_agent(path)) == agents.CODEX:
-        return path
+        return codex_procs.selected_rollout(session_id, table=table) or path
     files = _read_files(sessions_dir or SESSIONS_DIR)
     own = next((d for d in files if str(d["sessionId"]) == session_id and d.get("parkedJobId")),
                None)

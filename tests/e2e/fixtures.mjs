@@ -21,7 +21,8 @@ export const TEXT = {
         catalog: "Catalog data", running: "This session is still running", deleted: "Session deleted.",
         codexNote: "Codex deletes the session with its own command (codex delete)",
         working: "working", idle: "waiting", detailed: "detailed",
-        turns: "Conversation", steps: "Steps", files: "Files", feed: "Session feed", background: "automated runs",
+        turns: "Conversation", steps: "Steps", files: "Files", terminal: "Terminal", viewMode: "View mode",
+        feed: "Session feed", background: "automated runs",
         cost: "API cost", codexLimits: /^Codex 5h 100%, used up, resets [^·]+ · wk 68%$/, codexLive: "live from Codex itself",
         claudeLimits: "Claude 5h 42% · wk 87% · 3 h ago", claudeAsOf: "(numbers as of ", tokensTile: "Tokens", sessionsTile: "Sessions", you: "You", exit: "exit 1" },
   ru: { agent: "Агент", agents: "Агенты",
@@ -35,7 +36,8 @@ export const TEXT = {
         catalog: "Данные каталога", running: "Сессия ещё работает", deleted: "Сессия удалена.",
         codexNote: "Codex удалит сессию своей командой (codex delete)",
         working: "работает", idle: "ждёт", detailed: "подробно",
-        turns: "Переписка", steps: "Шаги", files: "Файлы", feed: "Лента сессии", background: "автоматические запуски",
+        turns: "Переписка", steps: "Шаги", files: "Файлы", terminal: "Терминал", viewMode: "Режим отображения",
+        feed: "Лента сессии", background: "автоматические запуски",
         cost: "Стоимость по API", codexLimits: /^Codex 5ч 100%, исчерпан, сброс в [^·]+ · нед 68%$/, codexLive: "прямо из Codex",
         claudeLimits: "Claude 5ч 42% · нед 87% · 3 ч назад", claudeAsOf: "(цифры на ", tokensTile: "Токены", sessionsTile: "Сессии", you: "Ты", exit: "exit 1" },
 };
@@ -99,4 +101,9 @@ export const test = base.extend({
 /** Read back what the browser stored, to check a pick survives a reload. */
 export async function stored(page, key) {
   return page.evaluate(k => JSON.parse(window.localStorage.getItem(k) || "null"), key);
+}
+
+export async function pickCardView(card, view) {
+  await card.locator(".card-view-picker").click();
+  await card.locator(`.card-view-menu button[data-view="${view}"]`).click();
 }

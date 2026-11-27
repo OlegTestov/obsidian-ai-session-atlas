@@ -150,7 +150,7 @@ def transcript_agent(path: str | None) -> str:
 def parse_session(path: str, session_id: str, agent: str) -> SessionFacts:
     from . import codex_parse, parse
 
-    readers = {CLAUDE: parse.parse_file, CODEX: codex_parse.parse_file}
+    readers = {CLAUDE: parse.parse_file, CODEX: codex_parse.parse_lineage}
     return readers[require(agent, readers, "transcript parsing")](path, session_id)
 
 

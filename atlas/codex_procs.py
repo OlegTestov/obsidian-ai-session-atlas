@@ -7,14 +7,14 @@ interactive `codex` keeps its rollout open for the whole thread, so `lsof` maps 
 from __future__ import annotations
 
 import glob
-import json
 import os
 import re
 import shutil
 import subprocess
 import time
 
-from . import agents, codex_parse, index
+from . import agents, codex_parse, codex_rollouts, index
+from .codex_rollouts import session_meta as session_meta
 
 # The native binary; a platform-suffixed copy runs under the npm wrapper.
 BINARY = re.compile(r"(?:^|/)codex(?:-(?:aarch64|x86_64)-(?:apple-darwin|unknown-linux-musl))?$")
@@ -30,17 +30,14 @@ LSOF = shutil.which("lsof") or "/usr/sbin/lsof"
 LSOF_TIMEOUT = 3.0
 # `/new` and `/resume` inside the terminal UI switch the thread without a new process.
 MAP_TTL = 10.0
-META_LINE_LIMIT = 4 * 1024 * 1024
 
 def _run(cmd: list[str], **kw):
     """The one place a process is started; tests replace it with fake `lsof` output."""
     return subprocess.run(cmd, **kw)
 
 
-_map_cache: dict[tuple, tuple] = {}         # (pid, start) → (checked at, rollout path, pending cwd, had rollout)
-_open_cache: dict[tuple, list] = {}         # (pid, start) → every rollout it held open at that check
-_meta_cache: dict[str, dict] = {}           # rollout path → its session_meta
-_find_cache: dict[str, str] = {}            # thread id → rollout path
+_map_cache: dict[tuple, tuple] = {}         # (home, pid, start) → (checked at, rollout, pending cwd, had rollout)
+_open_cache: dict[tuple, list] = {}         # (home, pid, start) → rollouts observed at that check
 
 
 def is_interactive_command(command: str) -> bool:
@@ -78,107 +75,117 @@ def _process_files(pids, run) -> tuple[dict, dict] | None:
     if not pids:
         return {}, {}
     try:
-        out = (run or _run)([LSOF, "-w", "-n", "-P", "-F", "pfn", "-p", ",".join(map(str, pids))],
+        out = (run or _run)([LSOF, "-w", "-n", "-P", "-F", "pfna", "-p", ",".join(map(str, pids))],
                   capture_output=True, text=True, timeout=LSOF_TIMEOUT).stdout
     except (OSError, subprocess.SubprocessError):
         return None
-    found: dict[int, list[str]] = {}
+    found: dict[int, dict[str, bool]] = {}
     cwd: dict[int, str] = {}
     pid = None
     fd = ""
+    writable = False
     for line in (out or "").splitlines():
         if line.startswith("p") and line[1:].isdigit():
             pid = int(line[1:])
-            found.setdefault(pid, [])
+            found.setdefault(pid, {})
             fd = ""
+            writable = False
         elif line.startswith("f"):
             fd = line[1:]
+            writable = False
+        elif line.startswith("a"):
+            writable = line[1:] in ("w", "u")
         elif line.startswith("n") and pid is not None:
             path = line[1:]
             if fd == "cwd":
                 if os.path.isabs(path):
                     cwd[pid] = path
-            elif codex_parse.session_id_of(path) and path not in found[pid]:
-                found[pid].append(path)
+            elif codex_parse.session_id_of(path):
+                found[pid][path] = writable or found[pid].get(path, False)
     return found, cwd
 
 
 def _rollouts_in_home(found: dict, home: str) -> dict:
-    return {pid: [path for path in paths if _inside(path, home)] for pid, paths in found.items()}
-
-
-def open_rollouts(pids, run=None, home: str | None = None) -> dict[int, list[str]] | None:
-    """None means lsof is missing, slow or failed."""
-    files = _process_files(pids, run)
-    return _rollouts_in_home(files[0], home or index.codex_home()) if files is not None else None
-
-
-def session_meta(path: str) -> dict:
-    """The first line: thread id, cwd, originator, source. Never changes, so it is cached per path."""
-    if path in _meta_cache:
-        return _meta_cache[path]
-    meta: dict = {}
-    try:
-        with open(path, "rb") as fh:
-            rec = json.loads(fh.readline(META_LINE_LIMIT))
-        if isinstance(rec, dict) and rec.get("type") == "session_meta" and isinstance(rec.get("payload"), dict):
-            meta = rec["payload"]
-    except (OSError, ValueError):
-        return {}
-    subagent = meta.get("thread_source") == "subagent" \
-        or (isinstance(meta.get("source"), dict) and "subagent" in meta["source"])
-    parent = meta.get("parent_thread_id") if subagent else None
-    meta = {"id": str(meta.get("id") or meta.get("session_id") or codex_parse.session_id_of(path) or ""),
-            "cwd": meta.get("cwd"), "timestamp": meta.get("timestamp"), "subagent": subagent,
-            "parent": str(parent) if parent else None}
-    _meta_cache[path] = meta
-    return meta
+    return {pid: {path: writable for path, writable in paths.items() if _inside(path, home)}
+            for pid, paths in found.items()}
 
 
 def thread_id(path: str) -> str | None:
-    return session_meta(path).get("id") or codex_parse.session_id_of(path)
+    return codex_parse.session_id_of(path) or session_meta(path).get("id")
 
 
-def main_rollout(paths: list[str]) -> str | None:
-    """A process with subagents holds their rollouts open too: the human thread is the one it runs."""
-    own = [p for p in paths if not session_meta(p).get("subagent")] or paths
+def _root_head(path: str, opened: dict, home: str) -> str | None:
+    seen = {thread_id(path)}
+    while session_meta(path).get("subagent"):
+        parent = session_meta(path).get("parent")
+        if not parent or parent in seen:
+            return None
+        seen.add(parent)
+        path = opened.get(parent) or codex_rollouts.select(all_rollouts(parent, home), allow_subagent=True)
+        if not path:
+            return None
+    return find_rollout(thread_id(path), home)
 
-    def mtime(p: str) -> float:
-        try:
-            return os.stat(p).st_mtime
-        except OSError:
-            return 0.0
-    return max(own, key=mtime) if own else None
+
+def restore_thread(session_id: str, home: str) -> tuple[str | None, str | None]:
+    """Resolve a saved tab id, including ids recorded when a child owned its parent's card."""
+    path = codex_rollouts.select(all_rollouts(session_id, home), allow_subagent=True)
+    if not path or not session_meta(path).get("subagent"):
+        return session_id, None
+    head = _root_head(path, {}, home)
+    return (thread_id(head), head) if head else (None, None)
 
 
-def find_rollout(session_id: str, home: str | None = None) -> str | None:
-    """The rollout of a thread id: live by date folder or archived. Cached while the file exists."""
-    sid = (session_id or "")
-    if not agents.valid_id(agents.CODEX, sid):
+def _open_head(paths: dict[str, bool], resume_id: str | None = None) -> str | None:
+    human = [p for p in paths if os.path.isfile(p) and not session_meta(p).get("subagent")]
+    return max(human, key=lambda p: (
+        paths[p], thread_id(p) == resume_id if not paths[p] else False,
+        codex_rollouts.mtime(p), thread_id(p) == resume_id, p,
+    ), default=None)
+
+
+def main_rollout(paths: dict[str, bool], resume_id: str | None = None, home: str | None = None) -> str | None:
+    """Prefer an open human rollout. If only children are open, find their root on disk."""
+    if not paths or any(not session_meta(p).get("subagent") for p in paths):
+        return _open_head(paths, resume_id)
+    home = home or index.codex_home()
+    opened = {thread_id(p): p for p in paths}
+    for path in sorted(paths, key=lambda p: (paths[p], codex_rollouts.mtime(p)), reverse=True):
+        head = _root_head(path, opened, home)
+        if head:
+            return head
+    return None
+
+
+def find_rollout(session_id: str | None, home: str | None = None) -> str | None:
+    """The selected human rollout, from Codex's own state or the latest write."""
+    if not agents.valid_id(agents.CODEX, session_id):
         return None
     home = home or index.codex_home()
-    cached = _find_cache.get(sid)
-    if cached and os.path.exists(cached) and _inside(cached, home):
-        return cached
-    found = all_rollouts(sid, home)
-    if not found:
+    paths = all_rollouts(session_id, home)
+    if not paths:
         return None
-    _find_cache[sid] = found[0]
-    return found[0]
+    copies, saved = codex_rollouts.saved_copy(paths, codex_parse.selected_paths(home, session_id).get(session_id), home)
+    return codex_rollouts.select(copies, saved)
+
+
+def selected_rollout(session_id: str, home: str | None = None, table: dict | None = None) -> str | None:
+    """A recently observed live writer takes priority for transcript views."""
+    home = home or index.codex_home()
+    if table is not None:
+        rollouts_for(table, home=home)
+    now = time.monotonic()
+    held = [path for key, (checked, path, _, _) in _map_cache.copy().items()
+            if key[0] == home and path in _open_cache.get(key, ()) and now - checked <= MAP_TTL
+            and thread_id(path) == session_id]
+    return codex_rollouts.select(held) or find_rollout(session_id, home)
 
 
 def all_rollouts(session_id: str, home: str | None = None) -> list[str]:
-    """Every file of the thread: a live one in sessions/ and an archived copy may both exist."""
-    if not agents.valid_id(agents.CODEX, session_id):
-        return []
-    home = glob.escape(home or index.codex_home())
-    name = f"rollout-*-{glob.escape(session_id)}.jsonl"
-    found = glob.glob(os.path.join(home, "sessions", "**", name), recursive=True)
-    found += glob.glob(os.path.join(home, "archived_sessions", name))
-    return sorted(p for p in found if codex_parse.session_id_of(p) == session_id)
+    return codex_rollouts.all_rollouts(session_id, home or index.codex_home())
 
 
-def _from_argv(command: str, home: str) -> str | None:
+def _resume_id(command: str) -> str | None:
     """Only an explicit resume id, never a UUID mentioned in a prompt or a fork's source."""
     parts = (command or "").split()
     skip = False
@@ -189,9 +196,13 @@ def _from_argv(command: str, home: str) -> str | None:
             skip = word in VALUE_FLAGS
         else:
             if word == "resume" and i + 1 < len(parts) and agents.valid_id(agents.CODEX, parts[i + 1]):
-                return find_rollout(parts[i + 1], home)
+                return parts[i + 1]
             return None
     return None
+
+
+def _from_argv(command: str, home: str) -> str | None:
+    return find_rollout(_resume_id(command), home)
 
 
 def rollouts_for(table: dict, run=None, home: str | None = None, fresh: bool = False,
@@ -200,7 +211,7 @@ def rollouts_for(table: dict, run=None, home: str | None = None, fresh: bool = F
     home = home or index.codex_home()
     now = time.monotonic() if now is None else now
     live = interactive_pids(table)
-    keys = {pid: (pid, start) for pid, start in live.items()}
+    keys = {pid: (home, pid, start) for pid, start in live.items()}
     stale = [pid for pid, key in keys.items()
              if fresh or key not in _map_cache or now - _map_cache[key][0] > MAP_TTL]
     if stale:
@@ -209,25 +220,33 @@ def rollouts_for(table: dict, run=None, home: str | None = None, fresh: bool = F
         daemons = [pid for pid, row in table.items() if len(row) > 2
                    and len(row[2].split()) > 1 and BINARY.search(row[2].split()[0])
                    and row[2].split()[1] == "app-server"]
-        candidates = daemons if any(_from_argv(table[p][2], home) for p in stale) else []
+        resume_ids = {pid: _resume_id(table[pid][2]) for pid in stale}
+        candidates = daemons if any(resume_ids.values()) else []
         files = _process_files(stale + candidates, run)
         all_files, cwd = files if files is not None else ({}, {})
         found = _rollouts_in_home(all_files, home)
-        shared = {p for pid in candidates for p in found.get(pid, [])}
+        shared = {}
+        for pid in candidates:
+            for p, writable in found.get(pid, {}).items():
+                shared[p] = writable or shared.get(p, False)
         for pid in stale:
             if files is not None:
-                path = main_rollout(found.get(pid, []))
-                resumed = _from_argv(table[pid][2], home) if not path else None
-                if resumed in shared and not session_meta(resumed).get("subagent"):
-                    path = resumed
+                opened = found.get(pid, {})
+                resume_id = resume_ids[pid]
+                own = [p for p in opened if not session_meta(p).get("subagent")]
+                resumed = {p: shared[p] for p in shared if resume_id and thread_id(p) == resume_id}
+                path = main_rollout(opened, resume_id, home)
+                if not own and resumed:
+                    path = _open_head(resumed) or path
+                only_children = bool(opened) and not own and len(opened) == len(all_files.get(pid, []))
                 previous = _map_cache.get(keys[pid])
-                had_rollout = bool(path or all_files.get(pid) or (previous and previous[3]))
+                had_rollout = not only_children and bool(path or all_files.get(pid) or (previous and previous[3]))
                 _map_cache[keys[pid]] = (now, path, cwd.get(pid), had_rollout)
-                _open_cache[keys[pid]] = list(found.get(pid, []))
+                _open_cache[keys[pid]] = list(opened) + ([path] if path in resumed and path not in opened else [])
             elif keys[pid] not in _map_cache:      # keep an older answer; retried next time
                 path = _from_argv(table[pid][2], home)
                 _map_cache[keys[pid]] = (0.0, path, None, bool(path))
-    for key in [k for k in _map_cache if k not in keys.values()]:
+    for key in [k for k in _map_cache if k[0] == home and k not in keys.values()]:
         del _map_cache[key]                         # the process is gone
         _open_cache.pop(key, None)
     # A client of the shared daemon or of a --remote server never holds its rollout, so its
@@ -257,11 +276,11 @@ def _is_shared_daemon(command: str) -> bool:
         and "--managed-daemon" in parts
 
 
-def subagent_rollouts(pid: int, table: dict, session_id: str) -> list[str]:
+def subagent_rollouts(pid: int, table: dict, session_id: str, home: str | None = None) -> list[str]:
     """Subagent threads of this thread the process held open at its last check (rollouts_for).
     A subagent's own subagents count too: each names its parent, up to this thread."""
     row = table.get(pid)
-    paths = _open_cache.get((pid, row[1]), []) if row else []
+    paths = _open_cache.get((home or index.codex_home(), pid, row[1]), []) if row else []
     parents = {thread_id(p): session_meta(p).get("parent") for p in paths if session_meta(p).get("subagent")}
     sid = (session_id or "")
 
@@ -300,16 +319,60 @@ def subagents_on_disk(session_id: str, home: str | None = None, now: float | Non
     return [p for p in subs if under(thread_id(p))]
 
 
-def owner(pid: int, session_id: str, table: dict, run=None, home: str | None = None) -> bool:
-    """This exact process runs this thread now: checked with a fresh lsof, not from the cache."""
+def owner_rollout(pid: int, session_id: str, table: dict, run=None, home: str | None = None) -> str | None:
+    """This exact process runs this thread now: checked with a fresh lsof."""
     if pid not in interactive_pids(table):
-        return False
+        return None
     home = home or index.codex_home()
-    found = open_rollouts([pid], run, home)
-    path = main_rollout(found.get(pid, [])) if found is not None else _from_argv(table[pid][2], home)
-    return bool(path) and thread_id(path) == (session_id or "")
+    files = _process_files([pid], run)
+    if files is None:
+        return None
+    opened = _rollouts_in_home(files[0], home).get(pid, {})
+    path = main_rollout(opened, _resume_id(table[pid][2]), home)
+    return path if path and thread_id(path) == session_id else None
+
+
+def owner(pid: int, session_id: str, table: dict, run=None, home: str | None = None) -> bool:
+    return bool(owner_rollout(pid, session_id, table, run, home))
+
+
+def _codex_pids(table: dict) -> list[int]:
+    return [pid for pid, row in table.items() if len(row) > 2
+            and (words := row[2].split()) and BINARY.search(words[0])]
 
 
 def running(session_id: str, table: dict, run=None, home: str | None = None) -> bool:
-    paths = rollouts_for(table, run=run, home=home, fresh=True)
-    return any(thread_id(p) == (session_id or "") for p in paths.values())
+    """Guard file mutations using every open rollout, including those held by a daemon."""
+    home = home or index.codex_home()
+    files = _process_files(_codex_pids(table), run)
+    if files is None:
+        return True             # a failed inspection cannot establish that deletion is safe
+    return _held(session_id, _rollouts_in_home(files[0], home).values(), home)
+
+
+def move_owner(pid: int, session_id: str, table: dict, run=None) -> tuple[str | None, bool]:
+    """Read the current owner and all other holders from the same lsof snapshot."""
+    if pid not in interactive_pids(table):
+        return None, False
+    home = index.codex_home()
+    files = _process_files(_codex_pids(table), run)
+    if files is None:
+        return None, False
+    opened = _rollouts_in_home(files[0], home)
+    path = main_rollout(opened.pop(pid, {}), _resume_id(table[pid][2]), home)
+    if path and thread_id(path) == session_id:
+        return path, _held(session_id, opened.values(), home)
+    return None, False
+
+
+def _held(session_id, processes, home):
+    for opened in processes:
+        if any(thread_id(path) == session_id for path in opened):
+            return True
+        by_thread = {thread_id(path): path for path in opened}
+        for path in opened:
+            if session_meta(path).get("parent"):
+                root = _root_head(path, by_thread, home)
+                if root and thread_id(root) == session_id:
+                    return True     # deletion also removes the root thread's child rollouts
+    return False

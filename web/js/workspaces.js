@@ -194,7 +194,12 @@ async function workspaceNewSession(boardId, sessionId, instance) {
     } catch (error) {
       workspaceLaunches.delete(reference);
       if (attempt === 0 && error.status === 409) {
-        try { applyWorkspaces(await api("/api/workspaces")); }
+        try {
+          if (applyWorkspaces(await api("/api/workspaces"))) {
+            renderActive(null, true);
+            refreshWorkspaceEditor();
+          }
+        }
         catch (refreshError) { workspaceNotice(refreshError.message); return; }
         continue;
       }

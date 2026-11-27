@@ -91,11 +91,15 @@ class NotifyMethods {
     this.pollActive();
   }
 
-  /** The server is asked through node http: a fetch from Obsidian is a foreign origin to the server. */
   fetchActive(timeout = 8000) {
+    return this.fetchAtlasJson("/api/active", timeout);
+  }
+
+  /** The server is asked through node http: a fetch from Obsidian is a foreign origin to the server. */
+  fetchAtlasJson(path, timeout = 8000) {
     return new Promise((resolve) => {
       const request = http.get(
-        { host: "127.0.0.1", port: this.atlasPort(), path: "/api/active", timeout },
+        { host: "127.0.0.1", port: this.atlasPort(), path, timeout },
         (response) => {
           let body = "";
           response.setEncoding("utf8");

@@ -6,12 +6,12 @@ matter (reasoning, message items with images, tool output) are skipped by their 
 from __future__ import annotations
 
 import json
-import os
 import re
 import time
+from copy import copy
 from datetime import datetime, timezone
 
-from . import codex_parse, limits
+from . import codex_parse, codex_projection, codex_rollouts, limits
 from .messages import msg
 
 TAIL_BYTES = 256 * 1024
@@ -24,7 +24,7 @@ _EVENTS = {b"user_message", b"agent_message", b"task_started", b"task_complete",
 # The 5-hour and weekly windows get the same keys as Claude Code's, so the page labels them alike.
 WINDOW_KEYS = {300: "five_hour", 10080: "seven_day"}
 
-_cache: dict[str, tuple] = {}           # path → (inode, size, result)
+_cache: dict[str, tuple] = {}           # head → (lineage fingerprint, result)
 
 
 def _wanted(raw: bytes) -> bool:
@@ -40,6 +40,10 @@ def _wanted(raw: bytes) -> bool:
     if kind == b"item_completed":
         return bool(_ITEM.search(head))
     return kind == b"function_call" and b'"update_plan"' in head
+
+
+def _keep_tail_record(raw: bytes) -> bytes | None:
+    return raw if _wanted(raw) else None
 
 
 def _images(p: dict) -> int:
@@ -144,43 +148,76 @@ class _Reader:
             out["plan"] = _plan(p.get("arguments"))
 
 
-def read(path: str | None) -> dict:
-    """See `_empty` for the keys. A turn started without a later end means Codex is working."""
+def _read_part(part, size: int, previous: _Reader) -> _Reader:
+    with open(part.path, "rb") as fh:
+        window = TAIL_BYTES
+        while True:
+            reader = copy(previous)
+            reader.out = previous.out.copy()
+            start = max(0, size - window)
+            fh.seek(start)
+            for raw in reversed(fh.read(size - start).split(b"\n")):
+                if not _wanted(raw):
+                    continue
+                try:
+                    rec = json.loads(raw)
+                except ValueError:
+                    continue      # the window's first line is cut; the last may be mid-write
+                if isinstance(rec, dict):
+                    reader.record(rec)
+                if _done(reader.out):
+                    break
+            if _done(reader.out) or window >= size or window >= TAIL_MAX:
+                return reader
+            window *= 4
+
+
+def read(path: str | None, home: str | None = None) -> dict:
+    """Read newest first, continuing into retained ancestor history when needed."""
     if not path:
         return _empty()
-    try:
-        st = os.stat(path)
-    except OSError:
-        return _empty()
+    sizes = []
+    failed = False
+
+    def unavailable():
+        nonlocal failed
+        failed = True
+
+    parts = codex_rollouts.lineage(path, home, on_error=unavailable)
+    for part in parts:
+        try:
+            sizes.append((part, codex_rollouts.file_stamp(part.path)))
+        except OSError:
+            if part.path == path:
+                return _empty()
+            unavailable()
+    fingerprint = tuple(sizes)
     cached = _cache.get(path)
-    if cached and cached[:2] == (st.st_ino, st.st_size):
-        return cached[2]
+    if not failed and cached and cached[0] == fingerprint:
+        return cached[1]
     reader = _Reader()
-    try:
-        with open(path, "rb") as fh:
-            window = TAIL_BYTES
-            while True:
-                reader = _Reader()
-                fh.seek(max(0, st.st_size - window))
-                for raw in reversed(fh.read(min(window, st.st_size)).split(b"\n")):
-                    if not _wanted(raw):
-                        continue
-                    try:
-                        rec = json.loads(raw)
-                    except ValueError:
-                        continue      # the window's first line is cut; the last may be mid-write
-                    if isinstance(rec, dict):
+    if len(parts) > 1:
+        for _, groups in codex_projection.selected(
+                [part for part, _ in sizes], _keep_tail_record, newest=True, on_error=unavailable):
+            for group in groups.newest_records():
+                for _, raw in group.lines:
+                    rec = codex_projection.decoded(raw)
+                    if rec is not None:
                         reader.record(rec)
-                    if _done(reader.out):
-                        break
-                if _done(reader.out) or window >= st.st_size or window >= TAIL_MAX:
+                if _done(reader.out):
                     break
-                window *= 4
-    except OSError:
-        return _empty()
+            if _done(reader.out):
+                break
+    elif sizes:
+        part, stamp = sizes[0]
+        try:
+            reader = _read_part(part, stamp[2], reader)
+        except OSError:
+            unavailable()
     out = reader.out
     out["status"] = out["status"] or "idle"
-    _cache[path] = (st.st_ino, st.st_size, out)
+    if not failed:
+        _cache[path] = fingerprint, out
     return out
 
 

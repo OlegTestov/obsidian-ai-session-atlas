@@ -88,6 +88,25 @@ def test_resume_command_per_agent(both):
     assert actions.resume_command(cwd, TID, agent="codex") == codex["resume_command"]
 
 
+def test_restore_resolves_a_nested_codex_subagent(both, write_rollout, live_server):
+    parent = "019e0000-1111-7000-8000-000000000002"
+    child = "019e0000-1111-7000-8000-000000000003"
+    for sid, owner in [(parent, TID), (child, parent)]:
+        meta = json.loads(cx_meta(sid, cwd=both["cwd"]))
+        meta["payload"].update(thread_source="subagent", parent_thread_id=owner)
+        write_rollout([json.dumps(meta)], thread_id=sid)
+    base, _ = live_server
+
+    def get(path):
+        with urllib.request.urlopen(base + path, timeout=20) as response:
+            return json.loads(response.read())
+
+    assert "error" in get(f"/api/session/{child}")
+    assert get(f"/api/restore/codex/{child}") == {
+        "session_id": TID, "title": search.load_session(both["conn"], TID)["title"],
+    }
+
+
 def test_rename_keeps_codex_transcript_untouched(both):
     conn = both["conn"]
     before = Path(both["rollout"]).read_bytes()

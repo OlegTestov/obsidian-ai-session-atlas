@@ -10,7 +10,7 @@ import contextlib
 import json
 import os
 
-from . import codex_parse
+from . import codex_parse, codex_rollouts
 from .parse import COMPACT_PREFIX, iter_complete_lines, readable_prompt
 
 CALL_LIMIT = 600          # a command or a call's arguments
@@ -148,6 +148,14 @@ def read_claude(path: str, session_id: str) -> Conversation:
 
 # --- Codex -------------------------------------------------------------------------------------
 
+def _keep_codex_record(raw: bytes) -> bytes | None:
+    head = raw[:480]
+    skip = b'"response_item"' in head and not any(
+        marker in head for marker in (b'"function_call"', b'"custom_tool_call"',
+                                      b'"function_call_output"', b'"custom_tool_call_output"'))
+    return None if skip else raw
+
+
 def read_codex(path: str, session_id: str) -> Conversation:
     """Prompts and replies come as events and, in newer versions, as completed items too: a pair
     across the two channels is one message. A `compacted` record starts the conversation over."""
@@ -169,46 +177,43 @@ def read_codex(path: str, session_id: str) -> Conversation:
         if text and first_copy(role, channel, text):
             conv.items.append({"role": role, "text": clip(text, TEXT_LIMIT), "ts": ts})
 
-    with open(path, "rb") as fh:
-        for _, raw in iter_complete_lines(fh):
-            try:
-                rec = json.loads(raw)
-            except ValueError:
-                continue
-            p = rec.get("payload") if isinstance(rec, dict) and isinstance(rec.get("payload"), dict) else {}
-            kind, sub, ts = rec.get("type"), p.get("type"), rec.get("timestamp")
-            if (kind == "session_meta" and conv.cwd is None) or (kind == "turn_context" and p.get("cwd")):
-                conv.cwd = p.get("cwd")
-            elif kind == "compacted":
-                conv.summary = str(p.get("message") or "").strip() or conv.summary
-                conv.items, calls, pending = [], {}, {}
-            elif kind == "event_msg" and sub == "user_message":
-                message("user", "event", p.get("message"), ts)
-            elif kind == "event_msg" and sub == "agent_message":
-                message("assistant", "event", p.get("message"), ts)
-            elif kind == "event_msg" and sub == "item_completed" and isinstance(p.get("item"), dict):
-                item = p["item"]
-                if item.get("type") == "UserMessage":
-                    message("user", "item", codex_parse._texts(item.get("content"), "text"), ts)
-                elif item.get("type") == "AgentMessage":
-                    message("assistant", "item", codex_parse._texts(item.get("content"), "text"), ts)
-            elif kind == "response_item" and sub in ("function_call", "custom_tool_call"):
-                name = str(p.get("name") or "")
-                args = p.get("input") if sub == "custom_tool_call" else p.get("arguments")
-                if isinstance(args, str) and sub == "function_call":
-                    with contextlib.suppress(ValueError):
-                        args = json.loads(args)
-                if name == "apply_patch" or (isinstance(args, str) and "*** Begin Patch" in args):
-                    files = codex_parse.PATCH_FILE.findall(args if isinstance(args, str)
-                                                           else str((args or {}).get("input") or ""))
-                    args = ", ".join(files) or args
-                    name = "apply_patch"
-                item = _tool(name, args, ts, p.get("call_id"))
-                calls[p.get("call_id")] = item
-                conv.items.append(item)
-            elif kind == "response_item" and sub in ("function_call_output", "custom_tool_call_output"):
-                _attach(calls, p.get("call_id"), p.get("output"))
-            # reasoning (with its encrypted content), developer messages, token counts: never copied
+    parts = codex_rollouts.lineage(path)
+    for rec in codex_rollouts.projected_records(parts, _keep_codex_record):
+        p = rec.get("payload") if isinstance(rec, dict) and isinstance(rec.get("payload"), dict) else {}
+        kind, sub, ts = rec.get("type"), p.get("type"), rec.get("timestamp")
+        if (kind == "session_meta" and (conv.cwd is None or len(parts) > 1)) or (
+                kind == "turn_context" and p.get("cwd")):
+            conv.cwd = p.get("cwd")
+        elif kind == "compacted":
+            conv.summary = str(p.get("message") or "").strip() or conv.summary
+            conv.items, calls, pending = [], {}, {}
+        elif kind == "event_msg" and sub == "user_message":
+            message("user", "event", p.get("message"), ts)
+        elif kind == "event_msg" and sub == "agent_message":
+            message("assistant", "event", p.get("message"), ts)
+        elif kind == "event_msg" and sub == "item_completed" and isinstance(p.get("item"), dict):
+            item = p["item"]
+            if item.get("type") == "UserMessage":
+                message("user", "item", codex_parse._texts(item.get("content"), "text"), ts)
+            elif item.get("type") == "AgentMessage":
+                message("assistant", "item", codex_parse._texts(item.get("content"), "text"), ts)
+        elif kind == "response_item" and sub in ("function_call", "custom_tool_call"):
+            name = str(p.get("name") or "")
+            args = p.get("input") if sub == "custom_tool_call" else p.get("arguments")
+            if isinstance(args, str) and sub == "function_call":
+                with contextlib.suppress(ValueError):
+                    args = json.loads(args)
+            if name == "apply_patch" or (isinstance(args, str) and "*** Begin Patch" in args):
+                files = codex_parse.PATCH_FILE.findall(args if isinstance(args, str)
+                                                       else str((args or {}).get("input") or ""))
+                args = ", ".join(files) or args
+                name = "apply_patch"
+            item = _tool(name, args, ts, p.get("call_id"))
+            calls[p.get("call_id")] = item
+            conv.items.append(item)
+        elif kind == "response_item" and sub in ("function_call_output", "custom_tool_call_output"):
+            _attach(calls, p.get("call_id"), p.get("output"))
+        # reasoning (with its encrypted content), developer messages, token counts: never copied
     return conv
 
 

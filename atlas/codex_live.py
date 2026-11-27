@@ -12,7 +12,19 @@ import os
 import sqlite3
 import time
 
-from . import active, codex_procs, codex_state, codex_tail, codex_usage, codex_waits, index, openai_costs, search
+from . import (
+    active,
+    codex_parse,
+    codex_procs,
+    codex_state,
+    codex_tail,
+    codex_usage,
+    codex_waits,
+    forks,
+    index,
+    openai_costs,
+    search,
+)
 from .agents import CODEX
 
 TITLE_CHARS = 80
@@ -37,18 +49,33 @@ def _title(info: dict, tail: dict, sid: str) -> str:
     return (text[:TITLE_CHARS - 1] + "…" if len(text) > TITLE_CHARS else text) or sid[:8]
 
 
+def restore_candidate(conn: sqlite3.Connection, sid: str) -> dict:
+    home = index.codex_home()
+    root, head = codex_procs.restore_thread(sid, home)
+    title = None
+    if root and head:
+        info = search._load_session(conn, root) or {}
+        native = codex_parse.thread_titles(home, (root,)).get(root)
+        if native and info.get("title_source") != "manual":
+            info["title"] = forks.label(native, info.get("fork_no"))
+        title = _title(info, {} if info.get("title") else codex_tail.read(head, home), root)
+    return {"session_id": root, "title": title}
+
+
 def live_subagents(pid: int, table: dict, sid: str, now: float | None = None, home: str | None = None) -> int:
     """Subagent threads writing right now, as for Claude Code: a finished one stays open, unwritten.
     Those the process holds open, and those on disk (a daemon-run Codex holds them elsewhere)."""
     now = time.time() if now is None else now
-    fresh = 0
-    held = codex_procs.subagent_rollouts(pid, table, sid)
-    for path in {os.path.realpath(p) for p in held + codex_procs.subagents_on_disk(sid, home, now)}:
+    fresh = set()
+    held = codex_procs.subagent_rollouts(pid, table, sid, home)
+    for path in set(held + codex_procs.subagents_on_disk(sid, home, now)):
+        tid = codex_procs.thread_id(path)
         try:
-            fresh += now - os.stat(path).st_mtime < active.AGENT_FRESH_SECONDS
+            if tid and now - os.stat(path).st_mtime < active.AGENT_FRESH_SECONDS:
+                fresh.add(tid)
         except OSError:
             continue
-    return fresh
+    return len(fresh)
 
 
 def card(conn: sqlite3.Connection, pid: int, path: str, table: dict, state: dict | None = None,
@@ -60,7 +87,7 @@ def card(conn: sqlite3.Connection, pid: int, path: str, table: dict, state: dict
     if not sid:
         return None
     info = search._load_session(conn, sid) or {}
-    t = codex_tail.read(path)
+    t = codex_tail.read(path, home)
     reply = t["reply"] or ""
     state = state or {}
     background = {"shells": codex_state.background_commands(pid, table, home),
@@ -70,6 +97,12 @@ def card(conn: sqlite3.Connection, pid: int, path: str, table: dict, state: dict
     started = active.process_start_iso(table.get(pid, (0, ""))[1])
     waited = codex_waits.waiting(sid, path, t["status"])
     status = "waiting" if waited else t["status"]
+    native_title = (state.get("titles") or {}).get(sid)
+    if native_title and info.get("title_source") != "manual":
+        info["title"] = forks.label(native_title, info.get("fork_no"))
+    segmented = codex_parse.rollout_ids(path) != (sid, sid)
+    if segmented and not native_title and info.get("title_source") not in ("manual", "converted"):
+        info.pop("title", None)
     return {
         "session_id": sid,
         "agent": CODEX,
@@ -86,7 +119,7 @@ def card(conn: sqlite3.Connection, pid: int, path: str, table: dict, state: dict
         "indexed": bool(info),
         "title": _title(info, t, sid),
         "card_line": info.get("card_line"),
-        "last_prompt": info.get("last_prompt") or t["last_prompt"],
+        "last_prompt": t["last_prompt"] if segmented else info.get("last_prompt") or t["last_prompt"],
         "projects": info.get("projects", []),
         "topic": info.get("topic"),
         "domains": info.get("domains", []),
@@ -124,7 +157,8 @@ def list_live(conn: sqlite3.Connection, table: dict, run=None,
     pending_cwds: dict[int, str] = {}
     paths = codex_procs.rollouts_for(table, run=run, home=home, pending_cwds=pending_cwds)
     ids = sorted({sid for sid in map(codex_procs.thread_id, paths.values()) if sid})
-    state = {"goals": codex_state.goals(ids, home), "queued": codex_state.queued(ids, home)}
+    state = {"goals": codex_state.goals(ids, home), "queued": codex_state.queued(ids, home),
+             "titles": codex_parse.thread_titles(home or index.codex_home(), ids) if ids else {}}
     out, seen = [], set()
     for pid, path in sorted(paths.items()):
         made = card(conn, pid, path, table, state, home)
@@ -158,12 +192,12 @@ def limits(home: str | None = None, now: float | None = None, live: bool = False
     home = home or index.codex_home()
     best = None
     for path in _last_live:
-        t = codex_tail.read(path)
+        t = codex_tail.read(path, home)
         if t["rate_limits"] and (best is None or (t["rate_limits_at"] or "") > (best["rate_limits_at"] or "")):
             best = t
     # Newest first; a run that failed on a spent limit reports empty windows, so look further back.
     for path in _recent_rollouts(home):
-        t = codex_tail.read(path)
+        t = codex_tail.read(path, home)
         if t["rate_limits"]:
             if best is None or (t["rate_limits_at"] or "") > (best["rate_limits_at"] or ""):
                 best = t

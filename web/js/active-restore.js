@@ -4,20 +4,19 @@
 /* exported requestRestorable, handleRestoreMessage, canMove, moveButton -- used by other page scripts */
 // The plugin keeps the list: the page asks it and opens each one through `claude --resume`.
 let restorable = [];
-let restorableReady = false;
 let restoring = false;
+let restoreNote = "";
 const RESTORE_GAP_MS = 800;           // tabs open one by one: Terminal does not like bursts
 
 function requestRestorable() {
-  if (hostReady && !restorableReady) tellTabHost("list-restorable", {});
+  if (hostReady) tellTabHost("list-restorable", {});
 }
 
 function handleRestoreMessage(d) {
   if (d.type !== "restorable" || !Array.isArray(d.sessions)) return false;
-  restorableReady = !!d.ready;
   // Not ready: the plugin has not yet seen which sessions came back by themselves. Showing the list
   // then hid it a second later, with sessions still alive in it.
-  restorable = restorableReady ? d.sessions.filter(x => x && typeof x.session_id === "string") : [];
+  restorable = d.ready ? d.sessions.filter(x => x && typeof x.session_id === "string") : [];
   renderRestoreBanner();
   return true;
 }
@@ -55,12 +54,13 @@ function heldRow() {
   return row;
 }
 
-function renderRestoreBanner(note) {
+function renderRestoreBanner() {
   const box = $("#restore-banner");
   const held = heldRow();
+  const note = restoreNote ? el("span", "note", restoreNote) : null;
   if (!restorable.length && !note && !held) { box.classList.add("hidden"); box.replaceChildren(); return; }
   box.classList.remove("hidden");
-  if (!restorable.length) { box.replaceChildren(...[held, note ? el("span", null, note) : null].filter(Boolean)); return; }
+  if (!restorable.length) { box.replaceChildren(...[held, note].filter(Boolean)); return; }
   const n = restorable.length;
   const names = restorable.slice(0, 4).map(x => i18n("active.quoted", { text: x.title || x.session_id.slice(0, 8) }))
     .join(", ") + (n > 4 ? i18n("active.restoreMore", { n: n - 4 }) : "");
@@ -78,16 +78,18 @@ function renderRestoreBanner(note) {
   skip.addEventListener("click", () => {
     tellTabHost("forget-restorable", {});
     restorable = [];
+    restoreNote = "";
     renderRestoreBanner();
   });
-  box.replaceChildren(...[held, text, go, skip].filter(Boolean));
-  if (note) box.appendChild(el("span", "note", note));
+  box.replaceChildren(...[held, text, go, skip, note].filter(Boolean));
 }
 
 async function restoreAll() {
   if (restoring || !EMBEDDED) return;
   restoring = true;
-  renderRestoreBanner(i18n("active.opening"));
+  restoreNote = i18n("active.opening");
+  renderRestoreBanner();
+  const candidates = restorable.slice();
   const done = [];
   const failed = [];
   // A session whose process outlived Obsidian (an old tab's PTY left running) is alive somewhere:
@@ -98,33 +100,42 @@ async function restoreAll() {
     alive = new Set((now.sessions || []).map(s => s.session_id));
   } catch { /* the server did not answer: each resume below fails on its own */ }
   const elsewhere = [];
-  for (const x of restorable.slice()) {
+  for (const x of candidates) {
     if (alive.has(x.session_id)) { elsewhere.push(x); continue; }
     try {
       const card = await api("/api/session/" + encodeURIComponent(x.session_id));
+      if (card.error) throw new Error(card.error);
       const a = card.actions || {};
-      if (!a.resume_command || !a.can_open_terminal) { failed.push(x.title || x.session_id); continue; }
-      tellHost("resume", { session_id: x.session_id, cwd: a.resume_cwd, command: a.resume_command,
-                           title: x.title || card.title || agentShort(card) });
+      if (!a.resume_command || (card.agent !== "opencode" && !a.can_open_terminal)) {
+        throw new Error(a.resume_error || i18n("active.restoreNoCommand"));
+      }
+      const launch = await requestHostLaunch("resume", { session_id: x.session_id, cwd: a.resume_cwd,
+        command: a.resume_command, title: x.title || card.title || agentShort(card) }, crypto.randomUUID());
+      if (!launch?.ok) throw new Error(i18n(launch ? "active.restoreTabFailed" : "active.restoreNoReply"));
       done.push(x.session_id);
-      await new Promise(r => window.setTimeout(r, RESTORE_GAP_MS));
-    } catch {
-      failed.push(x.title || x.session_id);
+      if (x !== candidates.at(-1)) await new Promise(r => window.setTimeout(r, RESTORE_GAP_MS));
+    } catch (error) {
+      failed.push(`${x.title || x.session_id} (${error.message})`);
     }
   }
   restoring = false;
   const settled = done.concat(elsewhere.map(x => x.session_id));
-  tellTabHost("forget-restorable", { sessionIds: settled });
+  if (settled.length) tellTabHost("forget-restorable", { sessionIds: settled });
   restorable = restorable.filter(x => !settled.includes(x.session_id));
-  const notes = [i18n("active.restoreDone", { n: done.length })];
+  const notes = done.length ? [i18n("active.restoreDone", { n: done.length })] : [];
   if (elsewhere.length) {
     notes.push(i18n("active.restoreElsewhere", { names: elsewhere.map(x => i18n("active.quoted",
       { text: x.title || x.session_id.slice(0, 8) })).join(", ") }));
   }
   if (failed.length) notes.push(i18n("active.restoreFailed", { names: failed.join(", ") }));
-  renderRestoreBanner(notes.join(" · "));
+  const note = restoreNote = notes.join(" · ");
+  renderRestoreBanner();
   window.setTimeout(loadActive, 4000);
-  window.setTimeout(() => { if (!restorable.length) renderRestoreBanner(); }, 8000);
+  if (!failed.length) window.setTimeout(() => {
+    if (restoreNote !== note) return;
+    restoreNote = "";
+    renderRestoreBanner();
+  }, 8000);
 }
 
 // --- moving a session from iTerm/VS Code into an Obsidian tab ---

@@ -75,7 +75,8 @@ def _write_meta(conn, session_id: str, path: str, st, sig: str, facts: SessionFa
     """Everything except texts: small tables are easier to rewrite than to merge."""
     projects, workspace_kind = resolve.resolve_projects(facts.cwds, [r for _, r in resolved_files])
     domains = resolve.resolve_domains(facts.cwds, [r for _, r in resolved_files])
-    sensitivity = resolve.resolve_sensitivity(facts.cwds, [r for _, r in resolved_files])
+    sensitivity = "sensitive" if facts.sensitive_location else resolve.resolve_sensitivity(
+        facts.cwds, [r for _, r in resolved_files])
     kind = resolve.session_kind(facts.entrypoint, facts.human_turns, facts.spawned,
                                 continued=bool(facts.continued_from and facts.last_activity_at))
     if facts.agent == agents.OPENCODE and not facts.spawned:
@@ -216,6 +217,7 @@ def _merge_subagents(facts: SessionFacts, subs) -> tuple[list[str], list[str], d
     sub_paths: list[str] = []
     sub_rows: dict = {}
     for sub in subs:
+        facts.sensitive_location |= sub.sensitive_location
         facts.subagent_turns += sub.machine_turns + sub.subagent_turns
         facts.subagent_text.extend(sub.assistant_text + sub.subagent_text + sub.user_text)
         sub_commands.extend(sub.commands)
@@ -274,10 +276,11 @@ def store_snapshot(conn, path, st, sig, facts, subs, *, sub_sig=None) -> str:
 
 
 def store_codex(conn, path: str, st, sig: str, title: str | None = None,
-                subagents: list[str] | None = None) -> str:
-    """A Codex rollout and its subagents are reread in full on any change."""
+                subagents: list[str] | None = None, *, rollouts=()) -> str:
+    """Store one thread, including all of its segments and subagents."""
     ref = agents.SourceRef(agents.CODEX, path)
-    facts, subs = agents.adapter(ref.agent).read(ref, conn=conn, title=title, subagents=subagents or [])
+    facts, subs = agents.adapter(ref.agent).read(ref, conn=conn, title=title,
+                                                subagents=subagents or [], rollouts=rollouts)
     session_id = facts.session_id
     _converted(conn, session_id, facts)
     if not session_id:

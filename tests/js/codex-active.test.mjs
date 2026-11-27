@@ -23,6 +23,7 @@ describe("pending Codex cards", () => {
         tag, children: [], dataset: {}, attrs: {},
         classList: { add() {} },
         append(...nodes) { this.children.push(...nodes); },
+        prepend(...nodes) { this.children.unshift(...nodes); },
         appendChild(node) { this.children.push(node); return node; },
         replaceChildren(...nodes) { this.children = nodes; },
         setAttribute(key, value) { this.attrs[key] = value; },
@@ -34,9 +35,11 @@ describe("pending Codex cards", () => {
       const nodes = node => typeof node === "object" ? [node, ...node.children.flatMap(nodes)] : [];
       const compact = nodes(run("activeCard(pending)"));
       assert.equal(compact.find(n => n.className === "t").textContent, title);
-      assert.ok(compact.find(n => n.className === "state").children.includes(waiting));
+      const meta = compact.find(n => n.className?.startsWith("info"));
+      assert.equal(meta.children[0].className, "state");
+      assert.ok(meta.children[0].children.includes(waiting));
       assert.equal(compact.find(n => n.className === "d").textContent, pending.cwd);
-      assert.match(compact.find(n => n.className?.startsWith("when")).textContent, /\d/);
+      assert.match(meta.textContent, /\d/);
       assert.deepEqual(compact.filter(n => n.tag === "button").map(n => n.textContent), [go, close]);
       const full = nodes(run('activeMode = "full"; hostInlineTabs.add(7); activeCard(pending)'));
       assert.deepEqual(full.filter(n => n.tag === "button").map(n => n.attrs["aria-label"] || n.textContent),

@@ -61,6 +61,7 @@ class SessionFacts:
     cwds: list[str] = field(default_factory=list)
     branches: list[str] = field(default_factory=list)
     raw_files: list[str] = field(default_factory=list)
+    sensitive_location: bool = False    # a location in the full Codex history, including reverted parts
     links: list[tuple[str, str, str]] = field(default_factory=list)  # kind, url, title
     mcp_servers: list[str] = field(default_factory=list)
     tickets: set[str] = field(default_factory=set)

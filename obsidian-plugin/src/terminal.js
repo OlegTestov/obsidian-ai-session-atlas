@@ -18,7 +18,106 @@ import {
   MAX_IMAGES,
 } from "./constants";
 
-const CODEX_ROLLOUT = new RegExp(`^n.*/rollout-[^/]*-(${idPattern("codex").slice(1, -1)})\\.jsonl$`);
+const CODEX_ID = idPattern("codex").slice(1, -1);
+const CODEX_THREAD = new RegExp(`^${CODEX_ID}$`);
+const CODEX_ROLLOUT = new RegExp(`^rollout-[^/]*-(${CODEX_ID})(?:_${CODEX_ID})?\\.jsonl$`);
+const CODEX_BINARY = /^codex(?:-(?:aarch64|x86_64)-(?:apple-darwin|unknown-linux-musl))?$/;
+// Keep the options that consume the next argv word in sync with codex_procs._resume_id.
+const CODEX_VALUE_FLAGS = new Set(["-m", "--model", "-c", "--config", "-C", "--cd", "-p", "--profile",
+  "-s", "--sandbox", "-a", "--ask-for-approval", "-i", "--image", "--add-dir", "--enable", "--disable",
+  "--local-provider", "--oss-provider", "--remote"]);
+const CODEX_META_LIMIT = 4 * 1024 * 1024;
+
+function codexMeta(file) {
+  let fd;
+  try {
+    fd = fsSync.openSync(file, "r");
+    const chunks = [];
+    for (let offset = 0; offset < CODEX_META_LIMIT; offset += 4096) {
+      const buffer = Buffer.alloc(4096);
+      const data = buffer.subarray(0, fsSync.readSync(fd, buffer));
+      if (!data.length) break;
+      const end = data.indexOf(10);
+      if (end >= 0) {
+        chunks.push(data.subarray(0, end));
+        const record = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+        return record.type === "session_meta" ? record.payload || {} : {};
+      }
+      chunks.push(data);
+    }
+    return {};
+  } catch {
+    return {};
+  } finally {
+    if (fd !== undefined) fsSync.closeSync(fd);
+  }
+}
+
+function codexRollout(file) {
+  const id = CODEX_ROLLOUT.exec(path.basename(file))?.[1];
+  if (!id) return null;
+  const meta = codexMeta(file);
+  const source = meta.source;
+  const subagent = meta.thread_source === "subagent"
+    || (source != null && typeof source === "object" && Object.hasOwn(source, "subagent"));
+  const parent = meta.parent_thread_id ?? source?.subagent?.thread_spawn?.parent_thread_id;
+  return { id, subagent, parent: typeof parent === "string" && CODEX_THREAD.test(parent) ? parent : null };
+}
+
+function codexThreadFile(home, id) {
+  let found = null;
+  function scan(folder, ancestors) {
+    let entries, real;
+    try {
+      real = fsSync.realpathSync(folder);
+      if (ancestors.has(real)) return;
+      entries = fsSync.readdirSync(folder, { withFileTypes: true });
+    } catch { return; }
+    const seen = new Set([...ancestors, real]);
+    for (const entry of entries) {
+      const file = path.join(folder, entry.name);
+      if (entry.isDirectory()) { scan(file, seen); continue; }
+      const matching = CODEX_ROLLOUT.exec(entry.name)?.[1] === id;
+      if (!matching && !entry.isSymbolicLink()) continue;
+      try {
+        const stat = fsSync.statSync(file, { bigint: true });
+        if (stat.isDirectory()) scan(file, seen);
+        else if (stat.isFile() && matching
+            && (!found || stat.mtimeNs > found.mtime || (stat.mtimeNs === found.mtime && file > found.file))) {
+          found = { file, mtime: stat.mtimeNs };
+        }
+      } catch { /* the file was moved during the scan */ }
+    }
+  }
+  scan(path.join(home, "sessions"), new Set());
+  scan(path.join(home, "archived_sessions"), new Set());
+  return found ? codexRollout(found.file) : null;
+}
+
+function codexRoot(home, rollout, byId) {
+  const seen = new Set();
+  while (rollout?.subagent && rollout.parent && !seen.has(rollout.id)) {
+    seen.add(rollout.id);
+    rollout = byId.get(rollout.parent) || codexThreadFile(home, rollout.parent);
+  }
+  if (!rollout || rollout.subagent) return null;
+  // The backend requires a human root on disk when only its descendants are open.
+  const root = codexThreadFile(home, rollout.id);
+  return root && !root.subagent ? root.id : null;
+}
+
+function codexResumeId(pid) {
+  try {
+    const argv = childProcess.execFileSync("ps", ["-o", "command=", "-p", String(pid)],
+                                           { encoding: "utf8", timeout: 2000 }).trim().split(/\s+/);
+    for (let i = 1; i < argv.length; i++) {
+      const word = argv[i];
+      if (!word.startsWith("-")) return word === "resume" && CODEX_THREAD.test(argv[i + 1]) ? argv[i + 1] : null;
+      if (CODEX_VALUE_FLAGS.has(word)) i++;
+    }
+  } catch { /* the command is an optional hint */ }
+  return null;
+}
 
 class TerminalMethods {
   /**
@@ -169,7 +268,7 @@ class TerminalMethods {
     // A tab attached to a background job: the job's file holds the session and its status.
     const claude = this.readSessionState(pid) || attachedSessionState(pid, SESSIONS_DIR);
     if (claude) return Object.assign({ agent: "claude", sessionIds: [claude.sessionId] }, claude);
-    if (this.processName(pid) !== "codex") return null;
+    if (!CODEX_BINARY.test(this.processName(pid))) return null;
     const ids = this.codexSessionIds(pid);
     if (!ids.length) return null;
     return { agent: "codex", sessionIds: ids, sessionId: ids[0], status: codexScreenState(this.screenLines(leaf)) };
@@ -187,7 +286,7 @@ class TerminalMethods {
       return null;
     }
     const binary = path.basename(fields.slice(5).join(" "));
-    if (!/^codex(?:-(?:aarch64|x86_64)-(?:apple-darwin|unknown-linux-musl))?$/.test(binary)
+    if (!CODEX_BINARY.test(binary)
         || id !== `pending-codex-${pid}-${fields.slice(0, 5).join("-")}`) return null;
     // The id binds this exact process, so its card keeps working once the first message created
     // the thread, until the page swaps in the real card.
@@ -205,17 +304,50 @@ class TerminalMethods {
     }
   }
 
-  /** Thread ids of the rollouts the Codex process has open (rollout-<time>-<id>.jsonl). */
+  /** The single human thread selected by the same open-file rules as the server. */
   codexSessionIds(pid) {
     try {
-      const out = childProcess.execFileSync("/usr/sbin/lsof", ["-a", "-p", String(pid), "-Fn"],
+      const home = fsSync.realpathSync(this.codexHome());
+      const out = childProcess.execFileSync("/usr/sbin/lsof", ["-w", "-n", "-P", "-F", "pfna", "-p", String(pid)],
                                             { encoding: "utf8", timeout: 3000 });
-      const ids = [];
+      const opened = new Map();
+      let writable = false;
       for (const line of out.split("\n")) {
-        const m = CODEX_ROLLOUT.exec(line);
-        if (m && !ids.includes(m[1])) ids.push(m[1]);
+        if (line.startsWith("f") || line.startsWith("p")) writable = false;
+        else if (line.startsWith("a")) writable = line === "aw" || line === "au";
+        else if (line.startsWith("n/")) {
+          const file = line.slice(1);
+          if (!CODEX_ROLLOUT.test(path.basename(file))) continue;
+          const previous = opened.get(file);
+          if (previous) {
+            previous.writable ||= writable;
+            continue;
+          }
+          try {
+            const relative = path.relative(home, fsSync.realpathSync(file));
+            if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) continue;
+            const stat = fsSync.statSync(file, { bigint: true });
+            if (stat.isFile()) opened.set(file, { ...codexRollout(file), file, writable, mtime: stat.mtimeNs });
+          } catch { /* ignore a closed or moved rollout */ }
+        }
       }
-      return ids;
+      const rollouts = [...opened.values()];
+      const human = rollouts.filter(rollout => !rollout.subagent);
+      const byWrite = (a, b) => Number(b.writable) - Number(a.writable);
+      const byTime = (a, b) => a.mtime === b.mtime ? 0 : a.mtime > b.mtime ? -1 : 1;
+      if (human.length) {
+        const resume = human.length > 1 ? codexResumeId(pid) : null;
+        const byResume = (a, b) => Number(b.id === resume) - Number(a.id === resume);
+        human.sort((a, b) => byWrite(a, b) || (!a.writable && byResume(a, b))
+          || byTime(a, b) || byResume(a, b) || (a.file > b.file ? -1 : 1));
+        return [human[0].id];
+      }
+      const byId = new Map(rollouts.map(rollout => [rollout.id, rollout]));
+      for (const rollout of rollouts.sort((a, b) => byWrite(a, b) || byTime(a, b))) {
+        const id = codexRoot(home, rollout, byId);
+        if (id) return [id];
+      }
+      return [];
     } catch {
       return [];
     }

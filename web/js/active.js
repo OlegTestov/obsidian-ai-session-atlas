@@ -134,8 +134,9 @@ function renderActive(skipKey, force) {
   const terminalFocus = document.activeElement?.closest(".card-terminal")?.closest(".acard")?.dataset.id;
   const contentFocus = document.activeElement?.matches(".card-view-body")
     && document.activeElement.closest(".acard")?.dataset.id;
-  const pickerFocus = document.activeElement?.matches(".card-view-picker")
-    && document.activeElement.closest(".acard")?.dataset.id;
+  const viewPickerFocus = formControl?.closest(".card-view-picker, .card-view-menu");
+  const pickerCard = viewPickerFocus?.closest(".acard")?.dataset.id;
+  const pickerItem = viewPickerFocus?.matches(".card-view-menu") && formControl.dataset.view;
   // Keep the mounted body and its scroll position across header and status updates.
   const positions = new Map([...cardPanels].map(([sid, panel]) => [sid, panel.body.scrollTop]));
   grid.replaceChildren(...sections.filter(Boolean), ...(board ? [] : closed()));
@@ -156,10 +157,18 @@ function renderActive(skipKey, force) {
   }
   if (terminalFocus) cardPanels.get(terminalFocus)?.focus?.();
   if (contentFocus) cardPanels.get(contentFocus)?.body.focus({ preventScroll: true });
-  if (pickerFocus) grid.querySelector(`.acard[data-id="${CSS.escape(pickerFocus)}"] .card-view-picker`)?.focus({ preventScroll: true });
   fitBringBack(grid);
   watchBringBack(grid);
   grid.scrollTop = scroll;
+  if (pickerCard) {
+    const header = grid.querySelector(`.acard[data-id="${CSS.escape(pickerCard)}"] .head`);
+    const picker = header?.querySelector(".card-view-picker");
+    picker?.focus({ preventScroll: true });
+    if (picker && pickerItem) {
+      picker.click();
+      header.querySelector(`.card-view-menu button[data-view="${CSS.escape(pickerItem)}"]:enabled`)?.focus();
+    }
+  }
   if (caret) {
     const area = grid.querySelector(`.answer textarea[data-id="${CSS.escape(caret.id)}"]`);
     if (area && !area.disabled) {

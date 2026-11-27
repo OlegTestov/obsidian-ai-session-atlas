@@ -341,7 +341,11 @@ function confirmWorkspaceDeletion(board, {expected = workspaceState.revision, re
   const message = workspaceText("deleted", {workspace:board.name});
   confirmWorkspaceAction("deleteAsk", el("p", null, workspaceText("deleteHint", {workspace:board.name})),
     "delete", async () => {
-      const update = boards => boards.splice(boards.findIndex(item => item.id === board.id), 1);
+      const update = boards => {
+        const index = boards.findIndex(item => item.id === board.id);
+        if (index < 0) throw new Error(workspaceText("stale"));
+        boards.splice(index, 1);
+      };
       try {
         if (manager) {
           if (!await managerCommit(update, message, expected)) return;

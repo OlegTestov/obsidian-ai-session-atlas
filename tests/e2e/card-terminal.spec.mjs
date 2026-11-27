@@ -1,6 +1,6 @@
 // The card's Terminal mode with the real renderer bundle under the page's nonce CSP. The plugin is a
 // stand-in host that answers `open-card-terminal` with a MessagePort the test drives like the PTY mirror.
-import { expect, ids, run, test } from "./fixtures.mjs";
+import { expect, ids, run, test, pickCardView } from "./fixtures.mjs";
 import { terminalRenderer } from "../../esbuild.config.mjs";
 
 const renderer = terminalRenderer();
@@ -48,7 +48,7 @@ async function openTerminal(page, lang, { first = FIRST, js = renderer.js, ready
   await page.goto(`${run.base}/e2e-host.html`);
   const frame = page.frameLocator("#atlas");
   const card = frame.locator(`.acard[data-id="${ids.claudeLive}"]`);
-  await card.locator(".card-view-picker").selectOption("terminal");
+  await pickCardView(card, "terminal");
   if (ready) await expect(card.locator(".card-terminal .xterm")).toBeVisible();
   return { frame, card, term: card.locator(".card-terminal") };
 }

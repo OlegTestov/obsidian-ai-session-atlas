@@ -222,7 +222,9 @@ test("OpenCode Active uses the managed service for tab-gated decisions, replies,
     await expect(card.locator(".oc-permission-title")).toBeVisible();
     await frame.getByRole("button", { name: t.detailed, exact: true }).click();
     await expect(card.locator(".stop")).toBeEnabled();
-    await expect(card.locator('.card-view-picker option[value="terminal"]')).toBeEnabled();
+    await card.locator(".card-view-picker").click();
+    await expect(card.locator('.card-view-menu button[data-view="terminal"]')).toBeEnabled();
+    await card.locator(".card-view-menu button:focus").press("Escape");
     await frame.locator(".lay-btn").click();
     await frame.getByRole("button", { name: "2 × 4", exact: true }).click();
     await expect(card.locator(".decide")).toBeHidden();

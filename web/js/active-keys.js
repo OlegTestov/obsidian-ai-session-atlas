@@ -89,11 +89,10 @@ document.addEventListener("keydown", e => {
     hideCard(selected);
   } else if (e.key === "f" && selectedCard) {
     e.preventDefault();
-    if (activeMode !== "full") document.querySelector('.mode button[data-mode="full"]')?.click();
     const picker = cardEls().find(card => card.dataset.id === selectedCard)?.querySelector(".card-view-picker");
     if (picker) {
       picker.focus();
-      try { picker.showPicker?.(); } catch { /* Cross-origin iframe: focus still opens with Space. */ }
+      picker.click();
     }
   } else if (e.key === "Escape" && selectedCard) {
     selectedCard = null;
